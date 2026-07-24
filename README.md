@@ -8,6 +8,10 @@ Pi Deck is a unified Agent workspace built on top of [Pi](https://github.com/bad
 
 The image is an upstream Pi Web screenshot, retained temporarily as a representative view; Pi Deck keeps the same Pi session format and runtime semantics.
 
+## Roadmap
+
+The current roadmap, implementation progress, and acceptance criteria are tracked in [Phase 1: architecture seams and OpenChamber-style product redesign](https://github.com/henlii/pi-deck/issues/1).
+
 ## Upstream / 上游来源
 
 Pi Deck is derived from [agegr/pi-web](https://github.com/agegr/pi-web), which is distributed under the MIT License. It is built around [badlogic/pi-mono](https://github.com/badlogic/pi-mono). The project preserves Pi session files and runtime semantics so existing Pi data remains the source of truth. Copyright and derivative-work notices for the upstream project are retained in [LICENSE](./LICENSE).

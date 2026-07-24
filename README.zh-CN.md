@@ -6,6 +6,10 @@ Pi Deck 是基于 [Pi](https://github.com/badlogic/pi-mono) 的统一 Agent 工�
 
 截图暂使用上游 Pi Web 图片，仅作为代表性示例，不代表 Pi Deck 的最终界面。
 
+## 路线图
+
+当前路线图、实施进度和验收标准统一记录在 [第一阶段：架构 seam 与 OpenChamber 风格产品改造](https://github.com/henlii/pi-deck/issues/1)。
+
 ## Upstream / 上游来源
 
 Pi Deck 源自 [agegr/pi-web](https://github.com/agegr/pi-web)，遵循 MIT License；底层运行时来自 [badlogic/pi-mono](https://github.com/badlogic/pi-mono)。项目保留 Pi 的会话文件格式与运行时语义，现有 Pi 数据仍是事实来源。上游版权和派生作品说明保留在 [LICENSE](./LICENSE) 中。
