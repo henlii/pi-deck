@@ -1,22 +1,28 @@
-# Pi Web
+# Pi Deck
 
 [English](./README.md)
 
-[pi 编程智能体](https://github.com/badlogic/pi-mono) 的本地网页界面。它会读取本机的 pi 会话文件，在浏览器里提供会话管理、实时对话、模型配置、技能管理和项目文件预览。
+Pi Deck 是基于 [Pi](https://github.com/badlogic/pi-mono) 的统一 Agent 工作空间上层客户端。它不脱离 Pi，而是读取本机 Pi 会话文件并遵循 Pi 的运行时语义，在浏览器里提供会话管理、实时对话、模型配置、技能管理和项目文件预览。
+
+截图暂使用上游 Pi Web 图片，仅作为代表性示例，不代表 Pi Deck 的最终界面。
+
+## Upstream / 上游来源
+
+Pi Deck 源自 [agegr/pi-web](https://github.com/agegr/pi-web)，遵循 MIT License；底层运行时来自 [badlogic/pi-mono](https://github.com/badlogic/pi-mono)。项目保留 Pi 的会话文件格式与运行时语义，现有 Pi 数据仍是事实来源。上游版权和派生作品说明保留在 [LICENSE](./LICENSE) 中。
 
 ## 快速开始
 
 **无需安装，直接运行：**
 
 ```bash
-npx @agegr/pi-web@latest
+npx @henlii/pi-deck@latest
 ```
 
 **或全局安装后使用：**
 
 ```bash
-npm install -g @agegr/pi-web
-pi-web
+npm install -g @henlii/pi-deck
+pi-deck
 ```
 
 启动后打开 [http://localhost:30141](http://localhost:30141)。命令行版本会在服务就绪后尝试自动打开浏览器。
@@ -24,18 +30,18 @@ pi-web
 **可选参数：**
 
 ```bash
-pi-web --port 8080              # 自定义端口
-pi-web --hostname 127.0.0.1     # 仅本机访问
-pi-web -p 8080 -H 127.0.0.1     # 组合使用
-pi-web --no-open                # 不自动打开浏览器
+pi-deck --port 8080              # 自定义端口
+pi-deck --hostname 127.0.0.1     # 仅本机访问
+pi-deck -p 8080 -H 127.0.0.1     # 组合使用
+pi-deck --no-open                # 不自动打开浏览器
 
-PORT=8080 pi-web                # 也支持环境变量
-PI_WEB_NO_OPEN=1 pi-web         # 适用于后台服务或开机自启
+PORT=8080 pi-deck                # 也支持环境变量
+PI_WEB_NO_OPEN=1 pi-deck         # 兼容变量，适用于后台服务或开机自启
 ```
 
 ## HTTP 代理
 
-Pi Web 的服务端模型请求和 API 请求会读取标准的 `HTTP_PROXY`、`HTTPS_PROXY` 和 `NO_PROXY` 环境变量。
+Pi Deck 的服务端模型请求和 API 请求会读取标准的 `HTTP_PROXY`、`HTTPS_PROXY` 和 `NO_PROXY` 环境变量。
 
 macOS 或 Linux：
 
@@ -43,7 +49,7 @@ macOS 或 Linux：
 HTTP_PROXY=http://127.0.0.1:7890 \
 HTTPS_PROXY=http://127.0.0.1:7890 \
 NO_PROXY=localhost,127.0.0.1 \
-npx @agegr/pi-web@latest
+npx @henlii/pi-deck@latest
 ```
 
 Windows PowerShell：
@@ -52,7 +58,7 @@ Windows PowerShell：
 $env:HTTP_PROXY = "http://127.0.0.1:7890"
 $env:HTTPS_PROXY = "http://127.0.0.1:7890"
 $env:NO_PROXY = "localhost,127.0.0.1"
-npx @agegr/pi-web@latest
+npx @henlii/pi-deck@latest
 ```
 
 ## 功能介绍
@@ -70,7 +76,7 @@ npx @agegr/pi-web@latest
 - **会话文件**：路径形如 `~/.pi/agent/sessions/<编码后的工作目录>/<时间戳>_<uuid>.jsonl`。
 - **模型配置**：Models 面板读写 pi agent 目录下的 `models.json`，模型列表和默认模型由 pi 的配置解析得到。
 - **文件访问**：文件浏览和预览面向当前选择的项目目录，以及会话中已出现过的工作目录。
-- **Git worktree**：什么时候显示切换器、新建目录在哪里、删除会影响什么，见 [Pi Web 里的 Worktree](./docs/worktrees.zh-CN.md)。
+- **Git worktree**：什么时候显示切换器、新建目录在哪里、删除会影响什么，见 [Pi Deck 里的 Worktree](./docs/worktrees.zh-CN.md)。
 - **Fork 与会话内分支不同**：Fork 会创建新的 `.jsonl` 文件；“Edit from here” 是同一会话文件里的分支。
 
 ## 开发
@@ -96,16 +102,20 @@ npm run lint
 ```
 app/
   api/
-    agent/          # 创建/驱动 AgentSession，提供 SSE 事件流
+    agent/          # 创建/驱动 AgentSession，提供 SSE 事件流和 bash 输出
     auth/           # OAuth 和 API key 管理
     cwd/validate/   # 自定义工作目录校验
     default-cwd/    # 获取 pi 默认工作目录
-    files/          # 文件列表、读取、预览、watch
+    files/          # 文件列表、读取、预览、搜索、上传和 watch
+    file-index/     # 项目文件索引和 @ 提及搜索
+    git/            # 当前项目的 Git diff 和 status
     home/           # 当前用户 home 目录
     models/         # 可用模型、默认模型、thinking levels
     models-config/  # 读写 models.json、测试模型
-    sessions/       # 会话读取、重命名、删除、上下文、HTML 导出
-    skills/         # skills 列表、搜索、安装、启停
+    plugins/        # package 插件管理
+    sessions/       # 会话读取、重命名、自动命名、删除、上下文、状态、延迟 thinking 和 HTML 导出
+    skills/         # skills 列表、搜索、安装、更新、检查和启停
+    worktrees/      # Git worktree 列表、新建和删除
 components/
   AppShell.tsx        # 主布局、URL 状态、顶部面板、文件标签
   SessionSidebar.tsx  # 项目选择、会话树、Explorer
@@ -117,18 +127,35 @@ components/
   FileExplorer.tsx    # 文件树
   FileViewer.tsx      # 源码、diff、图片、音频、PDF、DOCX 预览
 lib/
+  api-types.ts       # API 请求和响应的共享类型
+  ansi.ts             # 终端输出的 ANSI 转义序列处理
+  bash-output.ts      # bash 命令输出的格式化和解析
+  custom-ui-terminal.ts # 自定义 UI 输出的终端适配器
+  git-changes.ts      # Git diff/变更收集
+  git-status.ts       # Git status 收集和规范化
+  git-types.ts        # Git 数据共享类型
   http-dispatcher.ts  # 服务端 fetch 的 HTTP(S) 代理配置
   rpc-manager.ts      # AgentSessionWrapper 生命周期和全局 registry
   session-reader.ts   # 解析 .jsonl 会话文件和分支上下文
+  session-file-references.ts # 会话引用文件的检查
   normalize.ts        # 规范化 toolCall 字段名
-  file-access.ts      # 文件读取安全边界
+  file-access.ts      # 文件读取安全边界和允许的根目录
+  file-fuzzy.ts       # 文件模糊搜索工具
+  file-upload.ts      # 文件上传校验和冲突处理
   file-paths.ts       # 文件路径编码/相对路径工具
+  models-cache.ts     # 模型列表和默认值缓存
+  session-title.ts    # 会话标题和自动命名工具
+  skill-updates.ts    # 技能更新操作
+  skill-lock.ts       # 技能更新锁
+  terminal-input.ts   # 终端输入处理
+  worktree.ts         # 项目/worktree 解析和 Git 操作
   markdown.ts         # Markdown/Mermaid/KaTeX 插件配置
   pi-types.ts         # pi 相关类型
 hooks/
   useAgentSession.ts  # 会话加载、发送命令、SSE 状态机
   useAudio.ts         # 完成提示音
   useDragDrop.ts      # 图片拖拽
+  useKeyboardShortcuts.ts # 键盘快捷键处理
   useTheme.ts         # 主题切换
 bin/
   pi-web.js           # npm CLI 入口

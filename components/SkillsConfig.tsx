@@ -8,11 +8,7 @@ import type {
   SkillSearchResult,
   SkillUpdateResult,
 } from "@/lib/api-types";
-
-function shortenPath(p: string): string {
-  // Match common home dir patterns: /Users/xxx, /home/xxx
-  return p.replace(/^\/(?:Users|home)\/[^/]+/, "~");
-}
+import { shortenPath } from "@/lib/file-paths";
 
 function sourceLabel(skill: Skill): string {
   const src = skill.sourceInfo?.source;

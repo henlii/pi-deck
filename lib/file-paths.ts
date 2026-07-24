@@ -1,8 +1,24 @@
+export function safeDecode(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+export function normalizeSlashes(value: string): string {
+  return value.replace(/\\/g, "/");
+}
+
 export function normalizeFilePathSlashes(filePath: string): string {
   if (/^[a-zA-Z]:[\\/]/.test(filePath) || filePath.startsWith("\\\\")) {
     return filePath.replace(/\\/g, "/");
   }
   return filePath;
+}
+
+export function shortenPath(filePath: string): string {
+  return filePath.replace(/^\/(?:Users|home)\/[^/]+/, "~");
 }
 
 export function encodeFilePathForApi(filePath: string): string {

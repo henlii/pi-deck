@@ -9,10 +9,6 @@ export { allowFileRoot, normalizeSlashes } from "./allowed-roots";
 // request re-scans every pi session on disk just to check access. 5s is short
 // enough that newly-created cwds appear promptly; stored on globalThis so it
 // survives Next.js hot-reload.
-declare global {
-  var __piAllowedRootsCache: { roots: Set<string>; expiresAt: number } | undefined;
-}
-
 const ALLOWED_ROOTS_TTL_MS = 5_000;
 const WINDOWS_ABSOLUTE_RE = /^[a-zA-Z]:[\\/]/;
 

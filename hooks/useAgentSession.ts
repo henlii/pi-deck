@@ -8,6 +8,8 @@ import type {
   ExtensionWidgetItem,
   SessionInfo,
   SessionTreeNode,
+  AttachedImage,
+  ChatInputHandle,
 } from "@/lib/types";
 import { normalizeToolCalls } from "@/lib/normalize";
 import { sendAgentCommand } from "@/lib/agent-client";
@@ -293,18 +295,7 @@ function readCompactResult(result: unknown, reason: string): CompactResultInfo |
   return { reason, tokensBefore: r.tokensBefore, estimatedTokensAfter: r.estimatedTokensAfter };
 }
 
-export interface ChatInputHandle {
-  insertText: (text: string) => void;
-  insertIfEmpty: (content: string) => void;
-  prependText: (text: string) => void;
-  addImages: (files: File[]) => void;
-}
-
-export interface AttachedImage {
-  data: string;
-  mimeType: string;
-  previewUrl: string;
-}
+export type { AttachedImage, ChatInputHandle } from "@/lib/types";
 
 type SelectedModel = { provider: string; modelId: string };
 type ModelEntry = { id: string; name: string; provider: string };

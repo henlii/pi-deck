@@ -1,26 +1,30 @@
-# Pi Web
+# Pi Deck
 
 [中文文档](./README.zh-CN.md)
 
-Local web UI for the [pi coding agent](https://github.com/badlogic/pi-mono). Pi Web reads your local pi session files and gives you a browser workspace for session browsing, real-time chat, model configuration, skill management, and project file preview.
+Pi Deck is a unified Agent workspace built on top of [Pi](https://github.com/badlogic/pi-mono). It does not replace Pi: it reads your local Pi session files and uses Pi's runtime semantics to provide a browser workspace for session browsing, real-time chat, model configuration, skill management, and project file preview.
 
-![Pi Web shows the same pi session with structured Markdown, tool calls, and project navigation beside the CLI](https://raw.githubusercontent.com/agegr/pi-web/main/docs/screenshot2.png)
+![上游 Pi Web 截图：展示 Pi 会话中的 Markdown、工具调用和项目导航；Pi Deck 当前暂使用该图片](https://raw.githubusercontent.com/agegr/pi-web/main/docs/screenshot2.png)
 
-The same pi session in CLI and Pi Web: structured tool calls, readable Markdown, session browsing, and cleaner results.
+The image is an upstream Pi Web screenshot, retained temporarily as a representative view; Pi Deck keeps the same Pi session format and runtime semantics.
+
+## Upstream / 上游来源
+
+Pi Deck is derived from [agegr/pi-web](https://github.com/agegr/pi-web), which is distributed under the MIT License. It is built around [badlogic/pi-mono](https://github.com/badlogic/pi-mono). The project preserves Pi session files and runtime semantics so existing Pi data remains the source of truth. Copyright and derivative-work notices for the upstream project are retained in [LICENSE](./LICENSE).
 
 ## Quick Start
 
 **Run without installing:**
 
 ```bash
-npx @agegr/pi-web@latest
+npx @henlii/pi-deck@latest
 ```
 
 **Or install globally:**
 
 ```bash
-npm install -g @agegr/pi-web
-pi-web
+npm install -g @henlii/pi-deck
+pi-deck
 ```
 
 Then open [http://localhost:30141](http://localhost:30141). The CLI will try to open the browser automatically after the server is ready.
@@ -28,18 +32,18 @@ Then open [http://localhost:30141](http://localhost:30141). The CLI will try to 
 **Options:**
 
 ```bash
-pi-web --port 8080              # custom port
-pi-web --hostname 127.0.0.1     # local access only
-pi-web -p 8080 -H 127.0.0.1     # combine options
-pi-web --no-open                # do not open the browser automatically
+pi-deck --port 8080              # custom port
+pi-deck --hostname 127.0.0.1     # local access only
+pi-deck -p 8080 -H 127.0.0.1     # combine options
+pi-deck --no-open                # do not open the browser automatically
 
-PORT=8080 pi-web                # environment variable is also supported
-PI_WEB_NO_OPEN=1 pi-web         # useful when running as a background service
+PORT=8080 pi-deck                # environment variable is also supported
+PI_WEB_NO_OPEN=1 pi-deck         # compatibility variable for background services
 ```
 
 ## HTTP Proxy
 
-Pi Web reads the standard `HTTP_PROXY`, `HTTPS_PROXY`, and `NO_PROXY` environment variables for server-side model and API requests.
+Pi Deck reads the standard `HTTP_PROXY`, `HTTPS_PROXY`, and `NO_PROXY` environment variables for server-side model and API requests.
 
 On macOS or Linux:
 
@@ -47,7 +51,7 @@ On macOS or Linux:
 HTTP_PROXY=http://127.0.0.1:7890 \
 HTTPS_PROXY=http://127.0.0.1:7890 \
 NO_PROXY=localhost,127.0.0.1 \
-npx @agegr/pi-web@latest
+npx @henlii/pi-deck@latest
 ```
 
 On Windows PowerShell:
@@ -56,7 +60,7 @@ On Windows PowerShell:
 $env:HTTP_PROXY = "http://127.0.0.1:7890"
 $env:HTTPS_PROXY = "http://127.0.0.1:7890"
 $env:NO_PROXY = "localhost,127.0.0.1"
-npx @agegr/pi-web@latest
+npx @henlii/pi-deck@latest
 ```
 
 ## Features
@@ -74,7 +78,7 @@ npx @agegr/pi-web@latest
 - **Session files**: files are stored as `~/.pi/agent/sessions/<encoded-cwd>/<timestamp>_<uuid>.jsonl`.
 - **Model config**: the Models panel reads and writes `models.json` in the pi agent directory. Model lists and defaults come from pi's config.
 - **File access**: file browsing and preview are scoped to the selected project directory and working directories that appear in sessions.
-- **Git worktrees**: see [Worktrees in Pi Web](./docs/worktrees.md) for when the switcher appears, how new worktrees are created, and what removal does.
+- **Git worktrees**: see [Worktrees in Pi Deck](./docs/worktrees.md) for when the switcher appears, how new worktrees are created, and what removal does.
 - **Forks vs in-session branches**: Fork creates a new `.jsonl` file. "Edit from here" creates another branch inside the same session file.
 
 ## Development
@@ -100,16 +104,20 @@ Avoid running `next build` / `npm run build` during local development. It writes
 ```text
 app/
   api/
-    agent/          # creates/drives AgentSession and exposes SSE events
+    agent/          # creates/drives AgentSession, exposes SSE, and serves bash output
     auth/           # OAuth and API key management
     cwd/validate/   # custom working directory validation
     default-cwd/    # pi default working directory lookup
-    files/          # file listing, reading, preview, and watching
+    files/          # file listing, reading, preview, search support, upload, and watching
+    file-index/     # project-wide file indexing and @-mention search
+    git/            # Git diff and status for the active project
     home/           # current user home directory
     models/         # available models, default model, thinking levels
     models-config/  # read/write models.json and test models
-    sessions/       # session reads, rename, delete, context, HTML export
-    skills/         # skill listing, search, install, enable/disable
+    plugins/        # package plugin management
+    sessions/       # session reads, rename, auto-naming, delete, context, state, deferred thinking, and HTML export
+    skills/         # skill listing, search, install, update, check, and enable/disable
+    worktrees/      # Git worktree listing, creation, and removal
 components/
   AppShell.tsx        # main layout, URL state, top panels, file tabs
   SessionSidebar.tsx  # project selector, session tree, Explorer
@@ -121,18 +129,35 @@ components/
   FileExplorer.tsx    # file tree
   FileViewer.tsx      # source, diff, image, audio, PDF, DOCX preview
 lib/
+  api-types.ts       # shared API request and response types
+  ansi.ts             # ANSI escape-sequence handling for terminal output
+  bash-output.ts      # bash command output formatting and parsing
+  custom-ui-terminal.ts # terminal adapter for custom UI output
+  git-changes.ts      # Git diff/change collection
+  git-status.ts       # Git status collection and normalization
+  git-types.ts        # shared Git data types
   http-dispatcher.ts  # HTTP(S) proxy setup for server-side fetch
   rpc-manager.ts      # AgentSessionWrapper lifecycle and global registry
   session-reader.ts   # parses .jsonl session files and branch contexts
+  session-file-references.ts # session-linked file reference checks
   normalize.ts        # normalizes toolCall field names
-  file-access.ts      # file read safety boundary
+  file-access.ts      # file read safety boundary and allowed roots
+  file-fuzzy.ts       # fuzzy file search helpers
+  file-upload.ts      # upload validation and conflict handling
   file-paths.ts       # path encoding and relative path helpers
+  models-cache.ts     # cached model lists and defaults
+  session-title.ts    # session title and auto-name helpers
+  skill-updates.ts    # skill update operations
+  skill-lock.ts       # skill update locking
+  terminal-input.ts   # terminal input handling
+  worktree.ts         # project/worktree resolution and Git operations
   markdown.ts         # Markdown/Mermaid/KaTeX plugin configuration
   pi-types.ts         # pi-related types
 hooks/
   useAgentSession.ts  # session loading, command sending, SSE state machine
   useAudio.ts         # completion sound
   useDragDrop.ts      # image drag/drop
+  useKeyboardShortcuts.ts # keyboard shortcut handling
   useTheme.ts         # theme switching
 bin/
   pi-web.js           # npm CLI entrypoint

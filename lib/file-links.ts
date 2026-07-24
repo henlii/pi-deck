@@ -1,17 +1,4 @@
-function safeDecode(value: string): string {
-  try {
-    return decodeURIComponent(value);
-  } catch {
-    return value;
-  }
-}
-
-function normalizeFilePathSlashes(filePath: string): string {
-  if (/^[a-zA-Z]:[\\/]/.test(filePath) || filePath.startsWith("\\\\")) {
-    return filePath.replace(/\\/g, "/");
-  }
-  return filePath;
-}
+import { normalizeFilePathSlashes, safeDecode } from "./file-paths";
 
 function stripLineSuffix(filePath: string): string {
   return filePath.replace(/:\d+(?::\d+)?$/, "");

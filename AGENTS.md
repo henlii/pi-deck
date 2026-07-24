@@ -1,4 +1,4 @@
-# Pi Web - Development Notes
+# Pi Deck Development Notes
 
 ## Quick Start
 
@@ -13,6 +13,8 @@ Lint: `npm run lint`
 ---
 
 ## Architecture
+
+Pi Deck 是 Pi 的上层客户端；底层 Pi SDK 与 Pi 会话语义保持兼容。
 
 ```
 Browser                Next.js Server              AgentSession (in-process)
@@ -41,10 +43,12 @@ Browser                Next.js Server              AgentSession (in-process)
 app/api/
   sessions/route.ts               GET  list all sessions
   sessions/[id]/route.ts          GET/PATCH/DELETE session
+  sessions/[id]/auto-name/route.ts POST generate a session title
   sessions/[id]/context/route.ts  GET ?leafId= — context for a specific leaf
   sessions/[id]/export/route.ts   GET exported HTML for a session
   agent/new/route.ts              POST { cwd, message, toolNames?, provider?, modelId? }
   agent/[id]/route.ts             GET state | POST any command
+  agent/[id]/bash-output/route.ts GET referenced bash output, inline or download
   agent/[id]/events/route.ts      GET SSE stream
   agent/running/events/route.ts   GET SSE stream of currently-running session ids
   auth/all-providers/route.ts     GET API-key provider list
@@ -55,26 +59,52 @@ app/api/
   cwd/validate/route.ts           POST validate/select a cwd
   default-cwd/route.ts            POST create ~/pi-cwd-YYYYMMDD
   files/[...path]/route.ts        GET file contents for viewer
+  file-index/route.ts             GET project file index/search for @-mentions
+  git/diff/route.ts               GET Git diff for the active project
+  git/status/route.ts             GET Git status for the active project
   home/route.ts                   GET user home directory
   models/route.ts                 GET { models, modelList, defaultModel }
   models-config/route.ts          GET/PUT — read/write ~/.pi/agent/models.json
   models-config/test/route.ts     POST test a configured model/provider
   plugins/route.ts                GET/POST package plugin management
   skills/route.ts                 GET/PATCH loaded skills and disable-model-invocation
+  skills/check/route.ts            GET check for skill updates
   skills/install/route.ts         POST install skills through npx skills add
   skills/search/route.ts          GET/POST skills.sh search
+  skills/update/route.ts          POST update installed skills
   worktrees/route.ts              GET/POST/DELETE git worktrees
+  sessions/[id]/state/route.ts    GET persisted session state
+  sessions/[id]/entries/[entryId]/thinking/route.ts GET deferred thinking content
 
 lib/
   agent-client.ts      typed fetch helper for /api/agent commands
+  api-types.ts         shared API request and response types
+  ansi.ts              ANSI escape-sequence handling for terminal output
+  bash-output.ts       bash command output formatting and parsing
+  custom-ui-terminal.ts terminal adapter for custom UI output
   draft-store.ts       local draft persistence helpers
   file-access.ts       allowed file roots for /api/files and worktrees
+  file-dirent.ts       safe directory entry helpers for file browsing
+  file-fuzzy.ts        fuzzy file search helpers
+  file-links.ts        file reference/link helpers
   file-paths.ts        client/server path encoding helpers
+  file-types.ts        file classification and preview types
+  file-upload.ts       upload validation and conflict handling
+  git-changes.ts       Git diff/change collection
+  git-status.ts        Git status collection and normalization
+  git-types.ts         shared Git data types
+  http-dispatcher.ts   HTTP(S) proxy setup for server-side fetch
   markdown.ts          shared markdown helpers
+  models-cache.ts      cached model lists and defaults
   npx.ts               npx runner used by skill install
   pi-types.ts          local structural types for pi SDK objects
   rpc-manager.ts      AgentSessionWrapper + registry + startRpcSession
   session-reader.ts   SessionManager wrappers + path cache + buildSessionContext adapter
+  session-title.ts    session title and auto-name helpers
+  session-file-references.ts session-linked file reference checks
+  skill-lock.ts        skill update locking
+  skill-updates.ts     skill update operations
+  terminal-input.ts    terminal input handling
   tool-presets.ts     PRESET_NONE/DEFAULT/FULL + getPresetFromTools()
   types.ts            shared TypeScript types
   normalize.ts        normalizeToolCalls() — field name mismatch between file format and our types
@@ -103,6 +133,7 @@ hooks/
   useDragDrop.ts      shared drag/drop state
   useIsMobile.ts      responsive breakpoint hook
   useTheme.ts         theme state
+  useKeyboardShortcuts.ts keyboard shortcut handling
 ```
 
 ---
@@ -199,6 +230,6 @@ Location: `~/.pi/agent/sessions/<encoded-cwd>/<timestamp>_<uuid>.jsonl`
 ```
 --bg --bg-panel --bg-hover --bg-selected --border
 --text --text-muted --text-dim
---accent --user-bg --tool-bg
+--accent --accent-hover --user-bg --assistant-bg --tool-bg --bg-subtle
 --font-mono
 ```

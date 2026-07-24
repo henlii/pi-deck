@@ -1,17 +1,18 @@
 {
-  "name": "@agegr/pi-web",
-  "version": "0.8.0",
-  "description": "Web UI for the pi coding agent",
-  "homepage": "https://github.com/agegr/pi-web#readme",
+  "name": "@henlii/pi-deck",
+  "version": "0.1.0",
+  "description": "Pi Deck：基于 Pi 的统一 Agent 工作空间上层客户端",
+  "homepage": "https://github.com/henlii/pi-deck#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/agegr/pi-web.git"
+    "url": "git+https://github.com/henlii/pi-deck.git"
   },
   "bugs": {
-    "url": "https://github.com/agegr/pi-web/issues"
+    "url": "https://github.com/henlii/pi-deck/issues"
   },
   "license": "MIT",
   "bin": {
+    "pi-deck": "bin/pi-web.js",
     "pi-web": "bin/pi-web.js"
   },
   "files": [
@@ -29,6 +30,9 @@
     "build": "next build --webpack",
     "start": "next start -p 30141",
     "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test lib/*.test.mjs components/*.test.mjs",
+    "check": "npm run typecheck && npm run lint && npm run test",
     "release": "npm version patch --no-git-tag-version && npm run build && npm publish --access public"
   },
   "dependencies": {
@@ -36,7 +40,7 @@
     "@earendil-works/pi-ai": "0.81.1",
     "@earendil-works/pi-coding-agent": "0.81.1",
     "@earendil-works/pi-tui": "0.81.1",
-    "next": "16.2.9",
+    "next": "16.2.11",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "undici": "8.5.0"
@@ -49,12 +53,12 @@
     "@types/react-dom": "^19",
     "@types/react-syntax-highlighter": "^15.5.13",
     "eslint": "^9",
-    "eslint-config-next": "16.2.9",
+    "eslint-config-next": "16.2.11",
     "jiti": "^2.7.0",
     "katex": "^0.16.47",
     "mammoth": "^1.12.0",
-    "mermaid": "^11.14.0",
-    "postcss": "^8",
+    "mermaid": "^11.16.0",
+    "postcss": "^8.5.22",
     "react-markdown": "^10.1.0",
     "react-syntax-highlighter": "^16.1.1",
     "rehype-katex": "^7.0.1",

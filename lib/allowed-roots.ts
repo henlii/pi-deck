@@ -1,3 +1,5 @@
+import { normalizeSlashes } from "./file-paths";
+
 // In-memory roots that should be browsable in addition to roots derived from
 // persisted sessions. Stored on globalThis so Next.js hot-reload keeps them.
 declare global {
@@ -5,9 +7,7 @@ declare global {
   var __piAdditionalAllowedRoots: Set<string> | undefined;
 }
 
-export function normalizeSlashes(filePath: string): string {
-  return filePath.replace(/\\/g, "/");
-}
+export { normalizeSlashes } from "./file-paths";
 
 export function getAdditionalAllowedRoots(): Set<string> {
   if (!globalThis.__piAdditionalAllowedRoots) {

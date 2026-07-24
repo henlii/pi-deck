@@ -1,0 +1,9 @@
+*.ts text eol=crlf
+*.tsx text eol=crlf
+*.mjs text eol=crlf
+*.json text eol=crlf
+*.md text eol=crlf
+.gitignore text eol=crlf
+.gitattributes text eol=crlf
+LICENSE text eol=crlf
+bun.lock text eol=crlf

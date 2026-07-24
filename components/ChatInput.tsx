@@ -9,12 +9,9 @@ import {
 } from "@/lib/file-fuzzy";
 import { FolderIcon, getFileIcon } from "./FileIcons";
 import { useIsMobile } from "@/hooks/useIsMobile";
+import type { AttachedImage, ChatInputHandle } from "@/lib/types";
 
-export interface AttachedImage {
-  data: string;   // base64, no prefix
-  mimeType: string;
-  previewUrl: string; // object URL for display
-}
+export type { AttachedImage, ChatInputHandle } from "@/lib/types";
 
 interface ModelOption {
   provider: string;
@@ -58,13 +55,6 @@ interface Props {
   draftKey?: string;
   /** Session working directory — enables the @ file autocomplete menu */
   cwd?: string | null;
-}
-
-export interface ChatInputHandle {
-  insertText: (text: string) => void;
-  insertIfEmpty: (text: string) => void;
-  prependText: (text: string) => void;
-  addImages: (files: File[]) => void;
 }
 
 const TOOL_PRESETS = ["off", "default", "full"] as const;

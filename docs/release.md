@@ -1,11 +1,15 @@
 # Release Checklist
 
-This repo publishes two artifacts for each release:
+This repo targets two Pi Deck release artifacts; this checklist does not mean either artifact has been published:
 
-- npm package: `@agegr/pi-web`
-- GitHub Release: `agegr/pi-web`
+- npm package: `@henlii/pi-deck`
+- GitHub Release: `henlii/pi-deck`
 
 Use this checklist from a clean `main` checkout.
+
+## Upstream sync / 上游同步
+
+Pi Deck is derived from [agegr/pi-web](https://github.com/agegr/pi-web) and remains built on [badlogic/pi-mono](https://github.com/badlogic/pi-mono). Before a release, compare upstream changes and preserve Pi session-file compatibility and runtime semantics.
 
 ## 1. Preflight
 
@@ -21,7 +25,7 @@ Expected:
 
 - `git status` is clean, or only contains changes you intentionally plan to release.
 - GitHub is authenticated as an account that can push and create releases.
-- npm is authenticated as an account that can publish `@agegr/pi-web`.
+- npm is authenticated as an account that can publish `@henlii/pi-deck`.
 
 ## 2. Publish to npm
 
@@ -39,11 +43,11 @@ Notes:
 
 - This bumps `package.json` and `package-lock.json`.
 - It intentionally runs a production build. Do not run `next build` during normal development; release work is the exception.
-- If `npm view @agegr/pi-web version` briefly shows the previous version, check the exact version instead:
+- If `npm view @henlii/pi-deck version` briefly shows the previous version, check the exact version instead:
 
 ```bash
-npm view @agegr/pi-web@<version> version --registry https://registry.npmjs.org/
-npm view @agegr/pi-web versions --json --registry https://registry.npmjs.org/
+npm view @henlii/pi-deck@<version> version --registry https://registry.npmjs.org/
+npm view @henlii/pi-deck versions --json --registry https://registry.npmjs.org/
 ```
 
 ## 3. Commit the Version Bump
@@ -67,7 +71,7 @@ Confirm the tag does not already exist before creating it when unsure:
 
 ```bash
 git ls-remote --tags origin v<version>
-gh release view v<version> --repo agegr/pi-web
+gh release view v<version> --repo henlii/pi-deck
 ```
 
 ## 5. Generate Release Notes from Commits
@@ -103,7 +107,7 @@ Suggested structure:
 
 ### 内部调整
 
-- 发布 npm 包 `@agegr/pi-web@<version>`。
+- 发布目标：npm 包 `@henlii/pi-deck@<version>`（本文不声称已发布）。
 
 ## English
 
@@ -123,7 +127,7 @@ Prepared from commits in `v<previous>..v<version>`.
 
 ### Internal
 
-- Published npm package `@agegr/pi-web@<version>`.
+- Publish target: npm package `@henlii/pi-deck@<version>` (not claimed as published here).
 ```
 
 ## 6. Create or Update the GitHub Release
@@ -132,7 +136,7 @@ Create a new release:
 
 ```bash
 gh release create v<version> \
-  --repo agegr/pi-web \
+  --repo henlii/pi-deck \
   --verify-tag \
   --title "v<version>" \
   --notes-file release-notes.md
@@ -142,14 +146,14 @@ If the release already exists and only the notes need updating:
 
 ```bash
 gh release edit v<version> \
-  --repo agegr/pi-web \
+  --repo henlii/pi-deck \
   --notes-file release-notes.md
 ```
 
 You can avoid a temporary file by passing notes through stdin:
 
 ```bash
-gh release edit v<version> --repo agegr/pi-web --notes-file - <<'EOF'
+gh release edit v<version> --repo henlii/pi-deck --notes-file - <<'EOF'
 ## 中文
 
 ...
@@ -163,8 +167,8 @@ EOF
 ## 7. Final Verification
 
 ```bash
-gh release view v<version> --repo agegr/pi-web
-npm view @agegr/pi-web@<version> version --registry https://registry.npmjs.org/
+gh release view v<version> --repo henlii/pi-deck
+npm view @henlii/pi-deck@<version> version --registry https://registry.npmjs.org/
 git status --short --branch
 git log --oneline --decorate -3
 ```

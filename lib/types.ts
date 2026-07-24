@@ -31,6 +31,19 @@ export interface ImageContent {
   };
 }
 
+export interface AttachedImage {
+  data: string;
+  mimeType: string;
+  previewUrl: string;
+}
+
+export interface ChatInputHandle {
+  insertText: (text: string) => void;
+  insertIfEmpty: (text: string) => void;
+  prependText: (text: string) => void;
+  addImages: (files: File[]) => void;
+}
+
 export interface ThinkingContent {
   type: "thinking";
   thinking: string;
