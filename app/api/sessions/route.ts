@@ -1,11 +1,10 @@
 import { NextResponse } from "next/server";
-import { listAllSessions } from "@/lib/session-reader";
-import { getRunningRpcSessionIds } from "@/lib/rpc-manager";
+import { sessionService } from "@/lib/session-service";
 
 export async function GET() {
   try {
-    const sessions = await listAllSessions();
-    return NextResponse.json({ sessions, runningSessionIds: getRunningRpcSessionIds() });
+    const { sessions, runningSessionIds } = await sessionService.listSessions();
+    return NextResponse.json({ sessions, runningSessionIds });
   } catch (error) {
     return NextResponse.json(
       { error: String(error) },

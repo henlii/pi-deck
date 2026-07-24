@@ -1,8 +1,6 @@
 import { NextResponse } from "next/server";
-import { existsSync } from "fs";
-import { allowFileRoot } from "@/lib/file-access";
-import { invalidateSessionListCache } from "@/lib/session-reader";
-import { startRpcSession } from "@/lib/rpc-manager";
+import { sessionService } from "@/lib/session-service";
+
 // POST /api/agent/new  body: { cwd: string; type: string; message?: string; ... }
 // Spawns a brand-new pi session. Most calls immediately send the first command;
 // type:"ensure_session" only creates the runtime so clients can query commands.
@@ -12,43 +10,20 @@ export async function POST(req: Request) {
     const body = await req.json() as { cwd?: string; [key: string]: unknown };
     const { cwd, ...command } = body;
 
-    if (!cwd || typeof cwd !== "string") {
+    const { sessionId, data } = await sessionService.createNew({
+      cwd: cwd as string,
+      command: command as { type: string; [key: string]: unknown },
+    });
+
+    return NextResponse.json({ success: true, sessionId, data });
+  } catch (error) {
+    const message = String(error);
+    if (message === "cwd is required") {
       return NextResponse.json({ error: "cwd is required" }, { status: 400 });
     }
-    if (!existsSync(cwd)) {
-      return NextResponse.json({ error: `Directory does not exist: ${cwd}` }, { status: 400 });
+    if (message.startsWith("Directory does not exist:")) {
+      return NextResponse.json({ error: message }, { status: 400 });
     }
-
-    // Use a one-time key so startRpcSession's lock doesn't conflict with real session ids
-    const { provider, modelId, toolNames, thinkingLevel, ...promptCommand } = command as { provider?: string; modelId?: string; toolNames?: string[]; thinkingLevel?: string; [key: string]: unknown };
-
-    const tempKey = `__new__${Date.now()}`;
-    const { session, realSessionId } = await startRpcSession(tempKey, "", cwd, toolNames);
-
-    // Keep the files-route allowed-roots cache (see app/api/files/[...path]/route.ts)
-    // in sync so the new cwd is immediately readable via /api/files. Without this,
-    // a file request under a brand-new cwd would 403 for up to the cache TTL.
-    allowFileRoot(cwd);
-    invalidateSessionListCache();
-
-    // Apply pre-selected model before sending the prompt
-    if (provider && modelId) {
-      await session.send({ type: "set_model", provider, modelId });
-    }
-
-    // Apply pre-selected thinking level before sending the prompt
-    if (thinkingLevel) {
-      await session.send({ type: "set_thinking_level", level: thinkingLevel });
-    }
-
-    if (promptCommand.type === "ensure_session") {
-      return NextResponse.json({ success: true, sessionId: realSessionId, data: null });
-    }
-
-    const result = await session.send(promptCommand);
-
-    return NextResponse.json({ success: true, sessionId: realSessionId, data: result });
-  } catch (error) {
-    return NextResponse.json({ error: String(error) }, { status: 500 });
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

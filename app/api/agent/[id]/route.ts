@@ -1,7 +1,5 @@
 import { NextResponse } from "next/server";
-import { resolveSessionPath } from "@/lib/session-reader";
-import { startRpcSession, getRpcSession } from "@/lib/rpc-manager";
-import { SessionManager } from "@earendil-works/pi-coding-agent";
+import { sessionService } from "@/lib/session-service";
 
 // POST /api/agent/[id] - Send a command to an existing session
 export async function POST(
@@ -12,27 +10,14 @@ export async function POST(
 
   try {
     const body = await req.json() as { type: string; [key: string]: unknown };
-
-    // Fast path: already-running session
-    const existing = getRpcSession(id);
-    if (existing?.isAlive()) {
-      const result = await existing.send(body);
-      return NextResponse.json({ success: true, data: result });
-    }
-
-    const filePath = await resolveSessionPath(id);
-    if (!filePath) {
-      return NextResponse.json({ error: "Session not found" }, { status: 404 });
-    }
-
-    const cwd = SessionManager.open(filePath).getHeader()?.cwd ?? process.cwd();
-
-    const { session } = await startRpcSession(id, filePath, cwd);
-    const result = await session.send(body);
-
+    const result = await sessionService.send(id, body);
     return NextResponse.json({ success: true, data: result });
   } catch (error) {
-    return NextResponse.json({ error: String(error) }, { status: 500 });
+    const message = String(error);
+    if (message.includes("Session not found")) {
+      return NextResponse.json({ error: "Session not found" }, { status: 404 });
+    }
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }
 
@@ -44,8 +29,8 @@ export async function GET(
   const { id } = await params;
 
   try {
-    const session = getRpcSession(id);
-    if (!session || !session.isAlive()) {
+    const session = sessionService.getLiveSession(id);
+    if (!session) {
       return NextResponse.json({ running: false });
     }
 
