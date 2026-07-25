@@ -1,10 +1,10 @@
 "use client";
 import { registerAbortHandler } from "@/hooks/useKeyboardShortcuts";
 import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import type { AgentMessage, AssistantContentBlock, AssistantMessage, BashExecutionMessage, ExtensionUiRequest, SessionInfo, SessionTreeNode, ToolResultMessage } from "@/lib/types";
+import type { AgentMessage, BashExecutionMessage, ExtensionUiRequest, SessionInfo, SessionTreeNode, ToolResultMessage } from "@/lib/types";
 import { normalizeCustomPanelLines, parseAnsiLine } from "@/lib/ansi";
 import { asBracketedPaste, toTerminalKeyData } from "@/lib/terminal-input";
-import { countToolCallBlocks, getDisplayableAssistantBlocks, splitFinalAssistantBlocks } from "@/lib/message-display";
+import { composeChatPlan, type ChatRenderItem } from "@/lib/chat-compositor";
 import { MessageView } from "./MessageView";
 import { ChatInput, type ChatInputHandle } from "./ChatInput";
 import { ChatMinimap, useMessageRefs } from "./ChatMinimap";
@@ -54,50 +54,6 @@ const CHAT_MINIMAP_WIDTH = 36;
 const CHAT_COLUMN_PADDING = 16;
 const CHAT_INPUT_RIGHT_PADDING = CHAT_COLUMN_PADDING + CHAT_MINIMAP_WIDTH;
 
-function hasFinalAssistantAnswer(message: AgentMessage): boolean {
-  if (message.role !== "assistant") return false;
-  return splitFinalAssistantBlocks(message as AssistantMessage).answerBlocks.some((block) => (
-    block.type === "image" || (block.type === "text" && block.text.trim().length > 0)
-  ));
-}
-
-function findFinalAssistantIndex(messages: AgentMessage[], userIdx: number, endIdx: number): number {
-  for (let candidateIdx = endIdx - 1; candidateIdx > userIdx; candidateIdx--) {
-    if (hasFinalAssistantAnswer(messages[candidateIdx])) return candidateIdx;
-  }
-  for (let candidateIdx = endIdx - 1; candidateIdx > userIdx; candidateIdx--) {
-    if (messages[candidateIdx]?.role === "assistant") return candidateIdx;
-  }
-  return -1;
-}
-
-function countToolCalls(messages: AgentMessage[], indices: number[]): number {
-  let count = 0;
-  for (const idx of indices) {
-    const msg = messages[idx];
-    if (msg?.role !== "assistant") continue;
-    count += countToolCallBlocks(getDisplayableAssistantBlocks(msg as AssistantMessage));
-  }
-  return count;
-}
-
-function hasDisplayableProcessMessage(message: AgentMessage): boolean {
-  if (message.role === "assistant") {
-    return getDisplayableAssistantBlocks(message as AssistantMessage).length > 0;
-  }
-  return message.role === "custom";
-}
-
-function withAssistantBlocks(
-  message: AssistantMessage,
-  content: AssistantContentBlock[],
-  options: { omitUsage?: boolean } = {},
-): AssistantMessage {
-  const next = { ...message, content };
-  if (options.omitUsage) next.usage = undefined;
-  return next;
-}
-
 function ProcessDetailsGroup({ messageCount, toolCallCount, children }: { messageCount: number; toolCallCount: number; children: ReactNode }) {
   const [expanded, setExpanded] = useState(false);
   const parts = ["Process details", `${messageCount} ${messageCount === 1 ? "message" : "messages"}`];
@@ -144,6 +100,8 @@ function ProcessDetailsGroup({ messageCount, toolCallCount, children }: { messag
 export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreated, onSessionForked, modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSessionStatsChange, onSessionStatsPanelOpen, onContextUsageChange, onOpenFile }: Props) {
   const { soundEnabled, onSoundToggle, playDoneSound, unlockAudio } = useAudio();
   const isMobile = useIsMobile();
+  // 只读（subagent 持久化）会话：历史正常读，一切写入口关闭，编辑器换成只读提示。
+  const isReadOnly = session?.readOnly === true;
 
   // Wrap onAgentEnd to play the completion sound. This is more reliable than
   // wrapping handleAgentEventRef because useAgentSession overwrites that ref
@@ -268,9 +226,9 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
   useEffect(() => () => { onContextUsageChange?.(null); }, [onContextUsageChange]);
 
   const onDrop = useCallback((files: File[]) => {
-    if (sessionBusy) return;
+    if (sessionBusy || isReadOnly) return;
     chatInputRef?.current?.addImages(files);
-  }, [sessionBusy, chatInputRef]);
+  }, [sessionBusy, isReadOnly, chatInputRef]);
 
   const { isDragOver, handleDragEnter, handleDragOver, handleDragLeave, handleDrop } = useDragDrop(onDrop);
 
@@ -288,7 +246,9 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
     ? (modelThinkingLevelMaps[`${displayModelValue.provider}:${displayModelValue.modelId}`] ?? null)
     : null;
 
-  const chatInputElement = (
+  const chatInputElement = isReadOnly && session ? (
+    <ReadOnlySessionBar session={session} isMobile={isMobile} />
+  ) : (
     <ChatInput
       ref={chatInputRef}
       onSend={handleSend}
@@ -355,7 +315,7 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
-      {isDragOver && !sessionBusy && (
+      {isDragOver && !sessionBusy && !isReadOnly && (
         <div className="pointer-events-none absolute inset-0 z-50 flex animate-[drop-zone-in_0.15s_ease_both] items-center justify-center bg-[rgba(37,99,235,0.06)] backdrop-blur-[1px]">
           <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
             {[0, 0.8, 1.6].map((delay) => (
@@ -465,12 +425,8 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
                 }
               }
 
-              let lastUserIdx = -1;
-              for (let i = messages.length - 1; i >= 0; i--) {
-                if (messages[i].role === "user") { lastUserIdx = i; break; }
-              }
-
               const visibleRefIndexByMessage = new Map<number, number>();
+              const lastUserIdx = messages.findLastIndex((message) => message.role === "user");
               let refIdx = 0;
               messages.forEach((msg, idx) => {
                 if (msg.role === "user" || msg.role === "assistant") {
@@ -483,136 +439,67 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
                 if (idx === lastUserIdx) { (lastUserMsgRef as { current: HTMLDivElement | null }).current = el; }
               };
 
-              const renderMessage = (idx: number, options: { attachRef?: boolean; keyPrefix?: string; messageOverride?: AgentMessage; showTimestamp?: boolean } = {}): ReactNode => {
-                const msg = options.messageOverride ?? messages[idx];
+              const renderMessage = (item: ChatRenderItem): ReactNode => {
+                const idx = item.messageIndex;
+                const msg = item.messageOverride ?? messages[idx];
                 const prevAssistantEntryId =
                   msg.role === "user" && idx > 0 && messages[idx - 1].role === "assistant"
                     ? entryIds[idx - 1]
                     : undefined;
                 const isVisible = msg.role === "user" || msg.role === "assistant";
                 const currentRefIdx = visibleRefIndexByMessage.get(idx);
-                const keyPrefix = options.keyPrefix ?? "message";
-                let showTimestamp = false;
-                if (msg.role === "assistant") {
-                  showTimestamp = true;
-                  for (let j = idx + 1; j < messages.length; j++) {
-                    const r = messages[j].role;
-                    if (r === "user") break;
-                    if (r === "assistant") { showTimestamp = false; break; }
-                  }
-                  // Hide on the currently-streaming tail (the streaming bubble owns the live timestamp)
-                  if (showTimestamp && streamState.isStreaming && idx === messages.length - 1) {
-                    showTimestamp = false;
-                  }
-                }
-                if (options.showTimestamp !== undefined) showTimestamp = options.showTimestamp;
                 const view = (
                   <MessageView
-                    key={`${keyPrefix}-view-${idx}`}
+                    key={`${item.keyPrefix}-view-${idx}`}
                     message={msg}
                     toolResults={toolResultsMap}
                     modelNames={modelNames}
                     cwd={messageCwd}
                     onOpenFile={onOpenFile}
                     entryId={entryIds[idx]}
-                    onFork={sessionBusy || isNew || (idx === 0 && msg.role === "user") ? undefined : handleFork}
+                    // 只读会话：Fork/Continue 等写入口一律不下发（hook 侧另有 guard）。
+                    onFork={sessionBusy || isNew || isReadOnly || (idx === 0 && msg.role === "user") ? undefined : handleFork}
                     forking={forkingEntryId === entryIds[idx]}
-                    onNavigate={sessionBusy ? undefined : handleNavigate}
-                    prevAssistantEntryId={sessionBusy ? undefined : prevAssistantEntryId}
-                    onEditContent={handleEditContent}
-                    showTimestamp={showTimestamp}
+                    onNavigate={sessionBusy || isReadOnly ? undefined : handleNavigate}
+                    prevAssistantEntryId={sessionBusy || isReadOnly ? undefined : prevAssistantEntryId}
+                    onEditContent={isReadOnly ? undefined : handleEditContent}
+                    showTimestamp={item.showTimestamp}
                     prevTimestamp={idx > 0 ? (messages[idx - 1] as AgentMessage & { timestamp?: number }).timestamp : undefined}
                     sessionId={session?.id ?? sessionIdRef.current ?? undefined}
                   />
                 );
-                if (!isVisible || options.attachRef === false || currentRefIdx === undefined) return view;
+                if (!isVisible || !item.attachRef || currentRefIdx === undefined) return view;
                 return (
-                  <div key={`${keyPrefix}-${idx}`} ref={attachVisibleRef(idx, currentRefIdx)}>
+                  <div key={`${item.keyPrefix}-${idx}`} ref={attachVisibleRef(idx, currentRefIdx)}>
                     {view}
                   </div>
                 );
               };
 
               const rendered: ReactNode[] = [];
-              for (let idx = 0; idx < messages.length;) {
-                const msg = messages[idx];
-                if (msg.role !== "user") {
-                  rendered.push(renderMessage(idx));
-                  idx += 1;
+              const plan = composeChatPlan({ messages, isStreaming: streamState.isStreaming, agentOrBashRunning: sessionBusy });
+              for (const item of plan) {
+                if (item.kind === "message") {
+                  rendered.push(renderMessage(item));
                   continue;
                 }
-
-                const userIdx = idx;
-                let endIdx = userIdx + 1;
-                while (endIdx < messages.length && messages[endIdx].role !== "user") endIdx += 1;
-
-                const finalAssistantIdx = findFinalAssistantIndex(messages, userIdx, endIdx);
-
-                if (finalAssistantIdx === -1) {
-                  for (let renderIdx = userIdx; renderIdx < endIdx; renderIdx++) {
-                    rendered.push(renderMessage(renderIdx));
-                  }
-                  idx = endIdx;
-                  continue;
-                }
-
-                const isLiveTail = (sessionBusy || streamState.isStreaming) && endIdx === messages.length && userIdx === lastUserIdx;
-                if (isLiveTail) {
-                  for (let renderIdx = userIdx; renderIdx < endIdx; renderIdx++) {
-                    rendered.push(renderMessage(renderIdx));
-                  }
-                  idx = endIdx;
-                  continue;
-                }
-
-                rendered.push(renderMessage(userIdx));
-
-                const processIndices: number[] = [];
-                for (let processIdx = userIdx + 1; processIdx < finalAssistantIdx; processIdx++) {
-                  processIndices.push(processIdx);
-                }
-                const visibleProcessIndices = processIndices.filter((processIdx) => hasDisplayableProcessMessage(messages[processIdx]));
-                const finalAssistant = messages[finalAssistantIdx] as AssistantMessage;
-                const finalSplit = splitFinalAssistantBlocks(finalAssistant);
-                const finalProcessMessage = finalSplit.processBlocks.length > 0
-                  ? withAssistantBlocks(finalAssistant, finalSplit.processBlocks, { omitUsage: true })
-                  : null;
-                const finalAnswerMessage = finalSplit.answerBlocks.length > 0
-                  ? withAssistantBlocks(finalAssistant, finalSplit.answerBlocks)
-                  : null;
-
-                const processCount = visibleProcessIndices.length + (finalProcessMessage ? 1 : 0);
-                if (processCount > 0) {
-                  const processRefIdx = visibleProcessIndices
-                    .map((processIdx) => visibleRefIndexByMessage.get(processIdx))
-                    .find((value): value is number => typeof value === "number")
-                    ?? (finalAnswerMessage ? undefined : visibleRefIndexByMessage.get(finalAssistantIdx));
-                  const processGroup = (
+                const processRefIdx = item.attachRefMessageIndex === undefined ? undefined : visibleRefIndexByMessage.get(item.attachRefMessageIndex);
+                const processGroup = (
                     <ProcessDetailsGroup
-                      messageCount={processCount}
-                      toolCallCount={countToolCalls(messages, visibleProcessIndices) + countToolCallBlocks(finalSplit.processBlocks)}
+                      messageCount={item.messageCount}
+                      toolCallCount={item.toolCallCount}
                     >
-                      {visibleProcessIndices.map((processIdx) => renderMessage(processIdx, { attachRef: false, keyPrefix: "process" }))}
-                      {finalProcessMessage && renderMessage(finalAssistantIdx, { attachRef: false, keyPrefix: "process-final", messageOverride: finalProcessMessage, showTimestamp: false })}
+                      {item.children.map((child) => renderMessage(child))}
                     </ProcessDetailsGroup>
                   );
                   rendered.push(
                     <div
-                      key={`process-group-${userIdx}-${finalAssistantIdx}`}
+                      key={`process-group-${item.userIdx}-${item.finalAssistantIdx}`}
                       ref={processRefIdx === undefined ? undefined : (el) => { messageRefs.current[processRefIdx] = el; }}
                     >
                       {processGroup}
                     </div>,
                   );
-                }
-
-                if (finalAnswerMessage) {
-                  rendered.push(renderMessage(finalAssistantIdx, { messageOverride: finalAnswerMessage }));
-                }
-                for (let renderIdx = finalAssistantIdx + 1; renderIdx < endIdx; renderIdx++) {
-                  rendered.push(renderMessage(renderIdx));
-                }
-                idx = endIdx;
               }
               const { startIndex, hasMore } = getVisibleRenderWindow(rendered.length, visibleCount);
               return (
@@ -687,6 +574,50 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
       </div>
       </>
       )}
+    </div>
+  );
+}
+
+/**
+ * 只读会话的紧凑提示条，整体替代编辑器：说明这是什么会话、能做什么、
+ * 什么被关掉。文案保持具体直白，与现有英文界面一致。
+ */
+function ReadOnlySessionBar({ session, isMobile }: { session: SessionInfo; isMobile: boolean }) {
+  const sub = session.subagent;
+  const identity = sub
+    ? `${sub.agent ? `agent ${sub.agent}` : "subagent"} · run ${sub.runIndex}`
+    : null;
+  return (
+    // 与 ChatInput 相同的外边距节奏（桌面端右侧为 ChatMinimap 预留 36px）。
+    <div style={{ flexShrink: 0, padding: "0 16px 8px", paddingRight: isMobile ? 16 : CHAT_INPUT_RIGHT_PADDING }}>
+      <div style={{ maxWidth: 820, margin: "0 auto" }}>
+        <div
+          role="note"
+          aria-label="Read-only subagent session"
+          style={{
+            display: "flex",
+            alignItems: "flex-start",
+            gap: 8,
+            border: "1px solid var(--border)",
+            borderRadius: 10,
+            background: "var(--bg-panel)",
+            padding: "8px 12px",
+            fontSize: 12,
+            lineHeight: 1.5,
+            color: "var(--text-muted)",
+          }}
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, marginTop: 2, color: "var(--text-dim)" }} aria-hidden="true">
+            <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+            <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+          </svg>
+          <span style={{ minWidth: 0 }}>
+            <span style={{ color: "var(--text)", fontWeight: 600 }}>Read-only session</span>
+            {identity ? ` — ${identity}` : " — subagent session"}
+            . Browsing only: sending, steering, follow-ups, compaction, forking, and setting changes are disabled. Messages, files and session stats remain viewable.
+          </span>
+        </div>
+      </div>
     </div>
   );
 }

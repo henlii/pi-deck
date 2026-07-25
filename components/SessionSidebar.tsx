@@ -2,7 +2,11 @@
 
 import { useEffect, useLayoutEffect, useState, useCallback, useRef, type CSSProperties, type ReactNode } from "react";
 import type { SessionInfo } from "@/lib/types";
+import { displayCwd, getRecentProjects, type WorktreeEntry, type WorktreeState } from "@/lib/project-context";
+import { buildSessionDisplayTree, type SessionDisplayNode, type SessionRelationKind } from "./session-tree";
+import { getSessionCapabilities } from "./session-capabilities";
 import { FileExplorer, type FileExplorerHandle } from "./FileExplorer";
+import { useProjectActions, useProjectIdentity } from "./ProjectProvider";
 
 declare global {
   interface Window {
@@ -15,36 +19,17 @@ declare global {
 interface Props {
   selectedSessionId: string | null;
   onSelectSession: (session: SessionInfo, isRestore?: boolean) => void;
-  onNewSession?: (sessionId: string, cwd: string) => void;
+  onNewSession?: () => void;
   initialSessionId?: string | null;
   skipInitialProjectSelection?: boolean;
   onInitialRestoreDone?: () => void;
   refreshKey?: number;
   onSessionDeleted?: (sessionId: string) => void;
-  selectedCwd?: string | null;
-  onCwdChange?: (cwd: string | null, projectRoot?: string | null) => void;
   onOpenFile?: (filePath: string, fileName: string) => void;
   explorerRefreshKey?: number;
   onExplorerRefresh?: () => void;
   onAtMention?: (relativePath: string, isDir: boolean) => void;
   onAtMentions?: (relativePaths: string[]) => void;
-}
-
-interface WorktreeEntry {
-  path: string;
-  branch: string | null;
-  isMain: boolean;
-}
-
-interface WorktreeState {
-  /** The cwd this data was fetched for — guards against stale responses */
-  forCwd: string;
-  projectRoot: string;
-  isGit: boolean;
-  /** False when forCwd is a repo subdirectory — the switcher is hidden there
-   *  because subdir sessions keep their own project identity */
-  isTopLevel: boolean;
-  worktrees: WorktreeEntry[];
 }
 
 const UNREAD_SESSIONS_STORAGE_KEY = "pi-web:unread-session-ids";
@@ -89,33 +74,6 @@ function formatRelativeTime(dateStr: string): string {
 /**
  * Return all projects (deduped by projectRoot so worktrees collapse into their
  * main repo) sorted by most recent session activity.
- */
-function getRecentProjects(sessions: SessionInfo[]): string[] {
-  const latestByRoot = new Map<string, string>(); // projectRoot -> most recent modified
-  for (const s of sessions) {
-    const root = s.projectRoot ?? s.cwd;
-    if (!root) continue;
-    const prev = latestByRoot.get(root);
-    if (!prev || s.modified > prev) {
-      latestByRoot.set(root, s.modified);
-    }
-  }
-  return [...latestByRoot.entries()]
-    .sort((a, b) => b[1].localeCompare(a[1]))
-    .map(([root]) => root);
-}
-
-/** Substitute the home dir prefix with ~ (no path truncation — see PathLabel) */
-function displayCwd(cwd: string, homeDir?: string): string {
-  return (homeDir && cwd.startsWith(homeDir)) ? "~" + cwd.slice(homeDir.length) : cwd;
-}
-
-/**
- * Path label that ellipsizes on the LEFT, keeping the (most relevant) trailing
- * segments visible: "…orkspace/pi-web". Shows as much of the path as fits
- * instead of a fixed number of segments. The rtl container moves the ellipsis
- * to the left edge; the inner plaintext bidi isolation keeps the path itself
- * rendered strictly left-to-right (no punctuation reordering).
  */
 function PathLabel({ text, style }: { text: string; style?: CSSProperties }) {
   return (
@@ -183,55 +141,6 @@ function AnimatedDropdown({ open, children, style }: { open: boolean; children: 
 }
 
 
-
-interface SessionTreeNode {
-  session: SessionInfo;
-  children: SessionTreeNode[];
-}
-
-function buildSessionTree(sessions: SessionInfo[]): SessionTreeNode[] {
-  const byId = new Map<string, SessionTreeNode>();
-  for (const s of sessions) {
-    byId.set(s.id, { session: s, children: [] });
-  }
-
-  // Build a map of parentSessionId chains so we can resolve missing ancestors
-  const parentOf = new Map<string, string>();
-  for (const s of sessions) {
-    if (s.parentSessionId) parentOf.set(s.id, s.parentSessionId);
-  }
-
-  // Walk up the parentSessionId chain to find the nearest ancestor that exists in byId
-  function resolveAncestor(id: string): string | null {
-    let cur = parentOf.get(id);
-    const visited = new Set<string>();
-    while (cur) {
-      if (visited.has(cur)) return null; // cycle guard
-      visited.add(cur);
-      if (byId.has(cur)) return cur;
-      cur = parentOf.get(cur);
-    }
-    return null;
-  }
-
-  const roots: SessionTreeNode[] = [];
-  for (const node of byId.values()) {
-    const ancestor = resolveAncestor(node.session.id);
-    if (ancestor) {
-      byId.get(ancestor)!.children.push(node);
-    } else {
-      roots.push(node);
-    }
-  }
-
-  // Sort each level by modified desc
-  const sort = (nodes: SessionTreeNode[]) => {
-    nodes.sort((a, b) => b.session.modified.localeCompare(a.session.modified));
-    nodes.forEach((n) => sort(n.children));
-  };
-  sort(roots);
-  return roots;
-}
 
 const SCRAMBLE_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*";
 
@@ -321,11 +230,12 @@ function PiWebTitle() {
   );
 }
 
-export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSession, initialSessionId, skipInitialProjectSelection, onInitialRestoreDone, refreshKey, onSessionDeleted, selectedCwd: selectedCwdProp, onCwdChange, onOpenFile, explorerRefreshKey, onExplorerRefresh, onAtMention, onAtMentions }: Props) {
+export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSession, initialSessionId, skipInitialProjectSelection, onInitialRestoreDone, refreshKey, onSessionDeleted, onOpenFile, explorerRefreshKey, onExplorerRefresh, onAtMention, onAtMentions }: Props) {
   const [allSessions, setAllSessions] = useState<SessionInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [selectedCwd, setSelectedCwd] = useState<string | null>(null);
+  const { cwd: selectedCwd } = useProjectIdentity();
+  const { setIdentity } = useProjectActions();
   const [homeDir, setHomeDir] = useState<string>("");
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [projectFilter, setProjectFilter] = useState("");
@@ -466,7 +376,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
 
   const restoredRef = useRef(false);
 
-  /** Resolve the project root for a cwd from the freshest data available */
+  /** 从最新本地数据乐观解析项目根；服务端响应仍是权威来源。 */
   const projectRootFor = useCallback((cwd: string | null): string | null => {
     if (!cwd) return null;
     if (worktreeState && worktreeState.forCwd === cwd) return worktreeState.projectRoot;
@@ -476,27 +386,10 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     const match = allSessions.find((s) => s.cwd === cwd);
     return match?.projectRoot ?? cwd;
   }, [worktreeState, allSessions]);
-
-  // Notify parent only when the effective cwd actually changes (not when
-  // projectRootFor identity changes due to session/worktree refreshes).
-  const lastNotifiedCwdRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (lastNotifiedCwdRef.current === selectedCwd) return;
-    lastNotifiedCwdRef.current = selectedCwd;
-    onCwdChange?.(selectedCwd, projectRootFor(selectedCwd));
-  }, [selectedCwd, onCwdChange, projectRootFor]);
-
-  // Sync the worktree switcher to the selected session's cwd. Sessions of all
-  // worktrees in a project share one list, so clicking a session from another
-  // worktree should move the effective cwd there. Only fires when the prop
-  // value changes, so a manual switcher change is not snapped back.
-  const lastSyncedCwdPropRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (selectedCwdProp && selectedCwdProp !== lastSyncedCwdPropRef.current) {
-      lastSyncedCwdPropRef.current = selectedCwdProp;
-      setSelectedCwd(selectedCwdProp);
-    }
-  }, [selectedCwdProp]);
+  const selectCwd = useCallback((cwd: string | null, explicitRoot?: string | null) => {
+    const root = cwd === null ? null : explicitRoot ?? projectRootFor(cwd) ?? cwd;
+    setIdentity({ cwd, projectRoot: root, status: cwd ? "ready" : "idle", error: null });
+  }, [projectRootFor, setIdentity]);
 
   // Load worktrees for the current effective cwd
   const [wtRefreshKey, setWtRefreshKey] = useState(0);
@@ -524,6 +417,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
           isTopLevel: d.isTopLevel ?? false,
           worktrees: d.worktrees ?? [],
         });
+        setIdentity({ cwd: selectedCwd, projectRoot: d.projectRoot, branch: d.worktrees?.find((worktree) => worktree.path === selectedCwd)?.branch ?? null, isGit: d.isGit ?? false, isTopLevel: d.isTopLevel ?? false, status: "ready", error: null });
       })
       .catch(() => {
         if (!cancelled) {
@@ -532,29 +426,30 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
         }
       });
     return () => { cancelled = true; };
-  }, [selectedCwd, wtRefreshKey, refreshKey]);
+  }, [selectedCwd, wtRefreshKey, refreshKey, setIdentity]);
 
   // Auto-select cwd and restore session from URL on first load
   useEffect(() => {
     if (allSessions.length === 0 || skipInitialProjectSelection) return;
 
-    if (selectedCwd === null) {
-      // If restoring a session, set cwd to match that session
-      if (initialSessionId && !restoredRef.current) {
-        restoredRef.current = true;
-        const target = allSessions.find((s) => s.id === initialSessionId);
-        if (target) {
-          setSelectedCwd(target.cwd);
-          onSelectSession(target, true);
-          return;
-        }
-        // Session not found — notify parent so it can show the placeholder
-        onInitialRestoreDone?.();
+    // URL 恢复必须优先于 cwd 自动选择；requestedCwd 已先建立身份时，
+    // selectedCwd 不再为空，但仍不能跳过目标会话恢复。
+    if (initialSessionId && !restoredRef.current) {
+      restoredRef.current = true;
+      const target = allSessions.find((s) => s.id === initialSessionId);
+      if (target) {
+        selectCwd(target.cwd, target.projectRoot ?? target.cwd);
+        onSelectSession(target, true);
+        return;
       }
-      const projects = getRecentProjects(allSessions);
-      if (projects.length > 0) setSelectedCwd(projects[0]);
+      // Session not found — notify parent so it can show the placeholder
+      onInitialRestoreDone?.();
     }
-  }, [allSessions, selectedCwd, initialSessionId, skipInitialProjectSelection, onSelectSession, onInitialRestoreDone]);
+    if (selectedCwd === null) {
+      const projects = getRecentProjects(allSessions);
+      if (projects.length > 0) selectCwd(projects[0]);
+    }
+  }, [allSessions, selectedCwd, initialSessionId, skipInitialProjectSelection, onSelectSession, onInitialRestoreDone, selectCwd]);
 
   const commitCustomPath = useCallback(async (candidate?: string) => {
     const path = (candidate ?? customPathValue).trim();
@@ -573,7 +468,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
         setCustomPathError(data.error ?? `HTTP ${res.status}`);
         return;
       }
-      setSelectedCwd(data.cwd ?? path);
+      selectCwd(data.cwd ?? path);
       setCustomPathOpen(false);
       setCustomPathValue("");
       setDropdownOpen(false);
@@ -582,7 +477,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     } finally {
       setCustomPathValidating(false);
     }
-  }, [customPathValue, customPathValidating]);
+  }, [customPathValue, customPathValidating, selectCwd]);
 
   const handleCustomPathClick = useCallback(async () => {
     const desktop = window.piDesktop;
@@ -613,7 +508,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
       const res = await fetch("/api/default-cwd", { method: "POST" });
       const data = await res.json() as { cwd?: string; error?: string };
       if (data.cwd) {
-        setSelectedCwd(data.cwd);
+        selectCwd(data.cwd);
         setCustomPathOpen(false);
         setCustomPathValue("");
         setCustomPathError(null);
@@ -622,7 +517,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     } catch {
       // ignore
     }
-  }, []);
+  }, [selectCwd]);
 
   const handleCreateWorktree = useCallback(async () => {
     const branch = wtNewBranch.trim();
@@ -651,14 +546,14 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
         forCwd: data.path!,
         worktrees: [...prev.worktrees, { path: data.path!, branch, isMain: false }],
       } : prev);
-      setSelectedCwd(data.path);
+      selectCwd(data.path, worktreeState.projectRoot);
       setWtRefreshKey((k) => k + 1);
     } catch (e) {
       setWtError(e instanceof Error ? e.message : String(e));
     } finally {
       setWtBusy(false);
     }
-  }, [wtNewBranch, wtBusy, worktreeState]);
+  }, [wtNewBranch, wtBusy, worktreeState, selectCwd]);
 
   const handleRemoveWorktree = useCallback(async (path: string, force: boolean) => {
     if (!worktreeState || wtBusy) return;
@@ -681,14 +576,14 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
         return;
       }
       setWtConfirmRemove(null);
-      if (selectedCwd === path) setSelectedCwd(worktreeState.projectRoot);
+      if (selectedCwd === path) selectCwd(worktreeState.projectRoot);
       setWtRefreshKey((k) => k + 1);
     } catch (e) {
       setWtError(e instanceof Error ? e.message : String(e));
     } finally {
       setWtBusy(false);
     }
-  }, [worktreeState, wtBusy, selectedCwd]);
+  }, [worktreeState, wtBusy, selectedCwd, selectCwd]);
 
   // Close dropdowns on outside click
   useEffect(() => {
@@ -717,18 +612,15 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   // works when the prop value won't change — e.g. re-clicking the already
   // open session after manually switching worktrees.
   const handleSelectSessionFromList = useCallback((s: SessionInfo) => {
-    if (s.cwd) setSelectedCwd(s.cwd);
+    if (s.cwd) selectCwd(s.cwd, s.projectRoot ?? s.cwd);
     onSelectSession(s);
-  }, [onSelectSession]);
+  }, [onSelectSession, selectCwd]);
 
   const handleNewSession = useCallback(() => {
     if (!selectedCwd) return;
     // Generate a temporary UUID client-side — no backend call needed.
     // Pi will be spawned lazily when the user sends the first message.
-    const tempId = typeof crypto.randomUUID === "function"
-      ? crypto.randomUUID()
-      : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
-    onNewSession?.(tempId, selectedCwd);
+    onNewSession?.();
   }, [selectedCwd, onNewSession]);
 
   const recentProjects = getRecentProjects(allSessions);
@@ -771,8 +663,8 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
         }
       : null);
 
-  // Build parent-child tree within the filtered set
-  const sessionTree = buildSessionTree(filteredSessions);
+  // Build parent-child tree within the filtered set (fork 与 subagent 双关系嵌套)
+  const sessionTree = buildSessionDisplayTree(filteredSessions);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
@@ -962,7 +854,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                   <button
                     key={project}
                     onClick={() => {
-                      setSelectedCwd(project);
+                      selectCwd(project);
                       setProjectFilter("");
                       setCustomPathOpen(false);
                       setCustomPathValue("");
@@ -1246,7 +1138,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                         >
                           <button
                             onClick={() => {
-                              setSelectedCwd(wt.path);
+                              selectCwd(wt.path);
                               setWtDropdownOpen(false);
                               setWtError(null);
                             }}
@@ -1460,7 +1352,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
       </div>
 
       {/* Session list */}
-      <div style={{ flex: explorerOpen && (selectedCwdProp || selectedCwd) ? "1 1 0" : "1 1 auto", overflowY: "auto", padding: "0", minHeight: 80 }}>
+      <div style={{ flex: explorerOpen && selectedCwd ? "1 1 0" : "1 1 auto", overflowY: "auto", padding: "0", minHeight: 80 }}>
         {loading && (
           <div style={{ padding: "16px 14px", color: "var(--text-muted)", fontSize: 12 }}>
             Loading...
@@ -1495,7 +1387,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
       </div>
 
       {/* File Explorer section */}
-      {(selectedCwdProp || selectedCwd) && (
+      {selectedCwd && (
         <div
           style={{
             borderTop: "1px solid var(--border)",
@@ -1602,7 +1494,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
             <div style={{ flex: 1, overflowY: "auto", overflowX: "hidden" }}>
               <FileExplorer
                 ref={fileExplorerRef}
-                cwd={selectedCwd ?? selectedCwdProp!}
+                cwd={selectedCwd}
                 onOpenFile={onOpenFile ?? (() => {})}
                 refreshKey={explorerKey}
                 onAtMention={onAtMention}
@@ -1627,7 +1519,7 @@ function SessionTreeItem({
   onSessionDeleted,
   depth,
 }: {
-  node: SessionTreeNode;
+  node: SessionDisplayNode;
   selectedSessionId: string | null;
   runningSessionIds: Set<string>;
   unreadSessionIds: Set<string>;
@@ -1655,6 +1547,7 @@ function SessionTreeItem({
         )}
         <SessionItem
           session={node.session}
+          relation={node.relation}
           isSelected={node.session.id === selectedSessionId}
           isRunning={runningSessionIds.has(node.session.id)}
           isUnread={unreadSessionIds.has(node.session.id)}
@@ -1753,6 +1646,7 @@ function UnreadSessionIndicator() {
 
 function SessionItem({
   session,
+  relation = null,
   isSelected,
   isRunning,
   isUnread,
@@ -1765,6 +1659,8 @@ function SessionItem({
   onToggleCollapse,
 }: {
   session: SessionInfo;
+  /** 与父会话的关系；根项为 null。fork 与 subagent 图标/语义分开呈现。 */
+  relation?: SessionRelationKind | null;
   isSelected: boolean;
   isRunning?: boolean;
   isUnread?: boolean;
@@ -1783,16 +1679,33 @@ function SessionItem({
   const [deleting, setDeleting] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const title = session.name || session.firstMessage.slice(0, 50) || session.id.slice(0, 12);
+  const capabilities = getSessionCapabilities(session);
+  // 尚未展开索引的 subagent 会话首消息为占位符，才用 agent/run 兜底；
+  // 已有真实首消息时沿用内容标题，agent/run 由下方徽章补充，避免信息重复。
+  const firstMessage = session.firstMessage.trim();
+  const subagentFallback = session.subagent && (!firstMessage || firstMessage === "(no messages)")
+    ? `${session.subagent.agent ? `${session.subagent.agent} · ` : ""}run ${session.subagent.runIndex}`
+    : "";
+  const title = session.name
+    || subagentFallback
+    || session.firstMessage.slice(0, 50)
+    || session.id.slice(0, 12);
 
   const startRename = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
+    // 只读会话不允许改名（UI 层 guard；后端仍是权威防线）。
+    if (!capabilities.canRename) return;
     setRenameValue(session.name ?? "");
     setRenaming(true);
     setTimeout(() => inputRef.current?.select(), 0);
-  }, [session.name]);
+  }, [session.name, capabilities.canRename]);
 
   const commitRename = useCallback(async () => {
+    // 即使输入框因竞态仍处于打开状态，只读会话也不能发 PATCH。
+    if (!capabilities.canRename) {
+      setRenaming(false);
+      return;
+    }
     const name = renameValue.trim();
     setRenaming(false);
     if (name === (session.name ?? "")) return;
@@ -1806,15 +1719,22 @@ function SessionItem({
     } catch {
       // ignore
     }
-  }, [renameValue, session.id, session.name, onRenamed]);
+  }, [renameValue, session.id, session.name, onRenamed, capabilities.canRename]);
 
   const handleDeleteClick = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
+    // 只读会话不允许删除（UI 层 guard；后端仍是权威防线）。
+    if (!capabilities.canDelete) return;
     setConfirmDelete(true);
-  }, []);
+  }, [capabilities.canDelete]);
 
   const handleDeleteConfirm = useCallback(async (e: React.MouseEvent) => {
     e.stopPropagation();
+    // 确认态期间能力若变化，仍不得发 DELETE。
+    if (!capabilities.canDelete) {
+      setConfirmDelete(false);
+      return;
+    }
     setConfirmDelete(false);
     setDeleting(true);
     try {
@@ -1823,7 +1743,7 @@ function SessionItem({
     } catch {
       setDeleting(false);
     }
-  }, [session.id, onDeleted]);
+  }, [session.id, onDeleted, capabilities.canDelete]);
 
   const handleDeleteCancel = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
@@ -1925,9 +1845,16 @@ function SessionItem({
       ) : (
         /* ── Normal view ── */
         <>
-          {/* Fork indicator for child sessions */}
-          {depth > 0 && (
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="var(--text-dim)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+          {/* 关系图标：fork 用分叉图标，subagent 用层叠图标，一眼可区分 */}
+          {depth > 0 && relation === "subagent" && (
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="var(--text-dim)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }} aria-hidden="true">
+              <polygon points="12 2 2 7 12 12 22 7 12 2" />
+              <polyline points="2 17 12 22 22 17" />
+              <polyline points="2 12 12 17 22 12" />
+            </svg>
+          )}
+          {depth > 0 && relation !== "subagent" && (
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="var(--text-dim)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }} aria-hidden="true">
               <line x1="6" y1="3" x2="6" y2="15" />
               <circle cx="18" cy="6" r="3" />
               <circle cx="6" cy="18" r="3" />
@@ -1961,6 +1888,25 @@ function SessionItem({
                 <span title={session.modified}>{formatRelativeTime(session.modified)}</span>
               )}
               <span>{session.messageCount} msgs</span>
+              {/* subagent 徽章：agent 名 + run 次序 + 只读语义，克制但明确 */}
+              {session.subagent && (
+                <span
+                  title={`Subagent session (read-only)${session.subagent.agent ? ` · agent: ${session.subagent.agent}` : ""} · run ${session.subagent.runIndex} · started by this session's subagent tool call`}
+                  style={{ display: "flex", alignItems: "center", gap: 3, color: "var(--text-muted)", minWidth: 0, overflow: "hidden" }}
+                >
+                  <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }} aria-hidden="true">
+                    <polygon points="12 2 2 7 12 12 22 7 12 2" />
+                    <polyline points="2 17 12 22 22 17" />
+                    <polyline points="2 12 12 17 22 12" />
+                  </svg>
+                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontFamily: "var(--font-mono)", fontSize: 10 }}>
+                    {session.subagent.agent ? `${session.subagent.agent} · ` : ""}run {session.subagent.runIndex}
+                  </span>
+                  <span style={{ flexShrink: 0, fontSize: 9, padding: "0 4px", borderRadius: 999, border: "1px solid var(--border)", color: "var(--text-dim)", lineHeight: 1.5 }}>
+                    read-only
+                  </span>
+                </span>
+              )}
               {session.worktreeBranch && (
                 <span
                   title={`Worktree: ${session.cwd}`}
@@ -1982,7 +1928,8 @@ function SessionItem({
           {hasChildren && (
             <button
               onClick={(e) => { e.stopPropagation(); onToggleCollapse?.(); }}
-              title={collapsed ? "Expand forks" : "Collapse forks"}
+              title={collapsed ? "Expand child sessions" : "Collapse child sessions"}
+              aria-label={collapsed ? "Expand child sessions" : "Collapse child sessions"}
               style={{
                 display: "flex", alignItems: "center", justifyContent: "center",
                 width: 20, height: 20, padding: 0, flexShrink: 0,
@@ -1998,9 +1945,10 @@ function SessionItem({
             </button>
           )}
 
-          {/* Action buttons — shown on hover */}
-          {hovered && (
+          {/* Action buttons — shown on hover；只读会话不提供写操作入口 */}
+          {hovered && (capabilities.canRename || capabilities.canDelete) && (
             <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
+              {capabilities.canRename && (
               <button
                 onClick={startRename}
                 title="Rename"
@@ -2027,6 +1975,8 @@ function SessionItem({
                   <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />
                 </svg>
               </button>
+              )}
+              {capabilities.canDelete && (
               <button
                 onClick={handleDeleteClick}
                 title="Delete"
@@ -2056,6 +2006,7 @@ function SessionItem({
                   <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
                 </svg>
               </button>
+              )}
             </div>
           )}
         </>

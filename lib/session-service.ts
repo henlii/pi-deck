@@ -17,6 +17,19 @@ import type { SessionInfo } from "./types";
 
 export type SessionCommand = Record<string, unknown> & { type: string };
 
+export const READ_ONLY_SUBAGENT_ERROR = "Subagent sessions are read-only";
+export class ReadOnlySubagentError extends Error {
+  constructor() { super(READ_ONLY_SUBAGENT_ERROR); }
+  override toString() { return this.message; }
+}
+
+export async function requireWritableSession(
+  sessionId: string,
+  isReadOnly: (id: string) => Promise<boolean>,
+): Promise<void> {
+  if (await isReadOnly(sessionId)) throw new ReadOnlySubagentError();
+}
+
 export type CreateNewSessionOptions = {
   cwd: string;
   command: SessionCommand & {
@@ -80,6 +93,7 @@ export type SessionService = {
   createNew(options: CreateNewSessionOptions): Promise<CreateNewSessionResult>;
   getRunningIds(): string[];
   subscribeRunning(listener: (ids: string[]) => void): () => void;
+  isReadOnly(sessionId: string): Promise<boolean>;
 };
 
 export function createSessionService(overrides: Partial<SessionServiceDeps> = {}): SessionService {
@@ -98,6 +112,11 @@ export function createSessionService(overrides: Partial<SessionServiceDeps> = {}
       return deps.resolveSessionPath(sessionId);
     },
 
+    async isReadOnly(sessionId) {
+      const session = (await deps.listAllSessions()).find((item) => item.id === sessionId);
+      return session?.readOnly === true;
+    },
+
     getLiveSession(sessionId) {
       const session = deps.getRpcSession(sessionId);
       return session?.isAlive() ? session : undefined;
@@ -107,11 +126,13 @@ export function createSessionService(overrides: Partial<SessionServiceDeps> = {}
       return Boolean(deps.getRpcSession(sessionId)?.isAlive());
     },
 
-    start(sessionId, sessionFile, cwd, toolNames) {
+    async start(sessionId, sessionFile, cwd, toolNames) {
+      await requireWritableSession(sessionId, this.isReadOnly);
       return deps.startRpcSession(sessionId, sessionFile, cwd, toolNames);
     },
 
     async send(sessionId, command) {
+      await requireWritableSession(sessionId, this.isReadOnly);
       const live = deps.getRpcSession(sessionId);
       if (live?.isAlive()) {
         return live.send(command);

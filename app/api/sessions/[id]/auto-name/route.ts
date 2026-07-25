@@ -3,6 +3,7 @@ import { SessionManager, type AgentSession } from "@earendil-works/pi-coding-age
 import { generateSessionTitle } from "@/lib/session-title";
 import { getRpcSession, startRpcSession } from "@/lib/rpc-manager";
 import { invalidateSessionListCache, resolveSessionPath } from "@/lib/session-reader";
+import { sessionService, READ_ONLY_SUBAGENT_ERROR, requireWritableSession } from "@/lib/session-service";
 
 export async function POST(
   _req: Request,
@@ -11,6 +12,7 @@ export async function POST(
   const { id } = await params;
 
   try {
+    await requireWritableSession(id, sessionService.isReadOnly);
     const filePath = await resolveSessionPath(id);
     if (!filePath) {
       return NextResponse.json({ error: "Session not found" }, { status: 404 });
@@ -38,6 +40,9 @@ export async function POST(
     invalidateSessionListCache();
     return NextResponse.json({ title: result.title, usage: result.usage ?? null });
   } catch (error) {
+    if (String(error) === READ_ONLY_SUBAGENT_ERROR) {
+      return NextResponse.json({ error: READ_ONLY_SUBAGENT_ERROR }, { status: 403 });
+    }
     return NextResponse.json(
       { error: error instanceof Error ? error.message : String(error) },
       { status: 500 },

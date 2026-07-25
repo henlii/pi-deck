@@ -1,6 +1,7 @@
 import { resolveSessionPath } from "@/lib/session-reader";
 import { getRpcSession, startRpcSession } from "@/lib/rpc-manager";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
+import { sessionService, READ_ONLY_SUBAGENT_ERROR, requireWritableSession } from "@/lib/session-service";
 
 export const dynamic = "force-dynamic";
 
@@ -10,6 +11,12 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
+  try { await requireWritableSession(id, sessionService.isReadOnly); } catch (error) {
+    if (String(error) === READ_ONLY_SUBAGENT_ERROR) {
+      return new Response(JSON.stringify({ error: READ_ONLY_SUBAGENT_ERROR }), { status: 403, headers: { "Content-Type": "application/json" } });
+    }
+    return new Response(JSON.stringify({ error: String(error) }), { status: 500, headers: { "Content-Type": "application/json" } });
+  }
 
   // Fast path: already-running session
   let session = getRpcSession(id);

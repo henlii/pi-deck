@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useRef, useState, useCallback, useEffect, useImperativeHandle, forwardRef, KeyboardEvent } from "react";
+import React, { useRef, useState, useCallback, useEffect, useId, useImperativeHandle, forwardRef, KeyboardEvent } from "react";
+import { createPortal } from "react-dom";
 import type { BuiltinSlashCommandResult, CompactResultInfo, QueuedMessages, SlashCommandInfo } from "@/hooks/useAgentSession";
 import { clearDraft, getDraft, setDraft, type ChatDraftImage } from "@/lib/draft-store";
 import {
@@ -9,6 +10,7 @@ import {
 } from "@/lib/file-fuzzy";
 import { FolderIcon, getFileIcon } from "./FileIcons";
 import { useIsMobile } from "@/hooks/useIsMobile";
+import { useAnchoredOverlay } from "@/hooks/useAnchoredOverlay";
 import type { AttachedImage, ChatInputHandle } from "@/lib/types";
 
 export type { AttachedImage, ChatInputHandle } from "@/lib/types";
@@ -145,6 +147,35 @@ function revokeImagePreview(image: AttachedImage): void {
   }
 }
 
+/** 菜单/列表框打开时聚焦选项：选中项（aria-checked/aria-selected）优先，否则首项。 */
+function focusPanelOption(panel: HTMLElement | null, selector: string): void {
+  if (!panel) return;
+  const selected = panel.querySelector<HTMLElement>(`${selector}[aria-checked="true"], ${selector}[aria-selected="true"]`);
+  const first = panel.querySelector<HTMLElement>(selector);
+  (selected ?? first)?.focus({ preventScroll: true });
+}
+
+/** ↑↓ 在面板选项间循环移动焦点，Home/End 跳首尾；焦点始终停留在选项按钮上。 */
+function movePanelOptionFocus(e: React.KeyboardEvent<HTMLElement>, selector: string): void {
+  const key = e.key;
+  if (key !== "ArrowDown" && key !== "ArrowUp" && key !== "Home" && key !== "End") return;
+  const items = Array.from(e.currentTarget.querySelectorAll<HTMLElement>(selector));
+  if (items.length === 0) return;
+  e.preventDefault();
+  const current = items.indexOf(document.activeElement as HTMLElement);
+  let next: number;
+  if (key === "Home") next = 0;
+  else if (key === "End") next = items.length - 1;
+  else if (key === "ArrowDown") next = current < 0 ? 0 : (current + 1) % items.length;
+  else next = current < 0 ? items.length - 1 : (current - 1 + items.length) % items.length;
+  items[next]?.focus({ preventScroll: true });
+}
+
+/** 聚焦锚点容器内的触发按钮（菜单关闭后把焦点还给 trigger）。 */
+function focusTriggerButton(anchor: HTMLElement | null): void {
+  anchor?.querySelector<HTMLElement>("button")?.focus({ preventScroll: true });
+}
+
 function QueuedMessageRow({ kind, text }: { kind: "steer" | "follow-up"; text: string }) {
   return (
     <div
@@ -192,7 +223,6 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const isMobile = useIsMobile();
   const [value, setValue] = useState(() => (draftKey ? getDraft(draftKey)?.value ?? "" : ""));
   const [modelDropdownOpen, setModelDropdownOpen] = useState(false);
-  const [modelDropdownRect, setModelDropdownRect] = useState<{ top: number; left: number; width: number } | null>(null);
   const [toolDropdownOpen, setToolDropdownOpen] = useState(false);
   const [thinkingDropdownOpen, setThinkingDropdownOpen] = useState(false);
   const [controlsMenuOpen, setControlsMenuOpen] = useState(false);
@@ -213,10 +243,20 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const modelButtonRef = useRef<HTMLButtonElement>(null);
   const modelDropdownPanelRef = useRef<HTMLDivElement>(null);
   const toolDropdownRef = useRef<HTMLDivElement>(null);
+  const toolDropdownPanelRef = useRef<HTMLDivElement>(null);
   const thinkingDropdownRef = useRef<HTMLDivElement>(null);
+  const thinkingDropdownPanelRef = useRef<HTMLDivElement>(null);
   const controlsMenuRef = useRef<HTMLDivElement>(null);
+  const moreButtonRef = useRef<HTMLButtonElement>(null);
+  const controlsBarRef = useRef<HTMLDivElement>(null);
+  const inputContainerRef = useRef<HTMLDivElement>(null);
+  const slashOverlayRef = useRef<HTMLDivElement>(null);
+  const atOverlayRef = useRef<HTMLDivElement>(null);
+  const compactAnchorRef = useRef<HTMLDivElement>(null);
+  const compactBubbleRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const isComposingRef = useRef(false);
   const lastCompositionEndAtRef = useRef(0);
@@ -833,6 +873,148 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   })();
   const toolPresetLabel = Object.entries(TOOL_PRESET_MAP).find(([, v]) => v === (toolPreset ?? "default"))?.[0] ?? "default";
 
+  // ── 视口安全浮层定位 ─────────────────────────────────────────────────────
+  // 所有菜单共享 useAnchoredOverlay：visualViewport 感知、上下翻转、边界
+  // clamp、maxWidth/maxHeight 写回 style，内容在面板内部滚动。
+  const slashListboxId = useId();
+  const atListboxId = useId();
+  const modelMenuId = useId();
+  const thinkingMenuId = useId();
+  const toolMenuId = useId();
+  const controlsBarId = useId();
+
+  const slashOverlay = useAnchoredOverlay({
+    open: slashMenuOpen && slashQuery !== null,
+    anchorRef: inputContainerRef,
+    overlayRef: slashOverlayRef,
+    preferredPlacement: "above",
+    gap: 8,
+    margin: 8,
+    maxHeight: 460,
+    width: "anchor",
+  });
+  const atOverlay = useAnchoredOverlay({
+    open: atMenuOpen && atQuery !== null,
+    anchorRef: inputContainerRef,
+    overlayRef: atOverlayRef,
+    preferredPlacement: "above",
+    gap: 8,
+    margin: 8,
+    maxHeight: 400,
+    width: "anchor",
+  });
+  const modelOverlay = useAnchoredOverlay({
+    open: modelDropdownOpen,
+    anchorRef: modelButtonRef,
+    overlayRef: modelDropdownPanelRef,
+    preferredPlacement: "above",
+    gap: 6,
+    margin: 8,
+    minWidth: "anchor",
+    width: isMobile ? "max" : undefined,
+  });
+  const thinkingOverlay = useAnchoredOverlay({
+    open: thinkingDropdownOpen,
+    anchorRef: thinkingDropdownRef,
+    overlayRef: thinkingDropdownPanelRef,
+    preferredPlacement: "above",
+    gap: 6,
+    margin: 8,
+    align: "end",
+    minWidth: 180,
+  });
+  const toolOverlay = useAnchoredOverlay({
+    open: toolDropdownOpen,
+    anchorRef: toolDropdownRef,
+    overlayRef: toolDropdownPanelRef,
+    preferredPlacement: "above",
+    gap: 6,
+    margin: 8,
+    align: "end",
+    minWidth: 120,
+  });
+  const compactOverlay = useAnchoredOverlay({
+    open: Boolean(compactError),
+    anchorRef: compactAnchorRef,
+    overlayRef: compactBubbleRef,
+    preferredPlacement: "above",
+    gap: 6,
+    margin: 8,
+    align: "end",
+  });
+  const moreOverlay = useAnchoredOverlay({
+    open: isMobile && controlsMenuOpen,
+    anchorRef: moreButtonRef,
+    overlayRef: controlsBarRef,
+    preferredPlacement: "above",
+    gap: 2,
+    margin: 8,
+    align: "end",
+  });
+
+  const slashMenuVisible = slashMenuOpen && slashQuery !== null;
+  const atMenuVisible = atMenuOpen && atQuery !== null;
+  const inputActiveDescendant = slashMenuVisible && filteredSlashCommands.length > 0
+    ? `${slashListboxId}-opt-${slashActiveIndex}`
+    : atMenuVisible && atMatches.length > 0
+      ? `${atListboxId}-opt-${atActiveIndex}`
+      : undefined;
+  const inputControlsId = slashMenuVisible ? slashListboxId : atMenuVisible ? atListboxId : undefined;
+
+  // 关闭移动端 More 条时必须连带收起其子菜单（思考/工具）：否则条 display:none
+  // 后子菜单锚点 rect 归零、面板隐藏，但 open 状态残留，重开条时菜单幽灵复活。
+  const closeControlsMenu = useCallback((restoreFocus: boolean) => {
+    setThinkingDropdownOpen(false);
+    setToolDropdownOpen(false);
+    setControlsMenuOpen(false);
+    if (restoreFocus) moreButtonRef.current?.focus({ preventScroll: true });
+  }, []);
+
+  // Esc 分层关闭浮层：思考 → 工具 → 模型 → More 条，逐层且焦点回 trigger。
+  // 用 document 冒泡监听：dropdown 的交互焦点在输入框外，textarea 的 onKeyDown
+  // 收不到；e.defaultPrevented 协调，保证 textarea 内 slash/@ 菜单与流式 abort
+  // 的既有 Esc 语义优先，互不干扰。
+  useEffect(() => {
+    const anyOpen = thinkingDropdownOpen || toolDropdownOpen || modelDropdownOpen || controlsMenuOpen;
+    if (!anyOpen) return;
+    const onKeyDown = (e: globalThis.KeyboardEvent) => {
+      if (e.key !== "Escape" || e.defaultPrevented) return;
+      e.preventDefault();
+      if (thinkingDropdownOpen) {
+        setThinkingDropdownOpen(false);
+        focusTriggerButton(thinkingDropdownRef.current);
+      } else if (toolDropdownOpen) {
+        setToolDropdownOpen(false);
+        focusTriggerButton(toolDropdownRef.current);
+      } else if (modelDropdownOpen) {
+        setModelDropdownOpen(false);
+        modelButtonRef.current?.focus({ preventScroll: true });
+      } else {
+        closeControlsMenu(true);
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [thinkingDropdownOpen, toolDropdownOpen, modelDropdownOpen, controlsMenuOpen, closeControlsMenu]);
+
+  // 菜单打开时把焦点送进面板（选中项优先，无则首项），Esc/选择后焦点回 trigger。
+  useEffect(() => {
+    if (thinkingDropdownOpen) focusPanelOption(thinkingDropdownPanelRef.current, '[role="menuitemradio"]');
+  }, [thinkingDropdownOpen]);
+  useEffect(() => {
+    if (toolDropdownOpen) focusPanelOption(toolDropdownPanelRef.current, '[role="menuitemradio"]');
+  }, [toolDropdownOpen]);
+  useEffect(() => {
+    if (modelDropdownOpen) focusPanelOption(modelDropdownPanelRef.current, '[role="option"]');
+  }, [modelDropdownOpen]);
+
+  // 移动端 More 条展开时 trigger 会被 aria-hidden + visibility:hidden——焦点
+  // 必须先移入条内第一个控件，否则键盘/读屏用户上下文丢在不可见元素上。
+  useEffect(() => {
+    if (!isMobile || !controlsMenuOpen) return;
+    controlsBarRef.current?.querySelector<HTMLElement>("button:not([disabled])")?.focus({ preventScroll: true });
+  }, [isMobile, controlsMenuOpen]);
+
   // Close dropdowns on outside click
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -842,23 +1024,35 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
       ) {
         setModelDropdownOpen(false);
       }
-      if (toolDropdownRef.current && !toolDropdownRef.current.contains(e.target as Node)) {
+      if (
+        toolDropdownRef.current && !toolDropdownRef.current.contains(e.target as Node) &&
+        toolDropdownPanelRef.current && !toolDropdownPanelRef.current.contains(e.target as Node)
+      ) {
         setToolDropdownOpen(false);
       }
-      if (thinkingDropdownRef.current && !thinkingDropdownRef.current.contains(e.target as Node)) {
+      if (
+        thinkingDropdownRef.current && !thinkingDropdownRef.current.contains(e.target as Node) &&
+        thinkingDropdownPanelRef.current && !thinkingDropdownPanelRef.current.contains(e.target as Node)
+      ) {
         setThinkingDropdownOpen(false);
       }
-      if (controlsMenuRef.current && !controlsMenuRef.current.contains(e.target as Node)) {
-        setControlsMenuOpen(false);
+      // 思考/工具面板 portal 在 body 下，不在 controlsMenuRef 内——点它们不算「外部」。
+      // 外部点击关闭 More 条时不回焦：用户已明确把指针移往别处。
+      if (
+        controlsMenuRef.current && !controlsMenuRef.current.contains(e.target as Node) &&
+        !thinkingDropdownPanelRef.current?.contains(e.target as Node) &&
+        !toolDropdownPanelRef.current?.contains(e.target as Node)
+      ) {
+        closeControlsMenu(false);
       }
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
-  }, []);
+  }, [closeControlsMenu]);
 
   useEffect(() => {
-    if (!isMobile) setControlsMenuOpen(false);
-  }, [isMobile]);
+    if (!isMobile) closeControlsMenu(false);
+  }, [isMobile, closeControlsMenu]);
 
 
 
@@ -1013,21 +1207,20 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
         )}
 
         {/* Main input */}
-        <div style={{ position: "relative" }}>
-          {slashMenuOpen && slashQuery !== null && (
+        <div ref={inputContainerRef} style={{ position: "relative" }}>
+          {slashMenuVisible && (
             <div
+              ref={slashOverlayRef}
               style={{
-                position: "absolute",
-                left: 0,
-                right: 0,
-                bottom: "calc(100% + 8px)",
+                ...slashOverlay.style,
                 zIndex: 120,
                 background: "var(--bg)",
                 border: "1px solid var(--border)",
                 borderRadius: 8,
-                boxShadow: "0 -6px 20px rgba(0,0,0,0.12)",
+                boxShadow: slashOverlay.placement === "above" ? "0 -6px 20px rgba(0,0,0,0.12)" : "0 6px 20px rgba(0,0,0,0.12)",
                 overflow: "hidden",
-                maxHeight: "min(56vh, 460px)",
+                display: "flex",
+                flexDirection: "column",
               }}
             >
               <div
@@ -1040,12 +1233,13 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   gap: 8,
                   fontSize: 11,
                   color: "var(--text-dim)",
+                  flexShrink: 0,
                 }}
               >
                 <span>{slashCommandsLoading ? "Loading commands..." : `Slash commands · ${slashCommandCountLabel}`}</span>
                 <span style={{ fontFamily: "var(--font-mono)" }}>Tab / Enter</span>
               </div>
-              <div style={{ maxHeight: "calc(min(56vh, 460px) - 34px)", overflowY: "auto", padding: 10 }}>
+              <div id={slashListboxId} role="listbox" aria-label="Slash commands" style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: 10 }}>
                 {!slashCommandsLoading && filteredSlashCommands.length === 0 ? (
                   <div style={{ padding: "2px 2px 4px", fontSize: 12, color: "var(--text-dim)" }}>
                     No extension, prompt, or skill commands found
@@ -1085,6 +1279,9 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                           return (
                             <button
                               key={`${command.source}:${command.name}`}
+                              id={`${slashListboxId}-opt-${index}`}
+                              role="option"
+                              aria-selected={active}
                               ref={(node) => {
                                 slashItemRefs.current[index] = node;
                               }}
@@ -1143,28 +1340,27 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
               </div>
             </div>
           )}
-          {atMenuOpen && atQuery !== null && (() => {
+          {atMenuVisible && (() => {
             const indexLoading = fileIndexLoading && (!fileIndex || fileIndex.cwd !== cwd);
             const matchCountLabel = atMatches.length === 1 ? "1 match" : `${atMatches.length} matches`;
             // With a truncated index, local results are provisional — the
             // debounced server search over the full listing replaces them.
             const truncatedHint = fileIndex?.truncated && !serverResultInUse
-              ? (atQuery.query ? " · searching all files…" : " · index truncated")
+              ? (atQuery!.query ? " · searching all files…" : " · index truncated")
               : "";
             return (
               <div
+                ref={atOverlayRef}
                 style={{
-                  position: "absolute",
-                  left: 0,
-                  right: 0,
-                  bottom: "calc(100% + 8px)",
+                  ...atOverlay.style,
                   zIndex: 120,
                   background: "var(--bg)",
                   border: "1px solid var(--border)",
                   borderRadius: 8,
-                  boxShadow: "0 -6px 20px rgba(0,0,0,0.12)",
+                  boxShadow: atOverlay.placement === "above" ? "0 -6px 20px rgba(0,0,0,0.12)" : "0 6px 20px rgba(0,0,0,0.12)",
                   overflow: "hidden",
-                  maxHeight: "min(48vh, 400px)",
+                  display: "flex",
+                  flexDirection: "column",
                 }}
               >
                 <div
@@ -1177,6 +1373,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                     gap: 8,
                     fontSize: 11,
                     color: "var(--text-dim)",
+                    flexShrink: 0,
                   }}
                 >
                   <span>
@@ -1186,7 +1383,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   </span>
                   <span style={{ fontFamily: "var(--font-mono)" }}>Tab / Enter</span>
                 </div>
-                <div style={{ maxHeight: "calc(min(48vh, 400px) - 34px)", overflowY: "auto", padding: 4 }}>
+                <div id={atListboxId} role="listbox" aria-label="Files" style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: 4 }}>
                   {!indexLoading && atMatches.length === 0 ? (
                     <div style={{ padding: "6px 8px", fontSize: 12, color: "var(--text-dim)" }}>
                       {needsServerSearch && !serverResultInUse ? "Searching…" : "No matching files"}
@@ -1199,6 +1396,9 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                       return (
                         <button
                           key={`${entry.isDir ? "d" : "f"}:${entry.path}`}
+                          id={`${atListboxId}-opt-${index}`}
+                          role="option"
+                          aria-selected={active}
                           ref={(node) => {
                             atItemRefs.current[index] = node;
                           }}
@@ -1214,6 +1414,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                             alignItems: "center",
                             gap: 8,
                             padding: "6px 8px",
+                            minHeight: isMobile ? 44 : undefined,
                             border: "none",
                             borderRadius: 6,
                             background: active ? "var(--bg-selected)" : "none",
@@ -1258,6 +1459,11 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
           <textarea
             ref={textareaRef}
             value={value}
+            role="combobox"
+            aria-expanded={slashMenuVisible || atMenuVisible}
+            aria-controls={inputControlsId}
+            aria-activedescendant={inputActiveDescendant}
+            aria-autocomplete="list"
             onChange={(e) => {
               setValue(e.target.value);
               updateAtQuery(e.target.value, e.target.selectionStart);
@@ -1434,10 +1640,22 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
             {modelOptions.length > 0 && currentName && onModelChange && (
                 <div ref={dropdownRef} style={{ position: "relative", flex: isMobile ? "1 1 auto" : undefined, minWidth: 0 }}>
                   <button
-                    onClick={(e) => {
-                      const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-                      setModelDropdownRect({ top: rect.top, left: rect.left, width: rect.width });
-                      setModelDropdownOpen((v) => !v);
+                    ref={modelButtonRef}
+                    aria-haspopup="listbox"
+                    aria-expanded={modelDropdownOpen}
+                    aria-controls={modelMenuId}
+                    onClick={() => {
+                      const opening = !modelDropdownOpen;
+                      setModelDropdownOpen(opening);
+                      if (opening) {
+                        // 同一时刻只保留一个浮层：关掉右侧菜单/More 条和输入补全，
+                        // 避免 320px 级窄屏下面板互相叠放。
+                        setThinkingDropdownOpen(false);
+                        setToolDropdownOpen(false);
+                        setControlsMenuOpen(false);
+                        setSlashMenuOpen(false);
+                        setAtMenuOpen(false);
+                      }
                     }}
                     disabled={isStreaming}
                     style={{
@@ -1477,24 +1695,23 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                     </svg>
                     <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>{currentName}</span>
                   </button>
-                  {modelDropdownOpen && modelDropdownRect && (() => {
-                    const viewportHeight = window.visualViewport?.height ?? window.innerHeight;
-                    const bottom = viewportHeight - modelDropdownRect.top + 6;
-                    const maxH = Math.max(120, Math.min(modelDropdownRect.top - 8, viewportHeight * 0.6));
-                    // On mobile, pin to a small left margin and cap width to the
-                    // viewport so long model names never push the panel off-screen.
-                    const panelPos: React.CSSProperties = isMobile
-                      ? { left: 8, right: 8, maxWidth: "calc(100vw - 16px)" }
-                      : { left: modelDropdownRect.left, width: "max-content", minWidth: modelDropdownRect.width };
-                    return (
-                      <div ref={modelDropdownPanelRef} style={{
-                      position: "fixed",
-                      bottom,
-                      ...panelPos,
-                      zIndex: 500, background: "var(--bg)", border: "1px solid var(--border)",
-                      borderRadius: 8, boxShadow: "0 -4px 16px rgba(0,0,0,0.10)",
-                      overflow: "hidden", maxHeight: maxH, overflowY: "auto",
-                      }}>
+                  {/* Portal 到 body：与思考/工具菜单一致，fixed 坐标免疫任何祖先
+                      containing block（transform/filter/backdrop-filter）干扰 */}
+                  {modelDropdownOpen && createPortal(
+                      <div
+                        ref={modelDropdownPanelRef}
+                        id={modelMenuId}
+                        role="listbox"
+                        aria-label="Models"
+                        onKeyDown={(e) => movePanelOptionFocus(e, '[role="option"]')}
+                        style={{
+                        ...modelOverlay.style,
+                        zIndex: 500, background: "var(--bg)", border: "1px solid var(--border)",
+                        borderRadius: 8,
+                        boxShadow: modelOverlay.placement === "above" ? "0 -4px 16px rgba(0,0,0,0.10)" : "0 4px 16px rgba(0,0,0,0.10)",
+                        overflow: "hidden", overflowY: "auto",
+                        }}
+                      >
                       {modelsByProvider.map((group, gi) => (
                         <div key={group.provider}>
                           {(modelsByProvider.length > 1) && (
@@ -1512,10 +1729,18 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                             return (
                               <button
                                 key={`${opt.provider}:${opt.modelId}`}
-                                onClick={() => { setModelDropdownOpen(false); if (!isActive || isAutoModelSelection) onModelChange(opt.provider, opt.modelId); }}
+                                role="option"
+                                aria-selected={isActive}
+                                onClick={() => {
+                                  setModelDropdownOpen(false);
+                                  // 键盘选择后焦点回 trigger；指针用户不受程序聚焦影响。
+                                  modelButtonRef.current?.focus({ preventScroll: true });
+                                  if (!isActive || isAutoModelSelection) onModelChange(opt.provider, opt.modelId);
+                                }}
                                 style={{
                                   display: "flex", alignItems: "center", gap: 8,
                                   width: "100%", padding: "7px 12px",
+                                  minHeight: isMobile ? 44 : undefined,
                                   background: isActive ? "var(--bg-selected)" : "none",
                                   border: "none",
                                   color: isActive ? "var(--text)" : "var(--text-muted)",
@@ -1529,15 +1754,16 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                                 {isActive
                                   ? <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><polyline points="1.5 5 4 7.5 8.5 2.5" /></svg>
                                   : <span style={{ width: 10, flexShrink: 0 }} />}
-                                {opt.name}
+                                {/* 超长模型名省略号收尾，不再被 overflowX:hidden 硬切 */}
+                                <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>{opt.name}</span>
                               </button>
                             );
                           })}
                         </div>
                       ))}
-                    </div>
-                    );
-                  })()}
+                    </div>,
+                    document.body,
+                  )}
                 </div>
             )}
           </div>
@@ -1556,14 +1782,19 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
           }}>
             {isMobile && (
               <button
+                ref={moreButtonRef}
                 type="button"
                 title={controlsMenuOpen ? undefined : "More controls"}
                 aria-label="More controls"
                 aria-expanded={controlsMenuOpen}
+                aria-controls={controlsBarId}
                 aria-hidden={controlsMenuOpen || undefined}
                 tabIndex={controlsMenuOpen ? -1 : undefined}
                 onClick={() => {
+                  // 与模型按钮对称：展开 More 条时收起其它浮层，窄屏不叠放。
                   setModelDropdownOpen(false);
+                  setSlashMenuOpen(false);
+                  setAtMenuOpen(false);
                   setControlsMenuOpen(true);
                 }}
                 style={{
@@ -1598,18 +1829,14 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 More
               </button>
             )}
-            <div style={{
+            <div ref={controlsBarRef} id={controlsBarId} style={{
               display: isMobile ? (controlsMenuOpen ? "flex" : "none") : "flex",
               alignItems: "center",
               gap: isMobile ? 1 : 2,
               ...(isMobile ? {
-                position: "absolute",
-                right: 0,
-                bottom: 0,
                 zIndex: 60,
                 padding: 1,
                 width: "max-content",
-                maxWidth: "calc(100vw - 32px)",
                 flexWrap: "nowrap",
                 justifyContent: "flex-end",
                 border: "1px solid color-mix(in srgb, var(--border) 72%, transparent)",
@@ -1618,14 +1845,29 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 boxShadow: "0 8px 24px rgba(0,0,0,0.14)",
                 backdropFilter: "blur(10px)",
               } : null),
+              ...(isMobile && controlsMenuOpen ? moreOverlay.style : null),
             }}>
             {!isStreaming && onThinkingLevelChange && (
               <div ref={thinkingDropdownRef} style={{ position: "relative" }}>
                 <button
-                  onClick={() => !isStreaming && setThinkingDropdownOpen((v) => !v)}
+                  onClick={() => {
+                    if (isStreaming) return;
+                    const opening = !thinkingDropdownOpen;
+                    setThinkingDropdownOpen(opening);
+                    if (opening) {
+                      // 菜单互斥：关掉工具菜单/模型下拉与输入补全，防止窄屏叠放。
+                      setToolDropdownOpen(false);
+                      setModelDropdownOpen(false);
+                      setSlashMenuOpen(false);
+                      setAtMenuOpen(false);
+                    }
+                  }}
                   disabled={isStreaming}
                   title={`Change reasoning level: ${thinkingDisplayLabel}`}
                   aria-label="Change reasoning level"
+                  aria-haspopup="menu"
+                  aria-expanded={thinkingDropdownOpen}
+                  aria-controls={thinkingMenuId}
                   style={{
                     display: "flex", alignItems: "center", justifyContent: "center", gap: 5,
                     padding: isMobile ? "0 6px" : "8px 12px",
@@ -1657,12 +1899,19 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   </svg>
                   {(!isMobile || controlsMenuOpen) && <span style={{ whiteSpace: "nowrap" }}>{thinkingDisplayLabel}</span>}
                 </button>
-                {thinkingDropdownOpen && (
-                  <div style={{
-                    position: "absolute", bottom: "calc(100% + 6px)", right: 0,
+                {/* Portal 到 body：More 条的 backdrop-filter 会为后代 fixed 元素创建 containing block，导致 hook 的 viewport 坐标失效 */}
+                {thinkingDropdownOpen && createPortal(
+                  <div
+                    ref={thinkingDropdownPanelRef}
+                    id={thinkingMenuId}
+                    role="menu"
+                    onKeyDown={(e) => movePanelOptionFocus(e, '[role="menuitemradio"]')}
+                    style={{
+                    ...thinkingOverlay.style,
                     zIndex: 100, background: "var(--bg)", border: "1px solid var(--border)",
-                    borderRadius: 8, boxShadow: "0 -4px 16px rgba(0,0,0,0.10)",
-                    overflow: "hidden", minWidth: 180,
+                    borderRadius: 8,
+                    boxShadow: thinkingOverlay.placement === "above" ? "0 -4px 16px rgba(0,0,0,0.10)" : "0 4px 16px rgba(0,0,0,0.10)",
+                    overflow: "hidden", overflowY: "auto",
                   }}>
                     {THINKING_LEVELS.filter((lvl) => {
                       if (!availableThinkingLevels) return true;
@@ -1677,10 +1926,18 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                       return (
                         <button
                           key={lvl}
-                          onClick={() => { setThinkingDropdownOpen(false); if (!isActive) onThinkingLevelChange(lvl); }}
+                          role="menuitemradio"
+                          aria-checked={isActive}
+                          onClick={() => {
+                            setThinkingDropdownOpen(false);
+                            // 选择后焦点回 trigger，键盘/读屏用户不丢上下文。
+                            focusTriggerButton(thinkingDropdownRef.current);
+                            if (!isActive) onThinkingLevelChange(lvl);
+                          }}
                           style={{
                             display: "flex", alignItems: "center", gap: 8,
                             width: "100%", padding: "7px 12px",
+                            minHeight: isMobile ? 44 : undefined,
                             background: isActive ? "var(--bg-selected)" : "none",
                             border: "none",
                             color: isActive ? "var(--text)" : "var(--text-muted)",
@@ -1702,17 +1959,32 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                         </button>
                       );
                     })}
-                  </div>
+                  </div>,
+                  document.body,
                 )}
               </div>
             )}
             {!isStreaming && onToolPresetChange && (
               <div ref={toolDropdownRef} style={{ position: "relative" }}>
                 <button
-                  onClick={() => !isStreaming && setToolDropdownOpen((v) => !v)}
+                  onClick={() => {
+                    if (isStreaming) return;
+                    const opening = !toolDropdownOpen;
+                    setToolDropdownOpen(opening);
+                    if (opening) {
+                      // 菜单互斥：关掉思考菜单/模型下拉与输入补全，防止窄屏叠放。
+                      setThinkingDropdownOpen(false);
+                      setModelDropdownOpen(false);
+                      setSlashMenuOpen(false);
+                      setAtMenuOpen(false);
+                    }
+                  }}
                   disabled={isStreaming}
                   title={`Change tool preset: ${toolPresetLabel}`}
                   aria-label="Change tool preset"
+                  aria-haspopup="menu"
+                  aria-expanded={toolDropdownOpen}
+                  aria-controls={toolMenuId}
                   style={{
                     display: "flex", alignItems: "center", justifyContent: "center", gap: 5,
                     padding: isMobile ? "0 6px" : "8px 12px",
@@ -1742,12 +2014,18 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   </svg>
                   {(!isMobile || controlsMenuOpen) && <span style={{ whiteSpace: "nowrap" }}>{toolPresetLabel}</span>}
                 </button>
-                {toolDropdownOpen && (
-                  <div style={{
-                    position: "absolute", bottom: "calc(100% + 6px)", right: 0,
+                {toolDropdownOpen && createPortal(
+                  <div
+                    ref={toolDropdownPanelRef}
+                    id={toolMenuId}
+                    role="menu"
+                    onKeyDown={(e) => movePanelOptionFocus(e, '[role="menuitemradio"]')}
+                    style={{
+                    ...toolOverlay.style,
                     zIndex: 100, background: "var(--bg)", border: "1px solid var(--border)",
-                    borderRadius: 8, boxShadow: "0 -4px 16px rgba(0,0,0,0.10)",
-                    overflow: "hidden", minWidth: 120,
+                    borderRadius: 8,
+                    boxShadow: toolOverlay.placement === "above" ? "0 -4px 16px rgba(0,0,0,0.10)" : "0 4px 16px rgba(0,0,0,0.10)",
+                    overflow: "hidden", overflowY: "auto",
                   }}>
                     {TOOL_PRESETS.map((lvl) => {
                       const preset = TOOL_PRESET_MAP[lvl];
@@ -1756,10 +2034,18 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                       return (
                         <button
                           key={lvl}
-                          onClick={() => { setToolDropdownOpen(false); if (!isActive) onToolPresetChange(preset); }}
+                          role="menuitemradio"
+                          aria-checked={isActive}
+                          onClick={() => {
+                            setToolDropdownOpen(false);
+                            // 选择后焦点回 trigger，键盘/读屏用户不丢上下文。
+                            focusTriggerButton(toolDropdownRef.current);
+                            if (!isActive) onToolPresetChange(preset);
+                          }}
                           style={{
                             display: "flex", alignItems: "center", gap: 8,
                             width: "100%", padding: "7px 12px",
+                            minHeight: isMobile ? 44 : undefined,
                             background: isActive ? "var(--bg-selected)" : "none",
                             border: "none",
                             color: isActive ? "var(--text)" : "var(--text-muted)",
@@ -1778,23 +2064,26 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                         </button>
                       );
                     })}
-                  </div>
+                  </div>,
+                  document.body,
                 )}
               </div>
             )}
 
             {!isStreaming && onCompact && (
-              <div style={{ position: "relative" }}>
-                {compactError && (
-                  <div style={{
-                    position: "absolute", bottom: "calc(100% + 6px)", right: 0,
+              <div ref={compactAnchorRef} style={{ position: "relative" }}>
+                {compactError && createPortal(
+                  <div ref={compactBubbleRef} style={{
+                    ...compactOverlay.style,
                     background: "#1f2937", color: "#f87171",
                     fontSize: 11, padding: "4px 8px", borderRadius: 5,
-                    whiteSpace: "nowrap", pointerEvents: "none",
-                    boxShadow: "0 2px 8px rgba(0,0,0,0.2)", zIndex: 50,
+                    whiteSpace: "normal", overflowWrap: "break-word",
+                    pointerEvents: "none",
+                    boxShadow: "0 2px 8px rgba(0,0,0,0.2)", zIndex: 70,
                   }}>
                     {compactError}
-                  </div>
+                  </div>,
+                  document.body,
                 )}
                 <button
                   onClick={isCompacting ? onAbortCompaction : onCompact}
@@ -1913,11 +2202,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 title="Collapse controls"
                 aria-label="Collapse controls"
                 aria-expanded={true}
-                onClick={() => {
-                  setToolDropdownOpen(false);
-                  setThinkingDropdownOpen(false);
-                  setControlsMenuOpen(false);
-                }}
+                onClick={() => closeControlsMenu(true)}
                 style={{
                   display: "flex",
                   alignItems: "center",

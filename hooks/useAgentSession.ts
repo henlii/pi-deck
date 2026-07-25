@@ -16,6 +16,8 @@ import { sendAgentCommand } from "@/lib/agent-client";
 import { getToolNamesForPreset, type ToolEntry } from "@/lib/tool-presets";
 import { createEventStreamManager, EventStreamConnectionError, type EventStreamManager, type EventStreamConnectionResult } from "@/lib/event-stream-manager";
 import type { SessionStatsInfo } from "@/lib/pi-types";
+import { applyExtensionUiRequest, type ExtensionUiState } from "@/lib/extension-ui-bridge";
+import { getSessionCapabilities } from "@/components/session-capabilities";
 
 export interface SessionData {
   sessionId: string;
@@ -303,6 +305,10 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   } = opts;
 
   const isNew = session === null && newSessionCwd !== null;
+  // 只读（subagent 持久化）会话能力：UI 层先行拦截一切会产生 AgentSession
+  // 或写会话的操作；后端 requireWritableSession 仍是权威防线。
+  const capabilities = getSessionCapabilities(session);
+  const isReadOnly = capabilities.readOnly;
 
   const [data, setData] = useState<SessionData | null>(null);
   const [loading, setLoading] = useState(!isNew);
@@ -361,6 +367,22 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const newSessionPromotedRef = useRef(false);
   const promptRunIdRef = useRef(0);
   const optimisticUserMessageKeyRef = useRef<string | null>(null);
+  const extensionUiStateRef = useRef<ExtensionUiState>({
+    dialog: extensionDialog,
+    customUi: extensionCustomUi,
+    statuses: extensionStatuses,
+    widgets: extensionWidgets,
+  });
+  const commitExtensionUiState = useCallback((next: ExtensionUiState) => {
+    extensionUiStateRef.current = next;
+    setExtensionDialog(next.dialog);
+    setExtensionCustomUi(next.customUi);
+    setExtensionStatuses(next.statuses);
+    setExtensionWidgets(next.widgets);
+  }, []);
+  const patchExtensionUiState = useCallback((patch: Partial<ExtensionUiState>) => {
+    commitExtensionUiState({ ...extensionUiStateRef.current, ...patch });
+  }, [commitExtensionUiState]);
 
   // SSE 连接管理交由可注入、可独立测试的 EventStreamManager（见
   // lib/event-stream-manager.ts）。这里只保留 lazy 初始化的 ref 通过引用
@@ -462,8 +484,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           if (liveState.contextUsage !== undefined) setContextUsage(liveState.contextUsage ?? null);
           if (liveState.systemPrompt !== undefined) setSystemPrompt(liveState.systemPrompt ?? null);
           if (liveState.thinkingLevel !== undefined) setThinkingLevel((liveState.thinkingLevel as ThinkingLevelOption) ?? "auto");
-          if (liveState.extensionStatuses !== undefined) setExtensionStatuses(liveState.extensionStatuses ?? []);
-          if (liveState.extensionWidgets !== undefined) setExtensionWidgets(liveState.extensionWidgets ?? []);
+          if (liveState.extensionStatuses !== undefined) patchExtensionUiState({ statuses: liveState.extensionStatuses ?? [] });
+          if (liveState.extensionWidgets !== undefined) patchExtensionUiState({ widgets: liveState.extensionWidgets ?? [] });
           if (liveState.queuedMessages !== undefined) setQueuedMessages(normalizeQueuedMessages(liveState.queuedMessages));
         } else if (!agentState.running) {
           setQueuedMessages({ steering: [], followUp: [] });
@@ -479,7 +501,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     } finally {
       if (showLoading && !messagesLoaded) setLoading(false);
     }
-  }, []);
+  }, [patchExtensionUiState]);
 
   const loadContext = useCallback(async (sid: string, leafId: string | null) => {
     try {
@@ -497,6 +519,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   }, []);
 
   const loadTools = useCallback(async (sid: string) => {
+    // 只读会话：get_tools 会经 /api/agent 启动 AgentSession，跳过。
+    if (isReadOnly) return;
     try {
       const tools = await sendAgentCommand<ToolEntry[]>(sid, { type: "get_tools" });
       if (tools) {
@@ -506,7 +530,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     } catch (e) {
       console.error("Failed to load tools:", e);
     }
-  }, [setToolPresetState]);
+  }, [isReadOnly, setToolPresetState]);
 
   const promoteNewSession = useCallback((messageCount = 0, firstMessage = "(no messages)") => {
     const sid = sessionIdRef.current;
@@ -560,6 +584,11 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   }, [isNew, newSessionCwd, newSessionModel, newSessionDefaultModel, toolPreset, thinkingLevel]);
 
   const loadSlashCommands = useCallback(async () => {
+    // 只读会话：get_commands 会经 /api/agent 启动 AgentSession，直接返回空集。
+    if (isReadOnly) {
+      setSlashCommands([]);
+      return [] as SlashCommandInfo[];
+    }
     const sid = sessionIdRef.current ?? await ensureNewSession();
     if (!sid) {
       setSlashCommands([]);
@@ -578,16 +607,21 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     } finally {
       setSlashCommandsLoading(false);
     }
-  }, [ensureNewSession]);
+  }, [isReadOnly, ensureNewSession]);
 
   const connectEvents = useCallback((sid: string): Promise<EventStreamConnectionResult> => {
+    // 当前调用点均已按能力门禁；保留显式错误，防止未来误把只读会话接入 SSE。
+    if (!capabilities.canConnectEvents) {
+      return Promise.reject(new Error("Read-only sessions do not connect to agent events"));
+    }
     const manager = eventStreamManagerRef.current!;
     return manager.connect(sid, (event) => {
       handleAgentEventRef.current?.(event as unknown as AgentEvent);
     });
-  }, []);
+  }, [capabilities.canConnectEvents]);
 
   const ensureEventsConnected = useCallback(async (sid: string) => {
+    if (!capabilities.canConnectEvents) return;
     try {
       await eventStreamManagerRef.current!.ensureConnected(sid, (event) => {
         handleAgentEventRef.current?.(event as unknown as AgentEvent);
@@ -596,14 +630,17 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       // 同步外部可见的 eventSourceRef，保留清理与既有消费者的读取契约。
       eventSourceRef.current = eventStreamManagerRef.current?.getCurrentSource() as unknown as EventSource | null;
     }
-  }, []);
+  }, [capabilities.canConnectEvents]);
 
   const respondToExtensionUi = useCallback(async (
     request: ExtensionUiDialogRequest,
     response: { value: string } | { confirmed: boolean } | { cancelled: true },
   ) => {
+    if (!capabilities.canSendSessionCommands) return;
     const sid = sessionIdRef.current;
-    setExtensionDialog((current) => current?.id === request.id ? null : current);
+    // 响应和关闭都必须绑定当前请求；旧弹窗的延迟回调不能关闭或回复新请求。
+    if (extensionUiStateRef.current.dialog?.id !== request.id) return;
+    patchExtensionUiState({ dialog: null });
     if (!sid) return;
     try {
       await sendAgentCommand(sid, {
@@ -614,11 +651,14 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     } catch (e) {
       console.error("Failed to send extension UI response:", e);
     }
-  }, []);
+  }, [capabilities.canSendSessionCommands, patchExtensionUiState]);
 
   const sendExtensionCustomInput = useCallback(async (request: ExtensionUiCustomRequest, data: string) => {
+    if (!capabilities.canSendSessionCommands) return;
     const sid = sessionIdRef.current;
     if (!sid) return;
+    // 关闭或切换到下一次 custom 请求后，旧输入事件不能再写入代理会话。
+    if (extensionUiStateRef.current.customUi?.id !== request.id) return;
     try {
       await sendAgentCommand(sid, {
         type: "extension_ui_input",
@@ -628,7 +668,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     } catch (e) {
       console.error("Failed to send extension custom UI input:", e);
     }
-  }, []);
+  }, [capabilities.canSendSessionCommands]);
 
   const addNotice = useCallback((notice: { id?: string; message: string; type?: NoticeType }) => {
     const message = notice.message.trim();
@@ -644,53 +684,18 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   }, []);
 
   const handleExtensionUiRequest = useCallback((request: ExtensionUiRequest) => {
-    switch (request.method) {
-      case "select":
-      case "confirm":
-      case "input":
-      case "editor":
-        setExtensionDialog(request);
-        break;
-      case "notify": {
-        addNotice({
-          id: request.id,
-          message: request.message,
-          type: request.notifyType ?? "info",
-        });
-        break;
+    const result = applyExtensionUiRequest(extensionUiStateRef.current, request);
+    commitExtensionUiState(result.state);
+    for (const effect of result.effects) {
+      if (effect.type === "notice") {
+        addNotice({ id: effect.id, message: effect.message, type: effect.noticeType });
+      } else if (effect.type === "setTitle") {
+        document.title = effect.title;
+      } else {
+        opts.chatInputRef?.current?.insertText(effect.text);
       }
-      case "setStatus":
-        setExtensionStatuses((prev) => {
-          const rest = prev.filter((item) => item.key !== request.statusKey);
-          return request.statusText ? [...rest, { key: request.statusKey, text: request.statusText }] : rest;
-        });
-        break;
-      case "setWidget":
-        setExtensionWidgets((prev) => {
-          const rest = prev.filter((item) => item.key !== request.widgetKey);
-          return request.widgetLines
-            ? [...rest, {
-                key: request.widgetKey,
-                lines: request.widgetLines,
-                placement: request.widgetPlacement ?? "aboveEditor",
-              }]
-            : rest;
-        });
-        break;
-      case "setTitle":
-        if (request.title) document.title = request.title;
-        break;
-      case "set_editor_text":
-        opts.chatInputRef?.current?.insertText(request.text);
-        break;
-      case "custom":
-        setExtensionCustomUi((current) => {
-          if (request.closed) return current?.id === request.id ? null : current;
-          return request;
-        });
-        break;
     }
-  }, [addNotice, opts.chatInputRef]);
+  }, [addNotice, commitExtensionUiState, opts.chatInputRef]);
 
   const finishPromptWithoutStream = useCallback(async (sid: string | null = sessionIdRef.current, runId?: number) => {
     // Bail out before loadSession too: a stale finish for a previous run
@@ -790,14 +795,14 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       if (state) {
         if (state.contextUsage !== undefined) setContextUsage(state.contextUsage ?? null);
         if (state.systemPrompt !== undefined) setSystemPrompt(state.systemPrompt ?? null);
-        if (state.extensionStatuses !== undefined) setExtensionStatuses(state.extensionStatuses ?? []);
-        if (state.extensionWidgets !== undefined) setExtensionWidgets(state.extensionWidgets ?? []);
+        if (state.extensionStatuses !== undefined) patchExtensionUiState({ statuses: state.extensionStatuses ?? [] });
+        if (state.extensionWidgets !== undefined) patchExtensionUiState({ widgets: state.extensionWidgets ?? [] });
       }
       await finishPromptWithoutStream(sid, runId);
     } catch {
       // Network still down — the next poll / visibility / online tick retries.
     }
-  }, [finishPromptWithoutStream]);
+  }, [finishPromptWithoutStream, patchExtensionUiState]);
 
   // Recovery net for missed SSE events: while the agent is running, verify
   // against the server periodically and whenever the tab returns to the
@@ -851,8 +856,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
             .then((d: { state?: AgentStateResponse }) => {
               if (d.state?.contextUsage !== undefined) setContextUsage(d.state.contextUsage ?? null);
               if (d.state?.systemPrompt !== undefined) setSystemPrompt(d.state.systemPrompt ?? null);
-              if (d.state?.extensionStatuses !== undefined) setExtensionStatuses(d.state.extensionStatuses ?? []);
-              if (d.state?.extensionWidgets !== undefined) setExtensionWidgets(d.state.extensionWidgets ?? []);
+              if (d.state?.extensionStatuses !== undefined) patchExtensionUiState({ statuses: d.state.extensionStatuses ?? [] });
+              if (d.state?.extensionWidgets !== undefined) patchExtensionUiState({ widgets: d.state.extensionWidgets ?? [] });
               // Aborted turns can leave messages queued in pi (delivered with the
               // next turn); dead wrapper (no state) means the queue is gone.
               setQueuedMessages(normalizeQueuedMessages(d.state?.queuedMessages));
@@ -974,10 +979,12 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         handleExtensionUiRequest(event as ExtensionUiRequest);
         break;
     }
-  }, [addNotice, finishPromptWithoutStream, handleExtensionUiRequest, loadSession, onAgentEnd]);
+  }, [addNotice, finishPromptWithoutStream, handleExtensionUiRequest, loadSession, onAgentEnd, patchExtensionUiState]);
   handleAgentEventRef.current = handleAgentEvent;
 
   const handleSend = useCallback(async (message: string, images?: AttachedImage[]) => {
+    // 只读会话：发送入口 UI 已替换为提示条，这里再拦一层。
+    if (isReadOnly) return;
     const trimmedMessage = message.trim();
     if (!trimmedMessage && !images?.length) return;
     if (agentRunningRef.current || bashRunningRef.current) return;
@@ -1069,9 +1076,11 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       setAgentPhase(null);
       dispatch({ type: "end" });
     }
-  }, [isNew, newSessionCwd, newSessionModel, session, ensureNewSession, ensureEventsConnected, promoteNewSession, waitForPromptSettlement, addNotice]);
+  }, [isNew, isReadOnly, newSessionCwd, newSessionModel, session, ensureNewSession, ensureEventsConnected, promoteNewSession, waitForPromptSettlement, addNotice]);
 
   const executeBash = useCallback(async (command: string, excludeFromContext: boolean) => {
+    // 只读会话：bash 命令同样会写 session 文件，拦截。
+    if (isReadOnly) return;
     if (agentRunningRef.current || bashRunningRef.current) return;
     const inputText = `${excludeFromContext ? "!!" : "!"}${command}`;
     bashRunningRef.current = true;
@@ -1096,10 +1105,12 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       setPendingBash(null);
       setBashRunning(false);
     }
-  }, [addNotice, ensureNewSession, loadSession, opts.chatInputRef, promoteNewSession, session]);
+  }, [addNotice, isReadOnly, ensureNewSession, loadSession, opts.chatInputRef, promoteNewSession, session]);
   executeBashRef.current = executeBash;
 
   const handleAbort = useCallback(async () => {
+    // 只读会话没有任何运行中的 agent，abort 无意义且不发送。
+    if (isReadOnly) return;
     const sid = sessionIdRef.current;
     if (!sid) return;
     if (bashRunningRef.current) {
@@ -1115,9 +1126,11 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     } catch (e) {
       console.error("Failed to abort:", e);
     }
-  }, []);
+  }, [isReadOnly]);
 
   const handleFork = useCallback(async (entryId: string) => {
+    // 只读会话：fork 会创建新 session 文件，拦截。
+    if (isReadOnly) return;
     if (bashRunningRef.current) return;
     const sid = sessionIdRef.current;
     if (!sid) return;
@@ -1136,16 +1149,22 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     } finally {
       setForkingEntryId(null);
     }
-  }, [onSessionForked]);
+  }, [isReadOnly, onSessionForked]);
 
   const handleNavigate = useCallback(async (entryId: string) => {
     if (bashRunningRef.current) return;
     const sid = sessionIdRef.current;
     if (!sid) return;
+    if (isReadOnly) {
+      // 只读降级：分支切换只发纯 GET context，不发 navigate_tree 写命令。
+      setActiveLeafId(entryId);
+      await loadContext(sid, entryId);
+      return;
+    }
     sendAgentCommand(sid, { type: "navigate_tree", targetId: entryId }).catch(() => {});
     setActiveLeafId(entryId);
     await loadContext(sid, entryId);
-  }, [loadContext]);
+  }, [isReadOnly, loadContext]);
 
   const handleLeafChange = useCallback(async (leafId: string | null) => {
     if (bashRunningRef.current) return;
@@ -1153,12 +1172,15 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     const sid = sessionIdRef.current;
     if (!sid) return;
     await loadContext(sid, leafId);
-    if (leafId) {
+    // 只读会话不持久化分支位置（navigate_tree 会写会话状态）。
+    if (leafId && !isReadOnly) {
       sendAgentCommand(sid, { type: "navigate_tree", targetId: leafId }).catch(() => {});
     }
-  }, [loadContext]);
+  }, [isReadOnly, loadContext]);
 
   const handleModelChange = useCallback(async (provider: string, modelId: string) => {
+    // 只读会话：set_model 会写会话状态，拦截。
+    if (isReadOnly) return;
     if (isNew) {
       setNewSessionModel({ provider, modelId });
       setPendingModel({ provider, modelId });
@@ -1179,9 +1201,11 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     } catch (e) {
       console.error("Failed to set model:", e);
     }
-  }, [isNew, setNewSessionModel]);
+  }, [isNew, isReadOnly, setNewSessionModel]);
 
   const handleCompact = useCallback(async () => {
+    // 只读会话：compact 会重写 session 文件，拦截。
+    if (isReadOnly) return;
     const sid = sessionIdRef.current;
     if (!sid || isCompacting) return;
     setIsCompacting(true);
@@ -1197,7 +1221,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     } finally {
       setIsCompacting(false);
     }
-  }, [isCompacting, loadSession]);
+  }, [isCompacting, isReadOnly, loadSession]);
 
   const loadModels = useCallback(async (signal?: AbortSignal) => {
     const modelCwd = newSessionCwd ?? session?.cwd ?? "";
@@ -1220,6 +1244,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   }, [isNew, newSessionCwd, session?.cwd]);
 
   const handleBuiltinSlashCommand = useCallback(async (text: string): Promise<BuiltinSlashCommandResult> => {
+    // 只读会话：内置 slash 命令（compact/reload/name/session/copy）全部走 RPC，拦截。
+    if (isReadOnly) return { handled: false };
     if (!text.startsWith("/")) return { handled: false };
     const match = text.match(/^\/([^\s]+)(?:\s+([\s\S]*))?$/);
     if (!match) return { handled: false };
@@ -1300,13 +1326,15 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     } finally {
       if (commandName === "compact") setIsCompacting(false);
     }
-  }, [addNotice, ensureNewSession, isCompacting, loadModels, loadSession, loadSlashCommands, loadTools, promoteNewSession, onSessionStatsPanelOpen]);
+  }, [addNotice, ensureNewSession, isCompacting, isReadOnly, loadModels, loadSession, loadSlashCommands, loadTools, promoteNewSession, onSessionStatsPanelOpen]);
 
   // Queued (undelivered) messages live in the queue panel only; the chat gets
   // the real user message when pi delivers it (user message_end event). An
   // optimistic chat bubble here would duplicate the queue panel and turn into
   // a ghost message if the queue is recalled.
   const handleSteer = useCallback(async (message: string, images?: AttachedImage[]) => {
+    // 只读会话：steer 会写 session 文件，拦截。
+    if (isReadOnly) return;
     const sid = sessionIdRef.current;
     if (!sid) return;
     const piImages = images?.map((img) => ({ type: "image" as const, data: img.data, mimeType: img.mimeType }));
@@ -1319,13 +1347,15 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     } catch (e) {
       console.error("Failed to steer:", e);
     }
-  }, []);
+  }, [isReadOnly]);
 
   const handlePromptWithStreamingBehavior = useCallback(async (
     message: string,
     behavior: "steer" | "followUp",
     images?: AttachedImage[],
   ) => {
+    // 只读会话：排队 prompt 同样写 session，拦截。
+    if (isReadOnly) return;
     const sid = sessionIdRef.current;
     if (!sid) return;
     const piImages = images?.map((img) => ({ type: "image" as const, data: img.data, mimeType: img.mimeType }));
@@ -1339,9 +1369,11 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     } catch (e) {
       console.error("Failed to queue prompt:", e);
     }
-  }, []);
+  }, [isReadOnly]);
 
   const handleFollowUp = useCallback(async (message: string, images?: AttachedImage[]) => {
+    // 只读会话：follow-up 会写 session 文件，拦截。
+    if (isReadOnly) return;
     const sid = sessionIdRef.current;
     if (!sid) return;
     const piImages = images?.map((img) => ({ type: "image" as const, data: img.data, mimeType: img.mimeType }));
@@ -1354,9 +1386,11 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     } catch (e) {
       console.error("Failed to follow up:", e);
     }
-  }, []);
+  }, [isReadOnly]);
 
   const handleAbortCompaction = useCallback(async () => {
+    // 只读会话不存在进行中的 compact，拦截。
+    if (isReadOnly) return;
     const sid = sessionIdRef.current;
     if (!sid) return;
     try {
@@ -1364,9 +1398,11 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     } catch (e) {
       console.error("Failed to abort compaction:", e);
     }
-  }, []);
+  }, [isReadOnly]);
 
   const handleRecallQueue = useCallback(async () => {
+    // 只读会话没有队列（state 从不加载），拦截。
+    if (isReadOnly) return;
     const sid = sessionIdRef.current;
     if (!sid) return;
     try {
@@ -1382,9 +1418,11 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       console.error("Failed to recall queued messages:", e);
       addNotice({ type: "error", message: "Failed to recall queued messages" });
     }
-  }, [opts.chatInputRef, addNotice]);
+  }, [opts.chatInputRef, isReadOnly, addNotice]);
 
   const handleThinkingLevelChange = useCallback(async (level: ThinkingLevelOption) => {
+    // 只读会话：set_thinking_level 会写会话状态，拦截。
+    if (isReadOnly) return;
     setThinkingLevel(level);
     if (level === "auto") return; // "auto" leaves pi's current setting untouched
     const sid = sessionIdRef.current ?? await ensuringNewSessionRef.current;
@@ -1394,9 +1432,11 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     } catch (e) {
       console.error("Failed to set thinking level:", e);
     }
-  }, []);
+  }, [isReadOnly]);
 
   const handleToolPresetChange = useCallback(async (preset: "none" | "default" | "full") => {
+    // 只读会话：set_tools 会写会话状态，拦截。
+    if (isReadOnly) return;
     const toolNames = getToolNamesForPreset(preset);
     setToolPresetState(preset);
     const sid = sessionIdRef.current ?? await ensuringNewSessionRef.current;
@@ -1406,7 +1446,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     } catch (e) {
       console.error("Failed to set tools:", e);
     }
-  }, [setToolPresetState]);
+  }, [isReadOnly, setToolPresetState]);
 
   const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
     ignoreProgrammaticScrollUntilRef.current = Date.now() + PROGRAMMATIC_SCROLL_IGNORE_MS;
@@ -1441,35 +1481,41 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   useEffect(() => {
     if (session) {
       sessionIdRef.current = session.id;
-      loadSession(session.id, true, true).then((agentState) => {
-        if (agentState?.running) {
-          loadTools(session.id);
-          if (agentState.state?.isStreaming || agentState.state?.isPromptRunning) {
-            agentRunningRef.current = true;
-            setAgentRunning(true);
-            setAgentPhase(agentState.state.isStreaming ? { kind: "waiting_model" } : { kind: "running_command" });
-            dispatch({ type: "start" });
-            void connectEvents(session.id);
-            if (!agentState.state.isStreaming && agentState.state.isPromptRunning) {
-              void waitForPromptSettlement(session.id);
+      if (session.readOnly === true) {
+        // 只读会话：只走 GET 详情读取路径。不拉 /state、不连 per-session SSE、
+        // 不触发任何会启动 AgentSession 的调用；历史消息与分支树照常展示。
+        void loadSession(session.id, true, false);
+      } else {
+        loadSession(session.id, true, true).then((agentState) => {
+          if (agentState?.running) {
+            loadTools(session.id);
+            if (agentState.state?.isStreaming || agentState.state?.isPromptRunning) {
+              agentRunningRef.current = true;
+              setAgentRunning(true);
+              setAgentPhase(agentState.state.isStreaming ? { kind: "waiting_model" } : { kind: "running_command" });
+              dispatch({ type: "start" });
+              void connectEvents(session.id);
+              if (!agentState.state.isStreaming && agentState.state.isPromptRunning) {
+                void waitForPromptSettlement(session.id);
+              }
+            }
+            if (agentState.state?.isBashRunning) {
+              bashRunningRef.current = true;
+              setBashRunning(true);
+              void waitForBashSettlement(session.id);
             }
           }
-          if (agentState.state?.isBashRunning) {
-            bashRunningRef.current = true;
-            setBashRunning(true);
-            void waitForBashSettlement(session.id);
+          if (agentState?.state) {
+            if (agentState.state.isCompacting !== undefined) setIsCompacting(agentState.state.isCompacting);
+            if (agentState.state.contextUsage !== undefined) setContextUsage(agentState.state.contextUsage ?? null);
+            if (agentState.state.systemPrompt !== undefined) setSystemPrompt(agentState.state.systemPrompt ?? null);
+            if (agentState.state.thinkingLevel !== undefined) setThinkingLevel((agentState.state.thinkingLevel as ThinkingLevelOption) ?? "auto");
+            if (agentState.state.extensionStatuses !== undefined) patchExtensionUiState({ statuses: agentState.state.extensionStatuses ?? [] });
+            if (agentState.state.extensionWidgets !== undefined) patchExtensionUiState({ widgets: agentState.state.extensionWidgets ?? [] });
+            if (agentState.state.queuedMessages !== undefined) setQueuedMessages(normalizeQueuedMessages(agentState.state.queuedMessages));
           }
-        }
-        if (agentState?.state) {
-          if (agentState.state.isCompacting !== undefined) setIsCompacting(agentState.state.isCompacting);
-          if (agentState.state.contextUsage !== undefined) setContextUsage(agentState.state.contextUsage ?? null);
-          if (agentState.state.systemPrompt !== undefined) setSystemPrompt(agentState.state.systemPrompt ?? null);
-          if (agentState.state.thinkingLevel !== undefined) setThinkingLevel((agentState.state.thinkingLevel as ThinkingLevelOption) ?? "auto");
-          if (agentState.state.extensionStatuses !== undefined) setExtensionStatuses(agentState.state.extensionStatuses ?? []);
-          if (agentState.state.extensionWidgets !== undefined) setExtensionWidgets(agentState.state.extensionWidgets ?? []);
-          if (agentState.state.queuedMessages !== undefined) setQueuedMessages(normalizeQueuedMessages(agentState.state.queuedMessages));
-        }
-      });
+        });
+      }
     }
     return () => {
       bashRecoveryIdRef.current += 1;

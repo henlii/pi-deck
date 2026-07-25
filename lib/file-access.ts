@@ -22,13 +22,7 @@ export async function getAllowedFileRoots(): Promise<Set<string>> {
   if (cached && cached.expiresAt > now) return cached.roots;
 
   const sessions = await listAllSessions();
-  const roots = new Set<string>();
-  for (const s of sessions) {
-    if (s.cwd) roots.add(normalizeSlashes(s.cwd));
-    // The project root (main repo shared by all worktrees) is browsable too —
-    // the project dropdown lists it even when only worktrees have sessions.
-    if (s.projectRoot) roots.add(normalizeSlashes(s.projectRoot));
-  }
+  const roots = getAllowedRootsFromSessions(sessions);
 
   // Also allow ~/pi-cwd-* directories created by the default-cwd endpoint.
   try {
@@ -44,6 +38,18 @@ export async function getAllowedFileRoots(): Promise<Set<string>> {
   for (const root of getAdditionalAllowedRoots()) roots.add(root);
 
   globalThis.__piAllowedRootsCache = { roots, expiresAt: now + ALLOWED_ROOTS_TTL_MS };
+  return roots;
+}
+
+export function getAllowedRootsFromSessions(sessions: Awaited<ReturnType<typeof listAllSessions>>): Set<string> {
+  const roots = new Set<string>();
+  for (const s of sessions) {
+    if (s.readOnly !== true && s.cwd) roots.add(normalizeSlashes(s.cwd));
+    // The project root (main repo shared by all worktrees) is browsable too —
+    // the project dropdown lists it even when only worktrees have sessions.
+    if (s.readOnly !== true && s.projectRoot) roots.add(normalizeSlashes(s.projectRoot));
+  }
+
   return roots;
 }
 

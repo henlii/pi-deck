@@ -4,19 +4,43 @@ import {
   buildSessionContext as piBuildSessionContext,
   getAgentDir,
 } from "@earendil-works/pi-coding-agent";
-import { closeSync, openSync, readSync } from "fs";
+import { closeSync, openSync, readSync, statSync } from "fs";
 import { normalize as normalizePath } from "path";
 import type { AgentMessage, SessionEntry, SessionHeader, SessionInfo, SessionContext } from "./types";
 import type { SessionEntry as PiSessionEntry, SessionInfo as PiSessionInfo } from "@earendil-works/pi-coding-agent";
 import { normalizeToolCalls } from "./normalize";
 import { resolveProject, type ProjectInfo } from "./worktree";
+import { discoverSubagentSessions } from "./subagent-sessions";
 
 export { getAgentDir };
+
+export function markExistingSubagentRelation(
+  session: SessionInfo,
+  child: import("./subagent-sessions").DiscoveredSubagent,
+): SessionInfo {
+  session.subagent = {
+    parentSessionId: child.parentSessionId,
+    runId: child.runId,
+    runIndex: child.runIndex,
+    ...(child.agent ? { agent: child.agent } : {}),
+  };
+  session.readOnly = true;
+  return session;
+}
 
 async function loadAllSessions(): Promise<SessionInfo[]> {
   const piSessions: PiSessionInfo[] = await SessionManager.listAll();
   const pathToId = new Map<string, string>();
-  for (const s of piSessions) pathToId.set(normalizePath(s.path), s.id);
+  const idToPath = new Map<string, string>();
+  for (const s of piSessions) {
+    const path = normalizePath(s.path);
+    if (!pathToId.has(path) && !idToPath.has(s.id)) {
+      pathToId.set(path, s.id);
+      idToPath.set(s.id, path);
+    }
+  }
+  const resultPaths = new Set<string>();
+  const resultIds = new Set<string>();
 
   // Resolve each unique cwd to its project root (main repo shared by all
   // worktrees). resolveProject caches per-cwd, so this is cheap after warmup.
@@ -26,10 +50,13 @@ async function loadAllSessions(): Promise<SessionInfo[]> {
     projectByCwd.set(cwd, await resolveProject(cwd));
   }));
 
-  return piSessions.map((s) => {
+  const sessions: SessionInfo[] = piSessions.flatMap((s): SessionInfo[] => {
+    const path = normalizePath(s.path);
+    if (resultPaths.has(path) || resultIds.has(s.id)) return [];
+    resultPaths.add(path); resultIds.add(s.id);
     cacheSessionPath(s.id, s.path);
     const project = s.cwd ? projectByCwd.get(s.cwd) : undefined;
-    return {
+    return [{
       path: s.path,
       id: s.id,
       cwd: s.cwd,
@@ -41,8 +68,64 @@ async function loadAllSessions(): Promise<SessionInfo[]> {
       parentSessionId: s.parentSessionPath ? pathToId.get(normalizePath(s.parentSessionPath)) : undefined,
       projectRoot: project?.projectRoot ?? s.cwd,
       ...(project?.isWorktree && project.branch ? { worktreeBranch: project.branch } : {}),
-    };
+    }];
   });
+
+  const existingByPath = new Map(sessions.map((session) => [normalizePath(session.path), session]));
+  const existingById = new Map(sessions.map((session) => [session.id, session]));
+  const acceptedChildPaths = new Set<string>();
+  const acceptedChildIds = new Set<string>();
+  const subagents: Array<{ child: import("./subagent-sessions").DiscoveredSubagent }> = [];
+  const queue = sessions.map((parent) => ({ parent, depth: 0 }));
+  while (queue.length && acceptedChildIds.size < 256) {
+    const current = queue.shift()!;
+    if (current.depth >= 16) continue;
+    const children = discoverSubagentSessions(current.parent.path, current.parent.id);
+    for (const child of children) {
+      const path = normalizePath(child.path);
+      if (acceptedChildPaths.has(path) || acceptedChildIds.has(child.header.id)) continue;
+      acceptedChildPaths.add(path); acceptedChildIds.add(child.header.id);
+      const existingByPathEntry = existingByPath.get(path);
+      const existingByIdEntry = existingById.get(child.header.id);
+      if ((existingByPathEntry && existingByPathEntry.id !== child.header.id) ||
+        (existingByIdEntry && normalizePath(existingByIdEntry.path) !== path)) continue;
+      const existing = existingByPathEntry ?? existingByIdEntry;
+      if (existing) {
+        markExistingSubagentRelation(existing, child);
+        queue.push({ parent: existing, depth: current.depth + 1 });
+        continue;
+      }
+      if (resultPaths.has(path) || resultIds.has(child.header.id)) continue;
+      resultPaths.add(path);
+      resultIds.add(child.header.id);
+      pathToId.set(path, child.header.id);
+      subagents.push({ child });
+      queue.push({ parent: {
+        path: child.path, id: child.header.id, cwd: child.header.cwd, created: child.header.timestamp,
+        modified: child.header.timestamp, messageCount: 0, firstMessage: "(no messages)", projectRoot: child.header.cwd,
+      }, depth: current.depth + 1 });
+    }
+  }
+  const childInfos = await Promise.all(subagents.map(async ({ child }) => {
+    const project = await resolveProject(child.header.cwd);
+    let modified = child.header.timestamp;
+    try { modified = statSync(child.path).mtime.toISOString(); } catch { /* 使用 header 时间 */ }
+    cacheSessionPath(child.header.id, child.path);
+    return {
+      path: child.path,
+      id: child.header.id,
+      cwd: child.header.cwd,
+      created: child.header.timestamp,
+      modified,
+      messageCount: 0,
+      firstMessage: "(no messages)",
+      projectRoot: project?.projectRoot ?? child.header.cwd,
+      ...(project?.isWorktree && project.branch ? { worktreeBranch: project.branch } : {}),
+      subagent: { parentSessionId: child.parentSessionId, runId: child.runId, runIndex: child.runIndex, ...(child.agent ? { agent: child.agent } : {}) },
+      readOnly: true as const,
+    } satisfies SessionInfo;
+  }));
+  return [...sessions, ...childInfos];
 }
 
 export async function listAllSessions(): Promise<SessionInfo[]> {

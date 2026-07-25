@@ -305,6 +305,15 @@ export interface SessionInfo {
   messageCount: number;
   firstMessage: string;
   parentSessionId?: string; // set if this session was forked from another
+  /** Subagent 关系只表示工具结果发现的直接父子，不伪装成 Pi fork。 */
+  subagent?: {
+    parentSessionId: string;
+    runId: string;
+    runIndex: number;
+    agent?: string;
+  };
+  /** 子代理持久化会话只能浏览，服务端也必须执行此门禁。 */
+  readOnly?: true;
   /** Main repo root shared by all worktrees of this cwd (cwd itself for non-git dirs).
    *  Always set by the server; optional because the client builds transient
    *  SessionInfo objects before the first refresh. Fall back to cwd. */

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "fs";
-import { join } from "path";
+import { join, resolve } from "path";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import {
   resolveSessionPath,
@@ -9,8 +9,11 @@ import {
   invalidateSessionListCache,
   buildSessionContext,
   readSessionHeader,
+  listAllSessions,
 } from "@/lib/session-reader";
 import { getRpcSession } from "@/lib/rpc-manager";
+import { sessionService, READ_ONLY_SUBAGENT_ERROR, requireWritableSession } from "@/lib/session-service";
+import { collectSubagentTree, deleteValidatedSubagents } from "@/lib/subagent-sessions";
 
 // BranchNavigator still traverses recursively, so keep the response tree shallow.
 const MAX_PROJECTED_TREE_DEPTH = 200;
@@ -138,6 +141,7 @@ export async function GET(
     const parentSessionId = header?.parentSession
       ? await resolveSessionIdByPath(header.parentSession)
       : undefined;
+    const relation = (await listAllSessions()).find((session) => session.id === id);
     const info = header ? {
       path: filePath,
       id: header.id,
@@ -154,6 +158,7 @@ export async function GET(
           })()
         : "(no messages)",
       parentSessionId,
+      ...(relation?.subagent ? { subagent: relation.subagent, readOnly: true as const } : {}),
     } : null;
 
     return NextResponse.json({
@@ -165,6 +170,9 @@ export async function GET(
       context,
     });
   } catch (error) {
+    if (String(error) === READ_ONLY_SUBAGENT_ERROR) {
+      return NextResponse.json({ error: READ_ONLY_SUBAGENT_ERROR }, { status: 403 });
+    }
     return NextResponse.json({ error: String(error) }, { status: 500 });
   }
 }
@@ -176,6 +184,7 @@ export async function PATCH(
 ) {
   const { id } = await params;
   try {
+    await requireWritableSession(id, sessionService.isReadOnly);
     const { name } = await req.json() as { name?: string };
     if (typeof name !== "string") {
       return NextResponse.json({ error: "name is required" }, { status: 400 });
@@ -189,6 +198,9 @@ export async function PATCH(
     invalidateSessionListCache();
     return NextResponse.json({ ok: true });
   } catch (error) {
+    if (String(error) === READ_ONLY_SUBAGENT_ERROR) {
+      return NextResponse.json({ error: READ_ONLY_SUBAGENT_ERROR }, { status: 403 });
+    }
     return NextResponse.json({ error: String(error) }, { status: 500 });
   }
 }
@@ -200,6 +212,7 @@ export async function DELETE(
 ) {
   const { id } = await params;
   try {
+    await requireWritableSession(id, sessionService.isReadOnly);
     const filePath = await resolveSessionPath(id);
     if (!filePath) {
       return NextResponse.json({ error: "Session not found" }, { status: 404 });
@@ -207,6 +220,10 @@ export async function DELETE(
 
     // Read only the bounded header before deleting.
     const parentSessionPath = readSessionHeader(filePath)?.parentSession;
+
+    const verifiedChildren = readSessionHeader(filePath)?.id === id
+      ? collectSubagentTree(filePath, id)
+      : [];
 
     // Re-attach all direct children to this session's parent (cascade re-parent)
     // Scan sibling files in the same directory
@@ -231,10 +248,15 @@ export async function DELETE(
 
     getRpcSession(id)?.destroy();
     unlinkSync(filePath);
+    const parentRoot = resolve(filePath.slice(0, -6));
+    const skippedSubagents = deleteValidatedSubagents(verifiedChildren, parentRoot, invalidateSessionPathCache);
     invalidateSessionPathCache(id);
     invalidateSessionListCache();
-    return NextResponse.json({ ok: true });
+    return NextResponse.json({ ok: true, skippedSubagents });
   } catch (error) {
+    if (String(error) === READ_ONLY_SUBAGENT_ERROR) {
+      return NextResponse.json({ error: READ_ONLY_SUBAGENT_ERROR }, { status: 403 });
+    }
     return NextResponse.json({ error: String(error) }, { status: 500 });
   }
 }

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getRpcSession } from "@/lib/rpc-manager";
 import { resolveSessionPath } from "@/lib/session-reader";
+import { sessionService } from "@/lib/session-service";
 
 export async function GET(
   _req: Request,
@@ -12,6 +13,7 @@ export async function GET(
       return NextResponse.json({ error: "Session not found" }, { status: 404 });
     }
 
+    if (await sessionService.isReadOnly(id)) return NextResponse.json({ running: false, readOnly: true });
     const rpc = getRpcSession(id);
     if (!rpc?.isAlive()) return NextResponse.json({ running: false });
 

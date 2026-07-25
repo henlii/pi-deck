@@ -20,6 +20,7 @@ import { getInitialNavigation } from "@/lib/initial-navigation";
 import type { SessionInfo, SessionTreeNode } from "@/lib/types";
 import type { ChatInputHandle } from "./ChatInput";
 import type { SessionStatsInfo } from "@/lib/pi-types";
+import { ProjectProvider, useProjectActions, useProjectIdentity } from "./ProjectProvider";
 
 type SessionCopyField = "file" | "id";
 type AutoNameStatus =
@@ -29,14 +30,16 @@ type AutoNameStatus =
   | { kind: "error"; message: string };
 
 export function AppShell() {
+  return <ProjectProvider><AppShellInner /></ProjectProvider>;
+}
+
+function AppShellInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [initialNavigation] = useState(() => getInitialNavigation(searchParams));
   const { isDark, toggleTheme } = useTheme();
   const isMobile = useIsMobile();
   const [selectedSession, setSelectedSession] = useState<SessionInfo | null>(null);
-  // When user clicks +, we only store the cwd — no fake session id
-  const [newSessionCwd, setNewSessionCwd] = useState<string | null>(null);
   const [initialCwdStatus, setInitialCwdStatus] = useState<"idle" | "validating" | "ready" | "error">(
     () => initialNavigation.requestedCwd ? "validating" : "idle",
   );
@@ -163,11 +166,13 @@ export function AppShell() {
   }, []);
 
   const initialSessionId = initialNavigation.sessionId;
-  const [activeCwd, setActiveCwd] = useState<string | null>(null);
+  const identity = useProjectIdentity();
+  const { setIdentity } = useProjectActions();
+  const activeCwd = identity.cwd;
   // True once the initial ?session= URL param has been resolved (or confirmed absent)
   const [initialSessionRestored, setInitialSessionRestored] = useState<boolean>(() => !initialSessionId);
-  // Suppresses sessionKey bump in handleCwdChange during the initial URL restore
-  const suppressCwdBumpRef = useRef(false);
+  // URL 恢复和首次身份建立不应清理当前聊天。
+  const suppressSessionResetRef = useRef(false);
 
   useEffect(() => {
     const requestedCwd = initialNavigation.requestedCwd;
@@ -191,8 +196,8 @@ export function AppShell() {
 
         // The sidebar will notify us when it adopts this cwd. Avoid remounting
         // the just-created empty chat during that initial synchronization.
-        suppressCwdBumpRef.current = true;
-        setNewSessionCwd(data.cwd);
+        suppressSessionResetRef.current = true;
+        setIdentity({ cwd: data.cwd, projectRoot: data.cwd, status: "ready", error: null });
         setInitialCwdStatus("ready");
       })
       .catch((error: unknown) => {
@@ -202,40 +207,33 @@ export function AppShell() {
       });
 
     return () => controller.abort();
-  }, [initialNavigation]);
+  }, [initialNavigation, setIdentity]);
 
-  const handleCwdChange = useCallback((cwd: string | null, projectRoot?: string | null) => {
-    setActiveCwd(cwd);
-    // Skip if cwd is null (initial mount) or during the initial URL restore.
-    if (!cwd) return;
-    if (suppressCwdBumpRef.current) {
-      suppressCwdBumpRef.current = false;
+  const previousProjectIdentityRef = useRef({ cwd: identity.cwd, projectRoot: identity.projectRoot });
+  useEffect(() => {
+    const previous = previousProjectIdentityRef.current;
+    const current = { cwd: identity.cwd, projectRoot: identity.projectRoot };
+    previousProjectIdentityRef.current = current;
+    const cwdChanged = previous.cwd !== current.cwd;
+    const projectChanged = previous.projectRoot !== current.projectRoot;
+    if (!cwdChanged && !projectChanged) return;
+    if (suppressSessionResetRef.current) {
+      suppressSessionResetRef.current = false;
       return;
     }
-    // Worktrees of one repo share a project root. Moving the effective cwd
-    // within the same project (e.g. switching worktree, or clicking a session
-    // that lives in another worktree) must not close the open session.
-    const newProject = projectRoot ?? cwd;
-    if (selectedSession && (selectedSession.projectRoot ?? selectedSession.cwd) === newProject) {
-      return;
-    }
-    // Close any session that belongs to a different project — it no longer
-    // matches the selected project directory.
-    setSelectedSession(null);
-    setNewSessionCwd((prev) => {
-      if (prev && prev !== cwd) return null;
-      return prev;
-    });
-    setSessionKey((k) => k + 1);
+    if (previous.cwd === null && previous.projectRoot === null) return;
+    if (selectedSession && (selectedSession.projectRoot ?? selectedSession.cwd) === current.projectRoot) return;
+    if (selectedSession) setSelectedSession(null);
+    if (!selectedSession && !cwdChanged) return;
+    setSessionKey((key) => key + 1);
     setBranchTree([]);
     setBranchActiveLeafId(null);
     setSystemPrompt(null);
     setActiveTopPanel(null);
     router.replace("/", { scroll: false });
-  }, [router, selectedSession]);
+  }, [identity.cwd, identity.projectRoot, router, selectedSession]);
 
   const handleSelectSession = useCallback((session: SessionInfo, isRestore = false) => {
-    setNewSessionCwd(null);
     setSelectedSession(session);
     setSessionKey((k) => k + 1);
     setSystemPrompt(null);
@@ -243,9 +241,8 @@ export function AppShell() {
     // On mobile, collapse the overlay drawer so the chat is revealed after pick.
     if (isMobile && !isRestore) setSidebarOpen(false);
     if (isRestore) {
-      // Suppress the redundant sessionKey bump that would come from the
-      // onCwdChange effect firing after setSelectedCwd in the sidebar
-      suppressCwdBumpRef.current = true;
+      // URL session 恢复会同时建立项目身份；跳过紧随其后的身份 watcher。
+      suppressSessionResetRef.current = true;
     }
     // Skip router.replace when restoring from URL — the param is already correct
     // and calling replace in production Next.js triggers a Suspense remount loop
@@ -254,9 +251,8 @@ export function AppShell() {
     }
   }, [router, isMobile]);
 
-  const handleNewSession = useCallback((_sessionId: string, cwd: string) => {
+  const handleNewSession = useCallback(() => {
     setSelectedSession(null);
-    setNewSessionCwd(cwd);
     setSessionKey((k) => k + 1);
     setBranchTree([]);
     setBranchActiveLeafId(null);
@@ -268,7 +264,7 @@ export function AppShell() {
 
   // Global keyboard shortcuts (handles Esc, Ctrl+Alt+N etc.)
   useGlobalKeyboardShortcuts({
-    onNewSession: (cwd: string) => handleNewSession(`kb-${Date.now()}`, cwd),
+    onNewSession: () => handleNewSession(),
     activeCwd,
   });
 
@@ -289,7 +285,6 @@ export function AppShell() {
 
   // Called by ChatWindow when a new session gets its real id from pi
   const handleSessionCreated = useCallback((session: SessionInfo) => {
-    setNewSessionCwd(null);
     setSelectedSession(session);
     setRefreshKey((k) => k + 1);
     hydrateSelectedSession(session.id);
@@ -303,7 +298,8 @@ export function AppShell() {
 
   const handleAutoName = useCallback(async () => {
     const sessionId = selectedSession?.id;
-    if (!sessionId || autoNameStatus.kind === "naming") return;
+    // 只读会话：auto-name 会改名（写操作），UI 层先拦（后端仍是权威防线）。
+    if (!sessionId || selectedSession?.readOnly === true || autoNameStatus.kind === "naming") return;
     if (autoNameTimerRef.current) clearTimeout(autoNameTimerRef.current);
     setActiveTopPanel(null);
     setAutoNameStatus({ kind: "naming" });
@@ -330,7 +326,7 @@ export function AppShell() {
       setAutoNameStatus({ kind: "error", message });
       autoNameTimerRef.current = setTimeout(() => setAutoNameStatus({ kind: "idle" }), 5000);
     }
-  }, [autoNameStatus.kind, selectedSession?.id]);
+  }, [autoNameStatus.kind, selectedSession?.id, selectedSession?.readOnly]);
 
   useEffect(() => {
     if (autoNameTimerRef.current) clearTimeout(autoNameTimerRef.current);
@@ -344,7 +340,6 @@ export function AppShell() {
   const handleSessionForked = useCallback((newSessionId: string) => {
     setRefreshKey((k) => k + 1);
     setSessionKey((k) => k + 1);
-    setNewSessionCwd(null);
     setSelectedSession((prev) => ({
       ...(prev ?? { path: "", cwd: "", created: "", modified: "", messageCount: 0, firstMessage: "" }),
       id: newSessionId,
@@ -360,9 +355,7 @@ export function AppShell() {
   const handleSessionDeleted = useCallback((sessionId: string) => {
     setRefreshKey((k) => k + 1);
     if (selectedSession?.id === sessionId) {
-      const cwd = selectedSession.cwd;
       setSelectedSession(null);
-      setNewSessionCwd(cwd ?? null);
       setSessionKey((k) => k + 1);
       setBranchTree([]);
       setBranchActiveLeafId(null);
@@ -413,7 +406,7 @@ export function AppShell() {
   }, [selectedSession]);
 
   // Show chat area if a session is selected, or if we have a cwd to start a new session in
-  const effectiveNewSessionCwd = newSessionCwd ?? (selectedSession === null && activeCwd ? activeCwd : null);
+  const effectiveNewSessionCwd = selectedSession === null ? activeCwd : null;
   const showChat = selectedSession !== null || effectiveNewSessionCwd !== null;
   // While restoring initial session from URL, don't show the placeholder
   const showPlaceholder = initialSessionRestored && !showChat;
@@ -444,8 +437,6 @@ export function AppShell() {
         onInitialRestoreDone={handleInitialRestoreDone}
         refreshKey={refreshKey}
         onSessionDeleted={handleSessionDeleted}
-        selectedCwd={selectedSession?.cwd ?? newSessionCwd ?? null}
-        onCwdChange={handleCwdChange}
         onOpenFile={handleOpenFile}
         explorerRefreshKey={explorerRefreshKey}
         onExplorerRefresh={handleExplorerRefresh}
@@ -471,7 +462,7 @@ export function AppShell() {
           {
             label: "Skills",
             onClick: () => setSkillsConfigOpen(true),
-            disabled: !activeCwd && !selectedSession?.cwd && !newSessionCwd,
+            disabled: !activeCwd && !selectedSession?.cwd,
             icon: (
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M12 2L2 7l10 5 10-5-10-5z" />
@@ -483,7 +474,7 @@ export function AppShell() {
           {
             label: "Plugins",
             onClick: () => setPluginsConfigOpen(true),
-            disabled: !activeCwd && !selectedSession?.cwd && !newSessionCwd,
+            disabled: !activeCwd && !selectedSession?.cwd,
             icon: (
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M9 7V2" />
@@ -735,11 +726,12 @@ export function AppShell() {
                 {!isMobile && <span>Full history</span>}
               </button>
               {(() => {
+                const isReadOnly = selectedSession?.readOnly === true;
                 const hasMessages = Boolean(
                   selectedSession
                   && (sessionStats?.userMessages ?? selectedSession.messageCount) > 0,
                 );
-                const disabled = !selectedSession || !hasMessages || autoNameStatus.kind === "naming";
+                const disabled = !selectedSession || isReadOnly || !hasMessages || autoNameStatus.kind === "naming";
                 const isSuccess = autoNameStatus.kind === "success";
                 const isError = autoNameStatus.kind === "error";
                 const label = autoNameStatus.kind === "naming"
@@ -751,11 +743,13 @@ export function AppShell() {
                       : "Generate title";
                 const title = !selectedSession
                   ? "Title generation is available after the session is saved"
-                  : !hasMessages
-                    ? "Send a message before naming this session"
-                    : isError
-                      ? autoNameStatus.message
-                      : "Generate a session title";
+                  : isReadOnly
+                    ? "Read-only sessions cannot be renamed"
+                    : !hasMessages
+                      ? "Send a message before naming this session"
+                      : isError
+                        ? autoNameStatus.message
+                        : "Generate a session title";
 
                 return (
                   <button
@@ -962,7 +956,11 @@ export function AppShell() {
                   background: "var(--bg-panel)",
                   borderBottom: "1px solid var(--border)",
                 }}>
-                  {systemPrompt ? (
+                  {selectedSession?.readOnly === true ? (
+                    <div style={{ padding: "10px 16px", fontSize: 12, color: "var(--text-muted)", fontStyle: "italic" }}>
+                      System prompt is not available for read-only sessions
+                    </div>
+                  ) : systemPrompt ? (
                     <div style={{
                       maxHeight: "min(600px, 75vh)",
                       overflowY: "auto",
@@ -1274,12 +1272,12 @@ export function AppShell() {
       </svg>
     </button>
     {modelsConfigOpen && <ModelsConfig onClose={() => { setModelsConfigOpen(false); setModelsRefreshKey((k) => k + 1); }} />}
-    {skillsConfigOpen && (activeCwd ?? selectedSession?.cwd ?? newSessionCwd) && (
-      <SkillsConfig cwd={(activeCwd ?? selectedSession?.cwd ?? newSessionCwd)!} onClose={() => setSkillsConfigOpen(false)} />
+    {skillsConfigOpen && (activeCwd ?? selectedSession?.cwd) && (
+      <SkillsConfig cwd={(activeCwd ?? selectedSession?.cwd)!} onClose={() => setSkillsConfigOpen(false)} />
     )}
-    {pluginsConfigOpen && (activeCwd ?? selectedSession?.cwd ?? newSessionCwd) && (
+    {pluginsConfigOpen && (activeCwd ?? selectedSession?.cwd) && (
       <PluginsConfig
-        cwd={(activeCwd ?? selectedSession?.cwd ?? newSessionCwd)!}
+        cwd={(activeCwd ?? selectedSession?.cwd)!}
         sessionId={selectedSession?.id ?? null}
         onClose={() => setPluginsConfigOpen(false)}
         onReloaded={() => setSessionKey((k) => k + 1)}
