@@ -556,11 +556,14 @@ export function PluginsConfig({
   sessionId,
   onClose,
   onReloaded,
+  embedded = false,
 }: {
   cwd: string;
   sessionId: string | null;
   onClose: () => void;
   onReloaded?: () => void;
+  /** 嵌入模式：去掉自身的全屏遮罩/外壳，由宿主（SettingsView）提供 chrome。 */
+  embedded?: boolean;
 }) {
   const isMobile = useIsMobile();
   const [data, setData] = useState<PluginsResponse | null>(null);
@@ -690,34 +693,46 @@ export function PluginsConfig({
 
   return (
     <div
-      style={{
-        position: "fixed",
-        inset: 0,
-        zIndex: 1000,
-        background: "rgba(0,0,0,0.35)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-      }}
-      onClick={(e) => {
+      style={embedded
+        ? { position: "relative", display: "flex", flexDirection: "column", height: "100%", minHeight: 0, overflow: "hidden" }
+        : {
+            position: "fixed",
+            inset: 0,
+            zIndex: 1000,
+            background: "rgba(0,0,0,0.35)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+      onClick={embedded ? undefined : (e) => {
         if (e.target === e.currentTarget) onClose();
       }}
     >
       <div
-        style={{
-          width: isMobile ? "calc(100vw - 16px)" : 860,
-          maxWidth: "calc(100vw - 16px)",
-          height: isMobile ? "calc(100dvh - 16px)" : "76vh",
-          maxHeight: "calc(100dvh - 16px)",
-          background: "var(--bg)",
-          border: "1px solid var(--border)",
-          borderRadius: 8,
-          display: "flex",
-          flexDirection: "column",
-          boxShadow: "0 8px 32px rgba(0,0,0,0.18)",
-          overflow: "hidden",
-        }}
+        style={embedded
+          ? { display: "flex", flexDirection: "column", height: "100%", minHeight: 0, background: "var(--bg)", overflow: "hidden" }
+          : {
+              width: isMobile ? "calc(100vw - 16px)" : 860,
+              maxWidth: "calc(100vw - 16px)",
+              height: isMobile ? "calc(100dvh - 16px)" : "76vh",
+              maxHeight: "calc(100dvh - 16px)",
+              background: "var(--bg)",
+              border: "1px solid var(--border)",
+              borderRadius: 8,
+              display: "flex",
+              flexDirection: "column",
+              boxShadow: "0 8px 32px rgba(0,0,0,0.18)",
+              overflow: "hidden",
+            }}
       >
+        {/* Header：独立弹窗显示标题+关闭；嵌入时只留一行项目路径说明 */}
+        {embedded ? (
+          <div style={{ padding: "10px 18px 0", flexShrink: 0 }}>
+            <code style={{ fontSize: 11, color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>
+              {shortenPath(cwd)}
+            </code>
+          </div>
+        ) : (
         <div
           style={{
             display: "flex",
@@ -760,6 +775,7 @@ export function PluginsConfig({
             ×
           </button>
         </div>
+        )}
 
         <div style={{ flex: 1, display: "flex", flexDirection: isMobile ? "column" : "row", overflow: "hidden" }}>
           <div

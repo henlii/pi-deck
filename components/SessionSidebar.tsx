@@ -1,9 +1,17 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useState, useCallback, useRef, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useState, useCallback, useMemo, useRef, type CSSProperties, type ReactNode } from "react";
 import type { SessionInfo } from "@/lib/types";
 import { displayCwd, getRecentProjects, type WorktreeEntry, type WorktreeState } from "@/lib/project-context";
-import { buildSessionDisplayTree, type SessionDisplayNode, type SessionRelationKind } from "./session-tree";
+import {
+  buildSessionDisplayTree,
+  filterSessionDisplayTree,
+  getDisplayNodeAncestorIds,
+  isSessionNodeEffectivelyCollapsed,
+  normalizeSessionQuery,
+  type SessionDisplayNode,
+  type SessionRelationKind,
+} from "./session-tree";
 import { getSessionCapabilities } from "./session-capabilities";
 import { FileExplorer, type FileExplorerHandle } from "./FileExplorer";
 import { useProjectActions, useProjectIdentity } from "./ProjectProvider";
@@ -263,6 +271,10 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   const [explorerRefreshDone, setExplorerRefreshDone] = useState(false);
   const [runningSessionIds, setRunningSessionIds] = useState<Set<string>>(() => new Set());
   const [unreadSessionIds, setUnreadSessionIds] = useState<Set<string>>(() => loadUnreadSessionIds());
+  const [sessionQuery, setSessionQuery] = useState("");
+  const [collapsedSessionIds, setCollapsedSessionIds] = useState<Set<string>>(() => new Set());
+  const sessionListRef = useRef<HTMLDivElement>(null);
+  const initialSelectionScrollDoneRef = useRef(false);
   const previousRunningSessionIdsRef = useRef<Set<string>>(new Set());
   // Once the SSE stream has delivered a frame it is the source of truth for
   // running state; late /api/sessions responses must not overwrite it.
@@ -631,9 +643,12 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
 
   // Sessions of every worktree in the selected project are shown together
   const selectedProject = projectRootFor(selectedCwd);
-  const filteredSessions = selectedProject
-    ? allSessions.filter((s) => (s.projectRoot ?? s.cwd) === selectedProject)
-    : allSessions;
+  const filteredSessions = useMemo(
+    () => selectedProject
+      ? allSessions.filter((session) => (session.projectRoot ?? session.cwd) === selectedProject)
+      : allSessions,
+    [allSessions, selectedProject],
+  );
   const showWorktreeSwitcher = Boolean(
     worktreeState?.isGit
     && worktreeState.isTopLevel
@@ -663,8 +678,54 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
         }
       : null);
 
-  // Build parent-child tree within the filtered set (fork 与 subagent 双关系嵌套)
-  const sessionTree = buildSessionDisplayTree(filteredSessions);
+  // 先构造完整项目树，再以克隆树搜索过滤，命中 child 时保留完整祖先链。
+  const sessionTree = useMemo(() => buildSessionDisplayTree(filteredSessions), [filteredSessions]);
+  const normalizedSessionQuery = normalizeSessionQuery(sessionQuery);
+  const searchActive = normalizedSessionQuery.length > 0;
+  const visibleSessionTree = useMemo(
+    () => filterSessionDisplayTree(sessionTree, normalizedSessionQuery),
+    [sessionTree, normalizedSessionQuery],
+  );
+
+  // 选中或 URL 恢复 child 时自动展开祖先，避免「已选中但列表里不可见」。
+  useEffect(() => {
+    if (!selectedSessionId) return;
+    const ancestors = getDisplayNodeAncestorIds(sessionTree, selectedSessionId);
+    if (ancestors.length === 0) return;
+    setCollapsedSessionIds((current) => {
+      if (!ancestors.some((id) => current.has(id))) return current;
+      const next = new Set(current);
+      ancestors.forEach((id) => next.delete(id));
+      return next;
+    });
+  }, [selectedSessionId, sessionTree]);
+
+  // 仅首次 URL 恢复或目标确实超出可视区时滚动，不打断用户正常浏览位置。
+  useLayoutEffect(() => {
+    if (!selectedSessionId) return;
+    const list = sessionListRef.current;
+    if (!list) return;
+    const row = Array.from(list.querySelectorAll<HTMLElement>("[data-session-id]"))
+      .find((element) => element.dataset.sessionId === selectedSessionId);
+    if (!row) return;
+
+    const isInitialRestore = !initialSelectionScrollDoneRef.current
+      && initialSessionId === selectedSessionId;
+    const listRect = list.getBoundingClientRect();
+    const rowRect = row.getBoundingClientRect();
+    const outsideViewport = rowRect.top < listRect.top || rowRect.bottom > listRect.bottom;
+    if (isInitialRestore || outsideViewport) row.scrollIntoView({ block: "nearest" });
+    if (isInitialRestore) initialSelectionScrollDoneRef.current = true;
+  }, [selectedSessionId, initialSessionId, visibleSessionTree, collapsedSessionIds]);
+
+  const toggleSessionCollapse = useCallback((sessionId: string) => {
+    setCollapsedSessionIds((current) => {
+      const next = new Set(current);
+      if (next.has(sessionId)) next.delete(sessionId);
+      else next.add(sessionId);
+      return next;
+    });
+  }, []);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
@@ -1351,8 +1412,46 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
         )}
       </div>
 
+      {/* 会话搜索：覆盖当前项目全部 worktree，并保留命中项祖先路径。 */}
+      <div style={{ padding: "8px 10px 7px", flexShrink: 0, borderBottom: "1px solid var(--border)" }}>
+        <div style={{ position: "relative" }}>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true" style={{ position: "absolute", left: 9, top: "50%", transform: "translateY(-50%)", color: "var(--text-dim)", pointerEvents: "none" }}>
+            <circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" />
+          </svg>
+          <input
+            type="search"
+            value={sessionQuery}
+            onChange={(event) => setSessionQuery(event.target.value)}
+            placeholder="Search sessions…"
+            aria-label="Search sessions"
+            style={{
+              width: "100%", height: 30, boxSizing: "border-box", padding: "0 28px 0 29px",
+              border: "1px solid var(--border)", borderRadius: 7,
+              background: "var(--bg-panel)", color: "var(--text)",
+              fontSize: 11.5, outline: "none",
+            }}
+          />
+          {sessionQuery && (
+            <button
+              type="button"
+              onClick={() => setSessionQuery("")}
+              aria-label="Clear session search"
+              title="Clear search"
+              style={{
+                position: "absolute", right: 4, top: "50%", transform: "translateY(-50%)",
+                width: 22, height: 22, display: "flex", alignItems: "center", justifyContent: "center",
+                padding: 0, border: "none", borderRadius: 5, background: "none",
+                color: "var(--text-dim)", cursor: "pointer", fontSize: 16, lineHeight: 1,
+              }}
+            >
+              ×
+            </button>
+          )}
+        </div>
+      </div>
+
       {/* Session list */}
-      <div style={{ flex: explorerOpen && selectedCwd ? "1 1 0" : "1 1 auto", overflowY: "auto", padding: "0", minHeight: 80 }}>
+      <div ref={sessionListRef} style={{ flex: explorerOpen && selectedCwd ? "1 1 0" : "1 1 auto", overflowY: "auto", padding: "0", minHeight: 80 }}>
         {loading && (
           <div style={{ padding: "16px 14px", color: "var(--text-muted)", fontSize: 12 }}>
             Loading...
@@ -1368,7 +1467,12 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
             No sessions found
           </div>
         )}
-        {sessionTree.map((node) => (
+        {!loading && !error && filteredSessions.length > 0 && searchActive && visibleSessionTree.length === 0 && (
+          <div style={{ padding: "18px 14px", color: "var(--text-muted)", fontSize: 12, lineHeight: 1.55 }}>
+            No sessions match “{sessionQuery.trim()}”
+          </div>
+        )}
+        {visibleSessionTree.map((node) => (
           <SessionTreeItem
             key={node.session.id}
             node={node}
@@ -1382,6 +1486,9 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
               loadSessions();
             }}
             depth={0}
+            collapsedSessionIds={collapsedSessionIds}
+            searchActive={searchActive}
+            onToggleCollapse={toggleSessionCollapse}
           />
         ))}
       </div>
@@ -1518,6 +1625,9 @@ function SessionTreeItem({
   onRenamed,
   onSessionDeleted,
   depth,
+  collapsedSessionIds,
+  searchActive,
+  onToggleCollapse,
 }: {
   node: SessionDisplayNode;
   selectedSessionId: string | null;
@@ -1527,13 +1637,16 @@ function SessionTreeItem({
   onRenamed?: () => void;
   onSessionDeleted?: (id: string) => void;
   depth: number;
+  collapsedSessionIds: ReadonlySet<string>;
+  searchActive: boolean;
+  onToggleCollapse: (sessionId: string) => void;
 }) {
-  const [collapsed, setCollapsed] = useState(false);
   const hasChildren = node.children.length > 0;
+  const collapsed = isSessionNodeEffectivelyCollapsed(collapsedSessionIds, node.session.id, searchActive);
 
   return (
     <div>
-      <div style={{ position: "relative" }}>
+      <div data-session-id={node.session.id} style={{ position: "relative" }}>
         {/* Indent line for child sessions */}
         {depth > 0 && (
           <div style={{
@@ -1557,7 +1670,7 @@ function SessionTreeItem({
           depth={depth}
           hasChildren={hasChildren}
           collapsed={collapsed}
-          onToggleCollapse={() => setCollapsed((v) => !v)}
+          onToggleCollapse={() => onToggleCollapse(node.session.id)}
         />
       </div>
       {hasChildren && !collapsed && (
@@ -1573,6 +1686,9 @@ function SessionTreeItem({
               onRenamed={onRenamed}
               onSessionDeleted={onSessionDeleted}
               depth={depth + 1}
+              collapsedSessionIds={collapsedSessionIds}
+              searchActive={searchActive}
+              onToggleCollapse={onToggleCollapse}
             />
           ))}
         </div>

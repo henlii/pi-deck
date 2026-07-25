@@ -106,3 +106,78 @@ export function buildSessionDisplayTree(sessions: SessionInfo[]): SessionDisplay
   sortLevel(roots, true);
   return roots;
 }
+
+// ── 会话搜索 ──────────────────────────────────────────────────────────────
+
+/** 查询归一化：搜索入口统一先经此处理，再传入 matches/filter 系列 helper。 */
+export function normalizeSessionQuery(query: string): string {
+  return query.trim().toLowerCase();
+}
+
+/** 会话的可搜索文本：name、firstMessage、id、worktreeBranch、subagent agent/run。 */
+function sessionSearchableText(session: SessionInfo): string {
+  const parts: string[] = [
+    session.name ?? "",
+    session.firstMessage,
+    session.id,
+    session.worktreeBranch ?? "",
+  ];
+  if (session.subagent) {
+    parts.push(session.subagent.agent ?? "", session.subagent.runId);
+    // 同时支持 "run 3"、"run-3" 与纯数字 "3" 三种直觉输入。
+    parts.push(`run ${session.subagent.runIndex}`, `run-${session.subagent.runIndex}`, String(session.subagent.runIndex));
+  }
+  return parts.join("\n").toLowerCase();
+}
+
+export function sessionMatchesQuery(session: SessionInfo, normalizedQuery: string): boolean {
+  if (!normalizedQuery) return true;
+  return sessionSearchableText(session).includes(normalizedQuery);
+}
+
+/**
+ * 搜索过滤展示树：命中节点保留，命中 child 时保留完整祖先链。
+ * 返回全新节点对象（children 为新数组），绝不变异原树。
+ */
+export function filterSessionDisplayTree(
+  nodes: SessionDisplayNode[],
+  normalizedQuery: string,
+): SessionDisplayNode[] {
+  if (!normalizedQuery) return nodes;
+  const result: SessionDisplayNode[] = [];
+  for (const node of nodes) {
+    const children = filterSessionDisplayTree(node.children, normalizedQuery);
+    if (sessionMatchesQuery(node.session, normalizedQuery) || children.length > 0) {
+      result.push({ ...node, children });
+    }
+  }
+  return result;
+}
+
+/**
+ * 节点在展示树中的祖先 id 链（不含自身，自根向父排序）；未找到返回空数组。
+ * 用于选中/URL 恢复时自动展开祖先，不触碰用户的折叠偏好集合。
+ */
+export function getDisplayNodeAncestorIds(nodes: SessionDisplayNode[], targetId: string): string[] {
+  const walk = (level: SessionDisplayNode[], trail: string[]): string[] | null => {
+    for (const node of level) {
+      if (node.session.id === targetId) return trail;
+      const found = walk(node.children, [...trail, node.session.id]);
+      if (found) return found;
+    }
+    return null;
+  };
+  return walk(nodes, []) ?? [];
+}
+
+/**
+ * 折叠判定：搜索期间匹配路径强制展开，但只读折叠集合、不写入——
+ * 清空搜索后用户的折叠偏好原样恢复。
+ */
+export function isSessionNodeEffectivelyCollapsed(
+  collapsedIds: ReadonlySet<string>,
+  sessionId: string,
+  searchActive: boolean,
+): boolean {
+  return searchActive ? false : collapsedIds.has(sessionId);
+}

@@ -25,6 +25,13 @@ interface UseGlobalKeyboardShortcutsOptions {
   onNewSession?: (cwd: string) => void;
   /** The currently selected project directory (sidebar cwd). */
   activeCwd?: string | null;
+  /** 对话框打开时禁用全局快捷键，避免与对话框键盘行为竞争。 */
+  disabled?: boolean;
+}
+
+/** 纯逻辑门禁：禁用时全局快捷键不得执行或注册。 */
+export function shouldRunGlobalKeyboardShortcuts(disabled = false): boolean {
+  return !disabled;
 }
 
 /**
@@ -42,9 +49,10 @@ interface UseGlobalKeyboardShortcutsOptions {
 export function useGlobalKeyboardShortcuts(
   options: UseGlobalKeyboardShortcutsOptions,
 ): void {
-  const { onNewSession, activeCwd } = options;
+  const { onNewSession, activeCwd, disabled = false } = options;
 
   useEffect(() => {
+    if (!shouldRunGlobalKeyboardShortcuts(disabled)) return;
     const handler = (e: KeyboardEvent): void => {
       // ---- Esc: stop agent ----
       if (e.key === "Escape") {
@@ -69,5 +77,5 @@ export function useGlobalKeyboardShortcuts(
 
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [activeCwd, onNewSession]);
+  }, [activeCwd, onNewSession, disabled]);
 }

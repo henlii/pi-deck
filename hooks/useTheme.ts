@@ -27,8 +27,9 @@ type ToggleOrigin = { x: number; y: number };
 export function useTheme() {
   const theme = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
 
-  const toggleTheme = useCallback((origin?: ToggleOrigin) => {
-    const next: Theme = getSnapshot() === "dark" ? "light" : "dark";
+  // 显式设置主题：Appearance 设置页需要明确的 light/dark 选择（不只是 toggle）。
+  const setTheme = useCallback((next: Theme, origin?: ToggleOrigin) => {
+    if (getSnapshot() === next) return;
 
     const apply = () => {
       if (next === "dark") {
@@ -81,5 +82,9 @@ export function useTheme() {
       });
   }, []);
 
-  return { theme, toggleTheme, isDark: theme === "dark" };
+  const toggleTheme = useCallback((origin?: ToggleOrigin) => {
+    setTheme(getSnapshot() === "dark" ? "light" : "dark", origin);
+  }, [setTheme]);
+
+  return { theme, toggleTheme, setTheme, isDark: theme === "dark" };
 }

@@ -2,6 +2,15 @@
 
 import React, { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import {
+  acquireDialogBodyLock,
+  isTopDialogInstance,
+  pickInitialFocusTarget,
+  registerDialogInstance,
+  resolveFocusRestoreTarget,
+  resolveDialogKeyDown,
+  resolveTabTrap,
+} from "./dialog-guards";
 
 // SSR 时降级为 useEffect，避免服务端渲染告警；视口跟踪只在客户端发生。
 const useIsomorphicLayoutEffect = typeof window !== "undefined" ? useLayoutEffect : useEffect;
@@ -74,6 +83,12 @@ export interface ViewportDialogProps {
   closeOnEsc?: boolean;
   /** 自定义打开时的初始聚焦元素；默认聚焦面板内第一个可交互元素 */
   initialFocusRef?: React.RefObject<HTMLElement | null>;
+  /** 标题栏右侧、关闭按钮之前的额外操作（如移动端 Back 按钮） */
+  headerActions?: React.ReactNode;
+  /** 正文区内边距，默认 "14px 18px"；嵌入整版布局（如 Settings）可传 "0" */
+  contentPadding?: string;
+  /** 关闭按钮的 aria-label，默认 "Close" */
+  closeLabel?: string;
 }
 
 const FOCUSABLE_SELECTOR = [
@@ -109,56 +124,77 @@ export function ViewportDialog({
   closeOnBackdrop = true,
   closeOnEsc = true,
   initialFocusRef,
+  headerActions,
+  contentPadding = "14px 18px",
+  closeLabel = "Close",
 }: ViewportDialogProps) {
   const panelRef = useRef<HTMLDivElement>(null);
   const titleId = useId();
   const descriptionId = useId();
+  // 每个打开实例一个稳定 symbol：Esc 只关顶层、嵌套恢复焦点按栈序进行。
+  const instanceIdRef = useRef<symbol | null>(null);
+  if (instanceIdRef.current === null) instanceIdRef.current = Symbol("ViewportDialog");
+
+  // 打开时注册实例栈（关闭/卸载注销），供 Esc 顶层判定。
+  useEffect(() => {
+    if (!open) return;
+    return registerDialogInstance(instanceIdRef.current!);
+  }, [open]);
 
   // 打开时聚焦初始元素（首个可交互元素或面板本身），关闭后恢复触发元素焦点。
   useEffect(() => {
     if (!open) return;
     const previouslyFocused = document.activeElement;
     const panel = panelRef.current;
-    const target = initialFocusRef?.current
-      ?? (panel ? getFocusableElements(panel)[0] : undefined)
-      ?? panel;
+    const target = pickInitialFocusTarget(
+      initialFocusRef?.current,
+      panel ? getFocusableElements(panel) : [],
+      panel,
+    );
     target?.focus({ preventScroll: true });
     return () => {
-      if (previouslyFocused instanceof HTMLElement && document.contains(previouslyFocused)) {
-        previouslyFocused.focus({ preventScroll: true });
-      }
+      const restore = resolveFocusRestoreTarget(
+        previouslyFocused instanceof HTMLElement ? previouslyFocused : null,
+        (el) => document.contains(el),
+      );
+      restore?.focus({ preventScroll: true });
     };
   }, [open, initialFocusRef]);
 
-  // 打开期间锁定背景滚动：modal 语义下背景不应再滚动，也避免 iOS 上
-  // 滚动穿透到背后页面。恢复旧值而非清空，嵌套/共存场景按相反顺序还原。
+  // 打开期间锁定背景滚动：模块级引用计数，多实例/嵌套只有首个加锁、
+  // 末个解锁才恢复，避免嵌套关闭顺序把背景滚动错误解锁。
   useEffect(() => {
     if (!open) return;
-    const body = document.body;
-    const previousOverflow = body.style.overflow;
-    body.style.overflow = "hidden";
-    return () => {
-      body.style.overflow = previousOverflow;
-    };
+    return acquireDialogBodyLock(document.body);
   }, [open]);
 
-  // Esc 关闭（capture + stopPropagation，避免背景组件同时响应）。
+  // document bubble 阶段由顶层对话框拦截所有 keydown，避免到达 window 全局快捷键。
+  // Escape 只有在未被消费且允许关闭时才关闭；底层对话框不抢占事件。
   useEffect(() => {
-    if (!open || !closeOnEsc) return;
+    if (!open) return;
+    const instanceId = instanceIdRef.current!;
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
+      const decision = resolveDialogKeyDown({
+        key: event.key,
+        defaultPrevented: event.defaultPrevented,
+        closeOnEsc,
+        isTop: isTopDialogInstance(instanceId),
+      });
+      if (!decision.stopPropagation) return;
       event.stopPropagation();
-      event.preventDefault();
-      onClose();
+      if (decision.preventDefault) event.preventDefault();
+      if (decision.close) onClose();
     };
-    document.addEventListener("keydown", onKeyDown, true);
-    return () => document.removeEventListener("keydown", onKeyDown, true);
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
   }, [open, closeOnEsc, onClose]);
 
   // 焦点逃逸兜底：任何跑出面板的程序性聚焦都被拉回面板内。
   useEffect(() => {
     if (!open) return;
+    const instanceId = instanceIdRef.current!;
     const onFocusIn = (event: FocusEvent) => {
+      if (!isTopDialogInstance(instanceId)) return;
       const panel = panelRef.current;
       if (!panel || !(event.target instanceof Node) || panel.contains(event.target)) return;
       const focusable = getFocusableElements(panel);
@@ -217,28 +253,21 @@ export function ViewportDialog({
 
   if (!open || typeof document === "undefined") return null;
 
-  // Tab 焦点约束：在面板内循环，不跑到背景。
+  // Tab 焦点约束：在面板内循环，不跑到背景（纯逻辑见 dialog-guards）。
   const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if (event.key !== "Tab") return;
     const panel = panelRef.current;
     if (!panel) return;
-    const focusable = getFocusableElements(panel);
-    if (focusable.length === 0) {
+    const trap = resolveTabTrap<HTMLElement>({
+      focusable: getFocusableElements(panel),
+      active: document.activeElement as HTMLElement | null,
+      shiftKey: event.shiftKey,
+      panel,
+      contains: (el) => panel.contains(el),
+    });
+    if (trap.handled) {
       event.preventDefault();
-      panel.focus({ preventScroll: true });
-      return;
-    }
-    const first = focusable[0];
-    const last = focusable[focusable.length - 1];
-    const active = document.activeElement;
-    if (event.shiftKey) {
-      if (active === first || !panel.contains(active)) {
-        event.preventDefault();
-        last.focus({ preventScroll: true });
-      }
-    } else if (active === last || !panel.contains(active)) {
-      event.preventDefault();
-      first.focus({ preventScroll: true });
+      trap.target.focus({ preventScroll: true });
     }
   };
 
@@ -306,13 +335,14 @@ export function ViewportDialog({
           borderBottom: "1px solid var(--border)",
           flexShrink: 0,
         }}>
-          <div id={titleId} style={{ fontSize: 15, fontWeight: 700, color: "var(--text)", minWidth: 0 }}>
+          <div id={titleId} style={{ fontSize: 15, fontWeight: 700, color: "var(--text)", minWidth: 0, flex: 1 }}>
             {title}
           </div>
+          {headerActions}
           <button
             type="button"
             onClick={onClose}
-            aria-label="Close"
+            aria-label={closeLabel}
             style={{
               flexShrink: 0,
               display: "flex",
@@ -363,7 +393,7 @@ export function ViewportDialog({
             overflowY: "auto",
             // 正文滚到底后不连锁滚动背景（配合打开时的 body overflow 锁定）。
             overscrollBehavior: "contain",
-            padding: "14px 18px",
+            padding: contentPadding,
           }}>
             {children}
           </div>

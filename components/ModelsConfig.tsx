@@ -1143,11 +1143,13 @@ interface AddProviderPickerProps {
   onSelectApiKey: (id: string) => void;
   onAddCustom: () => void;
   onClose: () => void;
+  /** 嵌入模式：浮层收敛到宿主容器内（absolute），不再叠加一层全屏 backdrop。 */
+  embedded?: boolean;
 }
 
 function AddProviderPicker({
   oauthProviders, apiKeyProviders,
-  onSelectOAuth, onSelectApiKey, onAddCustom, onClose,
+  onSelectOAuth, onSelectApiKey, onAddCustom, onClose, embedded = false,
 }: AddProviderPickerProps) {
   const [search, setSearch] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
@@ -1180,7 +1182,9 @@ function AddProviderPicker({
 
   return (
     <div
-      style={{ position: "fixed", inset: 0, zIndex: 1100, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center" }}
+      style={embedded
+        ? { position: "absolute", inset: 0, zIndex: 10, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center" }
+        : { position: "fixed", inset: 0, zIndex: 1100, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center" }}
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
       <div style={{ width: 820, maxWidth: "calc(100vw - 32px)", maxHeight: "min(72vh, calc(100vh - 32px))", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 10, display: "flex", flexDirection: "column", boxShadow: "0 8px 32px rgba(0,0,0,0.22)", overflow: "hidden" }}>
@@ -1193,7 +1197,11 @@ function AddProviderPicker({
             ref={inputRef}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Escape") onClose(); }}
+            onKeyDown={(e) => {
+              // preventDefault 让外层 ViewportDialog 的 Esc 协调跳过本次，
+              // Esc 只关闭这个 picker 而不关掉整个 Settings。
+              if (e.key === "Escape") { e.preventDefault(); onClose(); }
+            }}
             placeholder="Search providers…"
             style={{ flex: 1, background: "none", border: "none", outline: "none", color: "var(--text)", fontSize: 13, boxSizing: "border-box" }}
           />
@@ -1271,7 +1279,11 @@ function AddProviderPicker({
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-export function ModelsConfig({ onClose }: { onClose: () => void }) {
+export function ModelsConfig({ onClose, embedded = false }: {
+  onClose: () => void;
+  /** 嵌入模式：去掉自身的全屏遮罩/外壳，由宿主（SettingsView）提供 chrome。 */
+  embedded?: boolean;
+}) {
   const isMobile = useIsMobile();
   const [config, setConfig] = useState<ModelsJson>({ providers: {} });
   const [loading, setLoading] = useState(true);
@@ -1452,12 +1464,22 @@ export function ModelsConfig({ onClose }: { onClose: () => void }) {
   })();
 
   return (
-    <>
-    <div style={{ position: "fixed", inset: 0, zIndex: 1000, background: "rgba(0,0,0,0.35)", display: "flex", alignItems: "center", justifyContent: "center" }}
-      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div style={{ width: isMobile ? "calc(100vw - 16px)" : 860, maxWidth: "calc(100vw - 16px)", height: isMobile ? "calc(100dvh - 16px)" : "78vh", maxHeight: "calc(100dvh - 16px)", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 10, display: "flex", flexDirection: "column", boxShadow: "0 8px 32px rgba(0,0,0,0.18)", overflow: "hidden" }}>
+    <div
+      style={embedded
+        // 嵌入模式：只撑满宿主内容区；AddProviderPicker 的绝对浮层以此为准。
+        ? { position: "relative", display: "flex", flexDirection: "column", height: "100%", minHeight: 0, overflow: "hidden" }
+        : { position: "fixed", inset: 0, zIndex: 1000, background: "rgba(0,0,0,0.35)", display: "flex", alignItems: "center", justifyContent: "center" }}
+      onClick={embedded ? undefined : (e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div style={embedded
+        ? { display: "flex", flexDirection: "column", height: "100%", minHeight: 0, background: "var(--bg)", overflow: "hidden" }
+        : { width: isMobile ? "calc(100vw - 16px)" : 860, maxWidth: "calc(100vw - 16px)", height: isMobile ? "calc(100dvh - 16px)" : "78vh", maxHeight: "calc(100dvh - 16px)", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 10, display: "flex", flexDirection: "column", boxShadow: "0 8px 32px rgba(0,0,0,0.18)", overflow: "hidden" }}>
 
-        {/* Header */}
+        {/* Header：独立弹窗显示标题+关闭；嵌入时只留一行配置文件路径说明 */}
+        {embedded ? (
+          <div style={{ padding: "10px 18px 0", flexShrink: 0 }}>
+            <code style={{ fontSize: 11, color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>~/.pi/agent/models.json</code>
+          </div>
+        ) : (
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 18px", borderBottom: "1px solid var(--border)", flexShrink: 0 }}>
           <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
             <span style={{ fontSize: 15, fontWeight: 700, color: "var(--text)" }}>Models</span>
@@ -1465,6 +1487,7 @@ export function ModelsConfig({ onClose }: { onClose: () => void }) {
           </div>
           <button onClick={onClose} style={{ background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer", fontSize: 20, lineHeight: 1, padding: "2px 6px" }}>×</button>
         </div>
+        )}
 
         {/* Body */}
         <div style={{ flex: 1, display: "flex", flexDirection: isMobile ? "column" : "row", overflow: "hidden" }}>
@@ -1632,17 +1655,17 @@ export function ModelsConfig({ onClose }: { onClose: () => void }) {
           </button>
         </div>
       </div>
+      {pickerOpen && (
+        <AddProviderPicker
+          oauthProviders={oauthProviders}
+          apiKeyProviders={apiKeyProviders}
+          onSelectOAuth={(id) => setSelection({ type: "oauth", providerId: id })}
+          onSelectApiKey={(id) => setSelection({ type: "apikey", providerId: id })}
+          onAddCustom={addCustomProvider}
+          onClose={() => setPickerOpen(false)}
+          embedded={embedded}
+        />
+      )}
     </div>
-    {pickerOpen && (
-      <AddProviderPicker
-        oauthProviders={oauthProviders}
-        apiKeyProviders={apiKeyProviders}
-        onSelectOAuth={(id) => setSelection({ type: "oauth", providerId: id })}
-        onSelectApiKey={(id) => setSelection({ type: "apikey", providerId: id })}
-        onAddCustom={addCustomProvider}
-        onClose={() => setPickerOpen(false)}
-      />
-    )}
-    </>
   );
 }

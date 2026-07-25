@@ -137,3 +137,93 @@ test("同层 subagent 的 run 次序按 runIndex 升序稳定排列", async () =
   const roots = buildSessionDisplayTree([parent, ...runs]);
   assert.deepEqual(roots[0].children.map((n) => n.session.subagent.runIndex), [0, 3, 5]);
 });
+
+// ── 会话搜索 helper ──────────────────────────────────────────────────────
+
+test("搜索命中 child 时保留完整祖先链（嵌套 fork + subagent）", async () => {
+  const { buildSessionDisplayTree, filterSessionDisplayTree } = await jiti.import("./session-tree.ts");
+  const parent = session("p", { name: "main work" });
+  const fork = session("f1", { parentSessionId: "p", firstMessage: "investigate flaky test" });
+  const sub = session("s1", {
+    subagent: { parentSessionId: "f1", runId: "abcd1234", runIndex: 2, agent: "explore" },
+    readOnly: true,
+  });
+  const other = session("x", { name: "unrelated" });
+  const tree = buildSessionDisplayTree([parent, fork, sub, other]);
+  // 命中 subagent 的 agent 名：祖先链 f1 <- p 全部保留，无关节点被剪掉。
+  const filtered = filterSessionDisplayTree(tree, "explore");
+  assert.equal(filtered.length, 1);
+  assert.equal(filtered[0].session.id, "p");
+  assert.equal(filtered[0].children.length, 1);
+  assert.equal(filtered[0].children[0].session.id, "f1");
+  assert.equal(filtered[0].children[0].children[0].session.id, "s1");
+  assert.equal(filtered[0].children[0].children[0].relation, "subagent");
+});
+
+test("搜索可命中 name/firstMessage/id/worktreeBranch/subagent run", async () => {
+  const { buildSessionDisplayTree, filterSessionDisplayTree, sessionMatchesQuery } = await jiti.import("./session-tree.ts");
+  const s = session("abc123def456", {
+    name: "Refactor auth",
+    firstMessage: "how do I migrate",
+    worktreeBranch: "feat/login",
+    subagent: { parentSessionId: "p", runId: "deadbeef", runIndex: 7, agent: "reviewer" },
+    readOnly: true,
+  });
+  for (const q of ["refactor", "migrate", "abc123", "feat/login", "reviewer", "deadbeef", "run 7", "run-7", "7"]) {
+    assert.ok(sessionMatchesQuery(s, q), `应命中: ${q}`);
+  }
+  assert.ok(!sessionMatchesQuery(s, "nonexistent"));
+  // 大小写不敏感：调用方先用 normalizeSessionQuery 归一化。
+  const { normalizeSessionQuery } = await jiti.import("./session-tree.ts");
+  assert.ok(sessionMatchesQuery(s, normalizeSessionQuery("  REFACTOR ")));
+  // 普通 fork 会话不含 subagent 字段也可命中 fork 自身字段。
+  const fork = session("f", { parentSessionId: "p", firstMessage: "plain fork message" });
+  const tree = buildSessionDisplayTree([fork]);
+  assert.equal(filterSessionDisplayTree(tree, "plain").length, 1);
+});
+
+test("搜索过滤不变异原树：节点与 children 数组均为新对象", async () => {
+  const { buildSessionDisplayTree, filterSessionDisplayTree } = await jiti.import("./session-tree.ts");
+  const parent = session("p", { name: "keep me" });
+  const child = session("c", { parentSessionId: "p", firstMessage: "child content" });
+  const tree = buildSessionDisplayTree([parent, child]);
+  const beforeChildren = tree[0].children;
+  const filtered = filterSessionDisplayTree(tree, "child");
+  assert.notEqual(filtered[0], tree[0]);
+  assert.notEqual(filtered[0].children, beforeChildren);
+  // 原树结构不变。
+  assert.equal(tree[0].children.length, 1);
+  assert.equal(beforeChildren[0].session.id, "c");
+  // 空查询直接返回原数组引用（调用方不做过滤）。
+  assert.equal(filterSessionDisplayTree(tree, ""), tree);
+});
+
+test("无匹配时返回空数组（由 UI 显示空状态）", async () => {
+  const { buildSessionDisplayTree, filterSessionDisplayTree } = await jiti.import("./session-tree.ts");
+  const tree = buildSessionDisplayTree([session("a"), session("b")]);
+  assert.deepEqual(filterSessionDisplayTree(tree, "zzz-no-match"), []);
+});
+
+test("getDisplayNodeAncestorIds 返回自根向父的祖先链", async () => {
+  const { buildSessionDisplayTree, getDisplayNodeAncestorIds } = await jiti.import("./session-tree.ts");
+  const parent = session("p");
+  const child = session("c", { parentSessionId: "p" });
+  const grand = session("g", { subagent: { parentSessionId: "c", runId: "r1", runIndex: 0 }, readOnly: true });
+  const tree = buildSessionDisplayTree([parent, child, grand]);
+  assert.deepEqual(getDisplayNodeAncestorIds(tree, "g"), ["p", "c"]);
+  assert.deepEqual(getDisplayNodeAncestorIds(tree, "c"), ["p"]);
+  assert.deepEqual(getDisplayNodeAncestorIds(tree, "p"), []);
+  assert.deepEqual(getDisplayNodeAncestorIds(tree, "missing"), []);
+});
+
+test("折叠与搜索展开分离：搜索强制展开但不写折叠集合", async () => {
+  const { isSessionNodeEffectivelyCollapsed } = await jiti.import("./session-tree.ts");
+  const collapsed = new Set(["a", "b"]);
+  // 非搜索：尊重折叠集合。
+  assert.equal(isSessionNodeEffectivelyCollapsed(collapsed, "a", false), true);
+  assert.equal(isSessionNodeEffectivelyCollapsed(collapsed, "c", false), false);
+  // 搜索中：全部强制展开，集合本身不被修改。
+  assert.equal(isSessionNodeEffectivelyCollapsed(collapsed, "a", true), false);
+  assert.equal(isSessionNodeEffectivelyCollapsed(collapsed, "c", true), false);
+  assert.deepEqual([...collapsed].sort(), ["a", "b"]);
+});
