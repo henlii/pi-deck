@@ -114,7 +114,7 @@ export const zhCN: Record<TranslationKey, string> = {
   chat_waitingModel: '等待模型',
   chat_runningCommand: '正在运行命令',
   chat_thinking: '思考中',
-  chat_processDetails: '进程详情',
+  chat_processDetails: '过程详情',
   chat_message: '条消息',
   chat_messages: '条消息',
   chat_toolCall: '次工具调用',
