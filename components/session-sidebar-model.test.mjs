@@ -270,3 +270,22 @@ test("搜索与折叠偏好隔离：过滤不触碰折叠集合，搜索期强�
   assert.equal(isSessionNodeEffectivelyCollapsed(collapsedProjects, "/repo", false), true);
   assert.deepEqual([...collapsedProjects], ["/repo"]);
 });
+
+test("全文模式：按 session id 集合保留祖先链，不按 name/alias 整树匹配", async () => {
+  const { buildSidebarTree, filterSidebarTree } = await jiti.import("./session-sidebar-model.ts");
+  const parent = session("p", { cwd: "/repo", projectRoot: "/repo", name: "main work" });
+  const child = session("c", {
+    cwd: "/repo", projectRoot: "/repo", parentSessionId: "p", firstMessage: "leaf body",
+  });
+  const other = session("o", { cwd: "/other", projectRoot: "/other", name: "repo alias bait" });
+  const tree = buildSidebarTree([parent, child, other]);
+  // 仅命中 child：保留 p → c 祖先链，不保留 other（即使 name 含 repo）。
+  const filtered = filterSidebarTree(tree, "", { "/other": "repo" }, new Set(["c"]));
+  assert.equal(filtered.length, 1);
+  assert.equal(filtered[0].root, "/repo");
+  assert.equal(filtered[0].mainTree.length, 1);
+  assert.equal(filtered[0].mainTree[0].session.id, "p");
+  assert.equal(filtered[0].mainTree[0].children[0].session.id, "c");
+  // 空集合：全文模式无命中 → 空树。
+  assert.deepEqual(filterSidebarTree(tree, "", undefined, new Set()), []);
+});

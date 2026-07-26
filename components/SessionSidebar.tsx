@@ -509,6 +509,19 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   // 搜索：查询与开关均为组件瞬时态，不写入偏好
   const [sessionQuery, setSessionQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
+  /** meta = 名称/首消息；fulltext = 消息正文（服务端 FTS/JSONL）。 */
+  const [searchMode, setSearchMode] = useState<"meta" | "fulltext">("meta");
+  const [fulltextHits, setFulltextHits] = useState<Array<{
+    sessionId: string;
+    snippet: string;
+    timestamp: string;
+    role?: string;
+  }>>([]);
+  const [fulltextSessionIds, setFulltextSessionIds] = useState<string[]>([]);
+  const [fulltextSource, setFulltextSource] = useState<"fts" | "jsonl" | "none" | null>(null);
+  const [fulltextLoading, setFulltextLoading] = useState(false);
+  const [fulltextError, setFulltextError] = useState<string | null>(null);
+  const fulltextRequestSeqRef = useRef(0);
   const searchInputRef = useRef<HTMLInputElement>(null);
   // 显示模式菜单
   const [displayMenuOpen, setDisplayMenuOpen] = useState(false);
@@ -907,16 +920,79 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     onNewSession?.();
   }, [selectedCwd, onNewSession]);
 
-  // 搜索行开关：打开自动聚焦；关闭同时清空瞬时查询。
+  // 搜索行开关：打开自动聚焦；关闭同时清空瞬时查询与全文结果。
+  const clearSearchState = useCallback(() => {
+    setSessionQuery("");
+    setFulltextHits([]);
+    setFulltextSessionIds([]);
+    setFulltextSource(null);
+    setFulltextError(null);
+    setFulltextLoading(false);
+    fulltextRequestSeqRef.current += 1;
+  }, []);
+
   const toggleSearch = useCallback(() => {
     if (searchOpen) {
       setSearchOpen(false);
-      setSessionQuery("");
+      clearSearchState();
     } else {
       setSearchOpen(true);
       setTimeout(() => searchInputRef.current?.focus(), 0);
     }
-  }, [searchOpen]);
+  }, [searchOpen, clearSearchState]);
+
+  // 全文模式：debounce 调用只读 API；忽略过期响应。
+  useEffect(() => {
+    if (!searchOpen || searchMode !== "fulltext") {
+      setFulltextLoading(false);
+      return;
+    }
+    const q = sessionQuery.trim();
+    if (!q) {
+      setFulltextHits([]);
+      setFulltextSessionIds([]);
+      setFulltextSource(null);
+      setFulltextError(null);
+      setFulltextLoading(false);
+      return;
+    }
+    const seq = ++fulltextRequestSeqRef.current;
+    setFulltextLoading(true);
+    setFulltextError(null);
+    const timer = setTimeout(() => {
+      void (async () => {
+        try {
+          const res = await fetch(`/api/sessions/search?q=${encodeURIComponent(q)}&limit=40`);
+          const data = await res.json().catch(() => ({})) as {
+            error?: string;
+            hits?: Array<{ sessionId: string; snippet: string; timestamp: string; role?: string }>;
+            sessionIds?: string[];
+            source?: "fts" | "jsonl" | "none";
+          };
+          if (seq !== fulltextRequestSeqRef.current) return;
+          if (!res.ok || data.error) {
+            setFulltextError(data.error ?? `HTTP ${res.status}`);
+            setFulltextHits([]);
+            setFulltextSessionIds([]);
+            setFulltextSource(null);
+            return;
+          }
+          setFulltextHits(data.hits ?? []);
+          setFulltextSessionIds(data.sessionIds ?? []);
+          setFulltextSource(data.source ?? null);
+        } catch (e) {
+          if (seq !== fulltextRequestSeqRef.current) return;
+          setFulltextError(e instanceof Error ? e.message : String(e));
+          setFulltextHits([]);
+          setFulltextSessionIds([]);
+          setFulltextSource(null);
+        } finally {
+          if (seq === fulltextRequestSeqRef.current) setFulltextLoading(false);
+        }
+      })();
+    }, 280);
+    return () => clearTimeout(timer);
+  }, [searchOpen, searchMode, sessionQuery]);
 
   // 当前有效项目根（由 selectedCwd 乐观解析；服务端 worktree 数据仍是权威）
   const selectedProject = projectRootFor(selectedCwd);
@@ -936,12 +1012,31 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     [sidebarTree, closedRoots],
   );
   const normalizedSessionQuery = normalizeSessionQuery(sessionQuery);
-  const searchActive = normalizedSessionQuery.length > 0;
-  // 项目 alias 参与搜索：命中 alias 与命中根路径同语义（保留整个项目）。
-  const visibleTree = useMemo(
-    () => filterSidebarTree(openTree, normalizedSessionQuery, prefs.projectAliases),
-    [openTree, normalizedSessionQuery, prefs.projectAliases],
+  const fulltextModeActive = searchMode === "fulltext" && normalizedSessionQuery.length > 0;
+  const fulltextMatchIds = useMemo(
+    () => (fulltextModeActive ? new Set(fulltextSessionIds) : null),
+    [fulltextModeActive, fulltextSessionIds],
   );
+  const searchActive = fulltextModeActive
+    ? fulltextSessionIds.length > 0 || fulltextLoading || Boolean(fulltextError)
+    : normalizedSessionQuery.length > 0;
+  // 项目 alias 参与元数据搜索；全文模式按命中 id 保留祖先链。
+  const visibleTree = useMemo(
+    () => filterSidebarTree(
+      openTree,
+      fulltextModeActive ? "" : normalizedSessionQuery,
+      prefs.projectAliases,
+      fulltextMatchIds,
+    ),
+    [openTree, normalizedSessionQuery, prefs.projectAliases, fulltextMatchIds, fulltextModeActive],
+  );
+
+  /** 全文命中深链：按 id 打开已加载会话；列表尚未包含时忽略（refresh 后可再点）。 */
+  const openSessionById = useCallback((sessionId: string) => {
+    const target = allSessions.find((s) => s.id === sessionId);
+    if (!target) return;
+    handleSelectSessionFromList(target);
+  }, [allSessions, handleSelectSessionFromList]);
 
   // 选中或 URL 恢复会话时自动展开 project/worktree/session 三级祖先，
   // 避免「已选中但列表里不可见」；这是显式选中驱动，与搜索强制展开无关。
@@ -1207,54 +1302,128 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
 
         {/* 搜索行：第二行展示、自动聚焦、Esc 先清空再关闭；范围覆盖全部项目 */}
         {searchOpen && (
-          <div style={{ marginTop: 8, position: "relative" }}>
-            <span style={{ position: "absolute", left: 9, top: "50%", transform: "translateY(-50%)", color: "var(--text-dim)", pointerEvents: "none", display: "flex" }}>
-              <SearchIcon size={13} />
-            </span>
-            <input
-              ref={searchInputRef}
-              type="search"
-              value={sessionQuery}
-              onChange={(event) => setSessionQuery(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Escape") {
-                  event.stopPropagation();
-                  if (sessionQuery) setSessionQuery("");
-                  else {
-                    setSearchOpen(false);
-                    setSessionQuery("");
-                  }
-                }
-              }}
-              placeholder={t("sidebar_searchPlaceholder")}
-              aria-label={t("sidebar_searchSessions")}
-              style={{
-                width: "100%", height: 30, boxSizing: "border-box", padding: "0 28px 0 29px",
-                border: "1px solid var(--border)", borderRadius: 7,
-                background: "var(--bg-panel)", color: "var(--text)",
-                fontSize: 11.5, outline: "none",
-              }}
-            />
-            {sessionQuery && (
+          <div style={{ marginTop: 8 }}>
+            <div style={{ display: "flex", gap: 4, marginBottom: 6 }}>
               <button
                 type="button"
-                onClick={() => setSessionQuery("")}
-                aria-label={t("sidebar_clearSearch")}
-                title={t("sidebar_clearSearch")}
+                onClick={() => setSearchMode("meta")}
+                aria-pressed={searchMode === "meta"}
                 style={{
-                  position: "absolute", right: 4, top: "50%", transform: "translateY(-50%)",
-                  width: 22, height: 22, display: "flex", alignItems: "center", justifyContent: "center",
-                  padding: 0, border: "none", borderRadius: 5, background: "none",
-                  color: "var(--text-dim)", cursor: "pointer",
+                  flex: 1, height: 24, borderRadius: 6, border: "1px solid var(--border)",
+                  background: searchMode === "meta" ? "var(--bg-selected)" : "var(--bg-panel)",
+                  color: "var(--text)", fontSize: 11, cursor: "pointer",
                 }}
               >
-                <XIcon size={13} />
+                {t("sidebar_searchModeMeta")}
               </button>
+              <button
+                type="button"
+                onClick={() => setSearchMode("fulltext")}
+                aria-pressed={searchMode === "fulltext"}
+                style={{
+                  flex: 1, height: 24, borderRadius: 6, border: "1px solid var(--border)",
+                  background: searchMode === "fulltext" ? "var(--bg-selected)" : "var(--bg-panel)",
+                  color: "var(--text)", fontSize: 11, cursor: "pointer",
+                }}
+              >
+                {t("sidebar_searchModeFulltext")}
+              </button>
+            </div>
+            <div style={{ position: "relative" }}>
+              <span style={{ position: "absolute", left: 9, top: "50%", transform: "translateY(-50%)", color: "var(--text-dim)", pointerEvents: "none", display: "flex" }}>
+                <SearchIcon size={13} />
+              </span>
+              <input
+                ref={searchInputRef}
+                type="search"
+                value={sessionQuery}
+                onChange={(event) => setSessionQuery(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Escape") {
+                    event.stopPropagation();
+                    if (sessionQuery) clearSearchState();
+                    else {
+                      setSearchOpen(false);
+                      clearSearchState();
+                    }
+                  }
+                }}
+                placeholder={searchMode === "fulltext" ? t("sidebar_searchPlaceholderFulltext") : t("sidebar_searchPlaceholder")}
+                aria-label={t("sidebar_searchSessions")}
+                style={{
+                  width: "100%", height: 30, boxSizing: "border-box", padding: "0 28px 0 29px",
+                  border: "1px solid var(--border)", borderRadius: 7,
+                  background: "var(--bg-panel)", color: "var(--text)",
+                  fontSize: 11.5, outline: "none",
+                }}
+              />
+              {sessionQuery && (
+                <button
+                  type="button"
+                  onClick={() => clearSearchState()}
+                  aria-label={t("sidebar_clearSearch")}
+                  title={t("sidebar_clearSearch")}
+                  style={{
+                    position: "absolute", right: 4, top: "50%", transform: "translateY(-50%)",
+                    width: 22, height: 22, display: "flex", alignItems: "center", justifyContent: "center",
+                    padding: 0, border: "none", borderRadius: 5, background: "none",
+                    color: "var(--text-dim)", cursor: "pointer",
+                  }}
+                >
+                  <XIcon size={13} />
+                </button>
+              )}
+            </div>
+            {searchMode === "fulltext" && sessionQuery.trim() && (
+              <div style={{ marginTop: 6, fontSize: 10.5, color: "var(--text-dim)", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                {fulltextLoading && <span>{t("sidebar_searchFulltextLoading")}</span>}
+                {!fulltextLoading && fulltextSource === "fts" && (
+                  <span>{t("sidebar_searchFulltextSourceFts")} · {t("sidebar_searchFulltextHits", { count: fulltextHits.length })}</span>
+                )}
+                {!fulltextLoading && fulltextSource === "jsonl" && (
+                  <span>{t("sidebar_searchFulltextSourceJsonl")} · {t("sidebar_searchFulltextHits", { count: fulltextHits.length })}</span>
+                )}
+                {fulltextError && <span style={{ color: "#f87171" }}>{fulltextError}</span>}
+              </div>
             )}
           </div>
         )}
 
       </div>
+
+      {/* 全文命中片段：点击深链打开对应会话 */}
+      {searchOpen && searchMode === "fulltext" && fulltextHits.length > 0 && (
+        <div style={{
+          flex: "0 0 auto", maxHeight: 160, overflowY: "auto",
+          borderBottom: "1px solid var(--border)", padding: "4px 0",
+        }}>
+          {fulltextHits.slice(0, 12).map((hit, index) => (
+            <button
+              key={`${hit.sessionId}-${hit.timestamp}-${index}`}
+              type="button"
+              onClick={() => openSessionById(hit.sessionId)}
+              title={t("sidebar_searchFulltextSnippet")}
+              style={{
+                display: "block", width: "100%", textAlign: "left",
+                padding: "6px 12px", border: "none", background: "transparent",
+                color: "var(--text)", cursor: "pointer", fontSize: 11, lineHeight: 1.4,
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-hover)"; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+            >
+              <div style={{ color: "var(--text-dim)", fontSize: 10, marginBottom: 2 }}>
+                {(hit.role ?? "message")} · {hit.sessionId.slice(0, 8)}
+              </div>
+              <div style={{
+                overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2,
+                WebkitBoxOrient: "vertical", whiteSpace: "normal",
+              }}>
+                {hit.snippet}
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* 项目树：Project → (非主 Worktree) → Session → child */}
       <div ref={sessionListRef} style={{ flex: "1 1 auto", overflowY: "auto", padding: "2px 0", minHeight: 80 }}>
@@ -1269,7 +1438,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
           </div>
         )}
         {!loading && !error && visibleTree.length === 0 && (
-          searchActive ? (
+          (searchMode === "meta" ? normalizedSessionQuery.length > 0 : fulltextModeActive && !fulltextLoading) ? (
             <div style={{ padding: "18px 14px", color: "var(--text-muted)", fontSize: 12, lineHeight: 1.55 }}>
               {t("sidebar_searchEmpty", { query: sessionQuery.trim() })}
             </div>

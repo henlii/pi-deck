@@ -193,34 +193,68 @@ export function pickProjectRootAfterClose(
  * 搜索过滤项目树：命中 project 根路径或项目 alias 时保留整个项目；命中
  * worktree 分支/路径时保留整个分组；否则按会话字段逐组过滤，命中 child
  * 时保留完整 project → worktree → session 祖先链。返回全新对象，绝不变异输入。
+ *
+ * fulltextMatchIds 传入（含空 Set）时进入全文模式：只按 id 集合保留祖先链，
+ * 不再按项目路径/alias/name/firstMessage 匹配。
  */
 export function filterSidebarTree(
   projects: SidebarProjectNode[],
   normalizedQuery: string,
   projectAliases?: Readonly<Record<string, string>>,
+  fulltextMatchIds?: ReadonlySet<string> | null,
 ): SidebarProjectNode[] {
-  if (!normalizedQuery) return projects;
+  const fulltextMode = fulltextMatchIds != null;
+  if (!fulltextMode && !normalizedQuery) return projects;
+
   const result: SidebarProjectNode[] = [];
   for (const project of projects) {
-    const alias = projectAliases?.[project.root];
-    if (project.root.toLowerCase().includes(normalizedQuery)
-      || (alias !== undefined && alias.toLowerCase().includes(normalizedQuery))) {
-      result.push(project);
-      continue;
-    }
-    const mainTree = filterSessionDisplayTree(project.mainTree, normalizedQuery);
-    const worktrees: SidebarWorktreeGroup[] = [];
-    for (const group of project.worktrees) {
-      const groupText = `${group.branch ?? ""}\n${group.path}`.toLowerCase();
-      if (groupText.includes(normalizedQuery)) {
-        worktrees.push(group);
+    // 全文模式不按项目路径/alias 整树保留——只展示命中会话的祖先链。
+    if (!fulltextMode) {
+      const alias = projectAliases?.[project.root];
+      if (project.root.toLowerCase().includes(normalizedQuery)
+        || (alias !== undefined && alias.toLowerCase().includes(normalizedQuery))) {
+        result.push(project);
         continue;
       }
-      const tree = filterSessionDisplayTree(group.tree, normalizedQuery);
+    }
+    const mainTree = fulltextMode
+      ? filterSessionDisplayTreeByIds(project.mainTree, fulltextMatchIds)
+      : filterSessionDisplayTree(project.mainTree, normalizedQuery);
+    const worktrees: SidebarWorktreeGroup[] = [];
+    for (const group of project.worktrees) {
+      if (!fulltextMode) {
+        const groupText = `${group.branch ?? ""}\n${group.path}`.toLowerCase();
+        if (groupText.includes(normalizedQuery)) {
+          worktrees.push(group);
+          continue;
+        }
+      }
+      const tree = fulltextMode
+        ? filterSessionDisplayTreeByIds(group.tree, fulltextMatchIds)
+        : filterSessionDisplayTree(group.tree, normalizedQuery);
       if (tree.length > 0) worktrees.push({ ...group, tree });
     }
     if (mainTree.length > 0 || worktrees.length > 0) {
       result.push({ ...project, mainTree, worktrees });
+    }
+  }
+  return result;
+}
+
+/**
+ * 按会话 id 集合过滤展示树：命中节点保留，命中 child 时保留完整祖先链。
+ * 返回全新节点对象，绝不变异原树。
+ */
+export function filterSessionDisplayTreeByIds(
+  nodes: SessionDisplayNode[],
+  matchIds: ReadonlySet<string>,
+): SessionDisplayNode[] {
+  if (matchIds.size === 0) return [];
+  const result: SessionDisplayNode[] = [];
+  for (const node of nodes) {
+    const children = filterSessionDisplayTreeByIds(node.children, matchIds);
+    if (matchIds.has(node.session.id) || children.length > 0) {
+      result.push({ ...node, children });
     }
   }
   return result;
