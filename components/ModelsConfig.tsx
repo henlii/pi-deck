@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
+import { Check as CheckIcon, Eraser, LoaderCircle, Plus, Zap } from "lucide-react";
 import { useIsMobile } from "@/hooks/useIsMobile";
 // Color icons (have their own fill colors — no background needed)
 import AnthropicIcon from "@lobehub/icons/es/Anthropic/components/Mono";
@@ -282,6 +283,52 @@ function Check({ label, checked, onChange }: { label: string; checked: boolean; 
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
   return <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 2 }}>{children}</div>;
+}
+
+// 设置类界面的图标按钮：24×24 盒、细描边，对齐 sidebar-icon-btn 惯例；
+// label 同时落在 title 与 aria-label 上，success/error 提供结果反馈态。
+function IconButton({
+  label,
+  onClick,
+  disabled = false,
+  success = false,
+  error = false,
+  children,
+}: {
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+  success?: boolean;
+  error?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      title={label}
+      aria-label={label}
+      style={{
+        width: 24,
+        height: 24,
+        padding: 0,
+        flexShrink: 0,
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        background: success ? "#16a34a" : "none",
+        border: `1px solid ${success ? "#16a34a" : error ? "#f87171" : "var(--border)"}`,
+        borderRadius: 5,
+        color: success ? "#fff" : error ? "#ef4444" : disabled ? "var(--text-dim)" : "var(--text-muted)",
+        cursor: disabled ? "not-allowed" : "pointer",
+        opacity: disabled ? 0.55 : 1,
+        boxSizing: "border-box",
+      }}
+    >
+      {children}
+    </button>
+  );
 }
 
 // ── Provider detail ───────────────────────────────────────────────────────────
@@ -603,33 +650,29 @@ function ModelDetail({
               {testSummary}
             </span>
           )}
-          <button
+          <IconButton
             onClick={handleTest}
             disabled={!model.id.trim() || testState.phase === "testing"}
-            title="Test model connection"
-            style={{
-              height: 24,
-              padding: "0 8px",
-              background: testState.phase === "success" ? "#16a34a" : "none",
-              border: `1px solid ${testState.phase === "success" ? "#16a34a" : "var(--border)"}`,
-              borderRadius: 4,
-              color: testState.phase === "success" ? "#fff" : (!model.id.trim() || testState.phase === "testing") ? "var(--text-dim)" : "var(--text-muted)",
-              cursor: (!model.id.trim() || testState.phase === "testing") ? "not-allowed" : "pointer",
-              fontSize: 11,
-              display: "inline-flex",
-              alignItems: "center",
-              justifyContent: "center",
-              boxSizing: "border-box",
-              gap: 5,
-            }}
+            success={testState.phase === "success"}
+            error={testState.phase === "error"}
+            label={
+              testState.phase === "testing"
+                ? "Testing model connection…"
+                : testState.phase === "success"
+                  ? "Model connection OK — test again"
+                  : testState.phase === "error"
+                    ? "Model connection failed — test again"
+                    : "Test model connection"
+            }
           >
-            {testState.phase === "success" && (
-              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                <polyline points="20 6 9 17 4 12" />
-              </svg>
+            {testState.phase === "testing" ? (
+              <LoaderCircle size={12} className="animate-spin" aria-hidden />
+            ) : testState.phase === "success" ? (
+              <CheckIcon size={12} aria-hidden />
+            ) : (
+              <Zap size={12} aria-hidden />
             )}
-            {testState.phase === "testing" ? "Testing…" : testState.phase === "success" ? "OK" : "Test"}
-          </button>
+          </IconButton>
           <button onClick={onDelete}
             style={{ height: 24, padding: "0 8px", background: "none", border: "1px solid rgba(239,68,68,0.3)", borderRadius: 4, color: "#ef4444", cursor: "pointer", fontSize: 11, boxSizing: "border-box" }}>
             Remove
@@ -663,12 +706,12 @@ function ModelDetail({
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
               <SectionTitle>Thinking level map</SectionTitle>
               {model.thinkingLevelMap && (
-                <button
+                <IconButton
+                  label="Clear thinking level map"
                   onClick={() => set("thinkingLevelMap", undefined)}
-                  style={{ fontSize: 10, padding: "2px 7px", background: "none", border: "1px solid var(--border)", borderRadius: 4, color: "var(--text-dim)", cursor: "pointer" }}
                 >
-                  clear all
-                </button>
+                  <Eraser size={12} aria-hidden />
+                </IconButton>
               )}
             </div>
             <ThinkingLevelMapEditor
@@ -1589,14 +1632,17 @@ export function ModelsConfig({ onClose, embedded = false }: {
                     })}
 
                     {/* Add model button */}
-                    <div
+                    <button
+                      type="button"
                       onClick={(e) => { e.stopPropagation(); addModel(pName); }}
-                      style={{ display: "flex", alignItems: "center", gap: 4, padding: "4px 8px 4px 26px", borderRadius: 5, cursor: "pointer", color: "var(--text-dim)" }}
+                      aria-label={`Add model to ${pName}`}
+                      title={`Add model to ${pName}`}
+                      style={{ display: "flex", alignItems: "center", width: "100%", padding: "4px 8px 4px 26px", borderRadius: 5, border: "none", background: "none", cursor: "pointer", color: "var(--text-dim)", boxSizing: "border-box" }}
                       onMouseEnter={(e) => { e.currentTarget.style.color = "var(--accent)"; e.currentTarget.style.background = "var(--bg-hover)"; }}
                       onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-dim)"; e.currentTarget.style.background = "none"; }}
                     >
-                      <span style={{ fontSize: 11 }}>+ model</span>
-                    </div>
+                      <Plus size={13} aria-hidden />
+                    </button>
                   </div>
                 );
               })}
@@ -1604,15 +1650,19 @@ export function ModelsConfig({ onClose, embedded = false }: {
 
             {/* Add provider */}
             <div style={{ borderTop: "1px solid var(--border)", padding: "8px 6px" }}>
-              <button onClick={() => setPickerOpen(true)} style={{
-                display: "flex", alignItems: "center", justifyContent: "center", gap: 5,
+              <button onClick={() => setPickerOpen(true)}
+                type="button"
+                aria-label="Add provider"
+                title="Add provider"
+                style={{
+                display: "flex", alignItems: "center", justifyContent: "center",
                 width: "100%", padding: "6px 0", background: "none", border: "1px dashed var(--border)", borderRadius: 5,
-                color: "var(--text-muted)", cursor: "pointer", fontSize: 12,
+                color: "var(--text-muted)", cursor: "pointer",
               }}
                 onMouseEnter={(e) => { e.currentTarget.style.borderColor = "var(--accent)"; e.currentTarget.style.color = "var(--accent)"; }}
                 onMouseLeave={(e) => { e.currentTarget.style.borderColor = "var(--border)"; e.currentTarget.style.color = "var(--text-muted)"; }}
               >
-                + Add provider
+                <Plus size={14} aria-hidden />
               </button>
             </div>
           </div>

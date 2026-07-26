@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { sendAgentCommand } from "@/lib/agent-client";
+import { CircleArrowUp, LoaderCircle, RefreshCw, RotateCw } from "lucide-react";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import type { PluginPackageInfo, PluginsResponse } from "@/lib/api-types";
 import { shortenPath } from "@/lib/file-paths";
@@ -171,6 +172,26 @@ function buttonStyle(disabled?: boolean, danger?: boolean): React.CSSProperties 
     cursor: disabled ? "not-allowed" : "pointer",
     fontSize: 12,
     opacity: disabled ? 0.5 : 1,
+  };
+}
+
+// icon-only 操作按钮：与 buttonStyle 同一套描边/禁用语言，26×26 方盒。
+function iconButtonStyle(disabled?: boolean): React.CSSProperties {
+  return {
+    width: 26,
+    height: 26,
+    padding: 0,
+    flexShrink: 0,
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    background: "none",
+    border: "1px solid var(--border)",
+    borderRadius: 6,
+    color: disabled ? "var(--text-dim)" : "var(--text-muted)",
+    cursor: disabled ? "not-allowed" : "pointer",
+    opacity: disabled ? 0.5 : 1,
+    boxSizing: "border-box",
   };
 }
 
@@ -469,21 +490,34 @@ function PackageDetail({
           </span>
         </div>
 
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
           <button
+            type="button"
             onClick={() => onAction("update", pkg)}
             disabled={busy || reloadBusy}
-            style={buttonStyle(busy || reloadBusy)}
+            style={iconButtonStyle(busy || reloadBusy)}
+            title={busyKey === `update:${key}` ? `Updating ${pkg.source}…` : `Update ${pkg.source}`}
+            aria-label={busyKey === `update:${key}` ? `Updating ${pkg.source}…` : `Update ${pkg.source}`}
           >
-            {busyKey === `update:${key}` ? "Updating..." : "Update"}
+            {busyKey === `update:${key}` ? (
+              <LoaderCircle size={13} className="animate-spin" aria-hidden />
+            ) : (
+              <CircleArrowUp size={13} aria-hidden />
+            )}
           </button>
           <button
+            type="button"
             onClick={onReloadSession}
             disabled={!sessionId || reloadBusy || busy}
-            style={buttonStyle(!sessionId || reloadBusy || busy)}
-            title={sessionId ? "Reload current session" : "Open a session to reload"}
+            style={iconButtonStyle(!sessionId || reloadBusy || busy)}
+            title={reloadBusy ? "Reloading session…" : sessionId ? "Reload current session" : "Open a session to reload"}
+            aria-label={reloadBusy ? "Reloading session…" : sessionId ? "Reload current session" : "Open a session to reload"}
           >
-            {reloadBusy ? "Reloading..." : "Reload session"}
+            {reloadBusy ? (
+              <LoaderCircle size={13} className="animate-spin" aria-hidden />
+            ) : (
+              <RotateCw size={13} aria-hidden />
+            )}
           </button>
           <button
             onClick={() => onAction("remove", pkg)}
@@ -1014,8 +1048,19 @@ export function PluginsConfig({
               </span>
             )}
           </div>
-          <button onClick={() => void loadPlugins()} disabled={loading || busyKey !== null} style={buttonStyle(loading || busyKey !== null)}>
-            Refresh
+          <button
+            type="button"
+            onClick={() => void loadPlugins()}
+            disabled={loading || busyKey !== null}
+            style={iconButtonStyle(loading || busyKey !== null)}
+            title={loading ? "Refreshing plugin list…" : "Refresh plugin list"}
+            aria-label={loading ? "Refreshing plugin list…" : "Refresh plugin list"}
+          >
+            {loading ? (
+              <LoaderCircle size={13} className="animate-spin" aria-hidden />
+            ) : (
+              <RefreshCw size={13} aria-hidden />
+            )}
           </button>
           <button onClick={onClose} style={buttonStyle(false)}>
             Close

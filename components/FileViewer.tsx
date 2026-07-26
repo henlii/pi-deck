@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef, useCallback, type CSSProperties, type MouseEvent } from "react";
+import { useEffect, useState, useRef, useCallback, type CSSProperties, type Dispatch, type KeyboardEvent, type MouseEvent } from "react";
 import {
   Prism as SyntaxHighlighter,
   createElement as renderSyntaxNode,
@@ -22,11 +22,16 @@ import { resolveLocalFileHref } from "@/lib/file-links";
 import { markdownPreviewRehypePlugins, markdownPreviewRemarkPlugins } from "@/lib/markdown";
 import { parseUnifiedPatch } from "@/lib/patch";
 import type { GitFileDiffResponse } from "@/lib/git-types";
+import { canRedo, canUndo, type FileBuffer, type FileEditorAction } from "@/lib/file-editor-state";
 
 interface Props {
   filePath: string;
   cwd?: string;
   sourceSessionId?: string | null;
+  writable?: boolean;
+  buffer?: FileBuffer;
+  dispatchBuffer?: Dispatch<FileEditorAction>;
+  onSave?: () => Promise<boolean>;
   onOpenFile?: (filePath: string) => void;
   gitRefreshKey?: number;
 }
@@ -35,6 +40,7 @@ interface FileData {
   content: string;
   language: string;
   size: number;
+  mtimeMs: number;
 }
 
 type DisplayMode = "source" | "preview" | "diff";
@@ -701,7 +707,7 @@ function DocumentViewer({ filePath, cwd, sourceSessionId }: Props) {
   );
 }
 
-export function FileViewer({ filePath, cwd, sourceSessionId, onOpenFile, gitRefreshKey }: Props) {
+export function FileViewer({ filePath, cwd, sourceSessionId, writable, buffer, dispatchBuffer, onSave, onOpenFile, gitRefreshKey }: Props) {
   if (isImagePath(filePath)) {
     return <ImageViewer filePath={filePath} cwd={cwd} sourceSessionId={sourceSessionId} />;
   }
@@ -711,10 +717,10 @@ export function FileViewer({ filePath, cwd, sourceSessionId, onOpenFile, gitRefr
   if (isDocumentPreviewPath(filePath)) {
     return <DocumentViewer filePath={filePath} cwd={cwd} sourceSessionId={sourceSessionId} />;
   }
-  return <TextFileViewer filePath={filePath} cwd={cwd} sourceSessionId={sourceSessionId} onOpenFile={onOpenFile} gitRefreshKey={gitRefreshKey} />;
+  return <TextFileViewer filePath={filePath} cwd={cwd} sourceSessionId={sourceSessionId} writable={writable} buffer={buffer} dispatchBuffer={dispatchBuffer} onSave={onSave} onOpenFile={onOpenFile} gitRefreshKey={gitRefreshKey} />;
 }
 
-function TextFileViewer({ filePath, cwd, sourceSessionId, onOpenFile, gitRefreshKey }: Props) {
+function TextFileViewer({ filePath, cwd, sourceSessionId, writable = false, buffer, dispatchBuffer, onSave, onOpenFile, gitRefreshKey }: Props) {
   const { isDark } = useTheme();
   const [data, setData] = useState<FileData | null>(null);
   const [gitDiff, setGitDiff] = useState<GitFileDiffResponse | null>(null);
@@ -725,6 +731,14 @@ function TextFileViewer({ filePath, cwd, sourceSessionId, onOpenFile, gitRefresh
   const [watching, setWatching] = useState(false);
   const esRef = useRef<EventSource | null>(null);
   const gitDiffRequestRef = useRef(0);
+  const shellRef = useRef<HTMLDivElement>(null);
+  const editorRef = useRef<HTMLTextAreaElement>(null);
+  const bufferRef = useRef(buffer);
+  bufferRef.current = buffer;
+  const forceBoundaryRef = useRef(false);
+  const [savedFlash, setSavedFlash] = useState(false);
+  const [acknowledgedExternalChange, setAcknowledgedExternalChange] = useState<string | null>(null);
+  const savedFlashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const fetchContent = useCallback((filePath: string) => {
     return fetch(getFileApiUrl(filePath, "read", sourceSessionId))
@@ -736,13 +750,28 @@ function TextFileViewer({ filePath, cwd, sourceSessionId, onOpenFile, gitRefresh
         }
         setError(null);
         setData(d);
+        const current = bufferRef.current;
+        const isKnownDirtyBaseline = current?.dirty
+          && current.savedContent === d.content
+          && current.baseline.size === d.size
+          && current.baseline.mtimeMs === d.mtimeMs;
+        if (!isKnownDirtyBaseline) {
+          dispatchBuffer?.({
+            type: "initialize",
+            filePath,
+            sourceSessionId,
+            content: d.content,
+            baseline: { size: d.size, mtimeMs: d.mtimeMs },
+            language: d.language,
+          });
+        }
         return d;
       })
       .catch((e) => {
         setError(String(e));
         return null;
       });
-  }, [sourceSessionId]);
+  }, [dispatchBuffer, sourceSessionId]);
 
   const fetchGitDiff = useCallback(async (targetPath: string) => {
     const requestId = ++gitDiffRequestRef.current;
@@ -812,7 +841,64 @@ function TextFileViewer({ filePath, cwd, sourceSessionId, onOpenFile, gitRefresh
     void fetchGitDiff(filePath);
   }, [fetchGitDiff, filePath, gitRefreshKey]);
 
+  useEffect(() => () => {
+    if (savedFlashTimerRef.current) clearTimeout(savedFlashTimerRef.current);
+  }, []);
+
+  const runSave = useCallback(async () => {
+    if (!onSave || !buffer?.dirty || buffer.saveState === "saving") return false;
+    const saved = await onSave();
+    if (saved) {
+      if (savedFlashTimerRef.current) clearTimeout(savedFlashTimerRef.current);
+      setSavedFlash(true);
+      savedFlashTimerRef.current = setTimeout(() => setSavedFlash(false), 1600);
+    }
+    return saved;
+  }, [buffer?.dirty, buffer?.saveState, onSave]);
+
+  const runUndo = useCallback(() => {
+    if (buffer && dispatchBuffer && canUndo(buffer)) dispatchBuffer({ type: "undo", key: buffer.key });
+  }, [buffer, dispatchBuffer]);
+
+  const runRedo = useCallback(() => {
+    if (buffer && dispatchBuffer && canRedo(buffer)) dispatchBuffer({ type: "redo", key: buffer.key });
+  }, [buffer, dispatchBuffer]);
+
+  // 文件 tab 激活时接管明确的编辑快捷键；表单焦点若在本文件工作区之外则完全放行。
+  useEffect(() => {
+    const handleShortcut = (event: globalThis.KeyboardEvent) => {
+      if (!writable || !buffer || !(event.ctrlKey || event.metaKey) || event.altKey) return;
+      const active = document.activeElement;
+      const isFormControl = active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement || active instanceof HTMLSelectElement || active instanceof HTMLElement && active.isContentEditable;
+      if (isFormControl && !shellRef.current?.contains(active)) return;
+      const key = event.key.toLowerCase();
+      if (key === "s" && !event.shiftKey) {
+        event.preventDefault();
+        void runSave();
+      } else if (key === "z" && event.shiftKey) {
+        event.preventDefault();
+        runRedo();
+      } else if (key === "z" && !event.shiftKey) {
+        event.preventDefault();
+        runUndo();
+      }
+    };
+    window.addEventListener("keydown", handleShortcut);
+    return () => window.removeEventListener("keydown", handleShortcut);
+  }, [buffer, runRedo, runSave, runUndo, writable]);
+
   const hasGitDiff = gitDiff?.supported === true && typeof gitDiff.patch === "string";
+  const externalChangeFingerprint = buffer?.externalChange
+    ? `${buffer.externalChange.baseline.mtimeMs}:${buffer.externalChange.baseline.size}`
+    : buffer?.saveState === "conflict"
+      ? `conflict:${buffer.baseline.mtimeMs}:${buffer.baseline.size}`
+      : null;
+  const showExternalChange = externalChangeFingerprint !== null
+    && acknowledgedExternalChange !== externalChangeFingerprint;
+
+  useEffect(() => {
+    setAcknowledgedExternalChange(null);
+  }, [externalChangeFingerprint]);
 
   useEffect(() => {
     if (!hasGitDiff && displayMode === "diff") setDisplayMode("source");
@@ -836,20 +922,55 @@ function TextFileViewer({ filePath, cwd, sourceSessionId, onOpenFile, gitRefresh
 
   if (!data) return null;
 
-  const isHtml = data.language === "html";
-  const isMarkdown = data.language === "markdown";
+  const visibleContent = buffer?.content ?? data.content;
+  const visibleLanguage = buffer?.language ?? data.language;
+  const isHtml = visibleLanguage === "html";
+  const isMarkdown = visibleLanguage === "markdown";
   const hasPreview = isHtml || isMarkdown;
   const markdownDirectory = getFileDirectory(filePath);
-  const lines = data.content.split("\n");
+  const lines = visibleContent.split("\n");
   const displayModes: DisplayMode[] = [
     "source",
     ...(hasPreview ? ["preview" as const] : []),
     ...(hasGitDiff ? ["diff" as const] : []),
   ];
-  const metadata = `${data.language} · ${lines.length} lines · ${formatSize(data.size)}`;
+  const metadata = `${visibleLanguage} · ${lines.length} lines · ${formatSize(data.size)}`;
+  const readOnlyReason = !sourceSessionId
+    ? "Read-only: open from a saved writable session to edit"
+    : !writable
+      ? "Read-only: this file was opened from a read-only session"
+      : null;
+
+  const handleEditorChange = (content: string) => {
+    if (!buffer || !dispatchBuffer) return;
+    dispatchBuffer({ type: "edit", key: buffer.key, content, forceBoundary: forceBoundaryRef.current });
+    forceBoundaryRef.current = false;
+  };
+
+  const handleEditorKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key !== "Tab" || event.ctrlKey || event.metaKey || event.altKey) return;
+    event.preventDefault();
+    const target = event.currentTarget;
+    const start = target.selectionStart;
+    const end = target.selectionEnd;
+    const next = `${visibleContent.slice(0, start)}  ${visibleContent.slice(end)}`;
+    forceBoundaryRef.current = true;
+    handleEditorChange(next);
+    requestAnimationFrame(() => {
+      target.focus();
+      target.setSelectionRange(start + 2, start + 2);
+    });
+  };
+
+  const discardAndReload = () => {
+    if (!buffer || !dispatchBuffer) return;
+    dispatchBuffer({ type: "discard", key: buffer.key });
+    setLoading(true);
+    void fetchContent(filePath).finally(() => setLoading(false));
+  };
 
   return (
-    <div className="file-viewer-shell" style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
+    <div ref={shellRef} className="file-viewer-shell" style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
       <div
         className="file-viewer-toolbar"
         style={{
@@ -879,33 +1000,15 @@ function TextFileViewer({ filePath, cwd, sourceSessionId, onOpenFile, gitRefresh
           }}
         />
 
-        <div className="file-viewer-controls">
-          {displayModes.length > 1 && (
-            <div className="file-viewer-mode-switch" aria-label="File view mode">
-              {displayModes.map((mode) => {
-                const active = displayMode === mode;
-                return (
-                  <button
-                    key={mode}
-                    type="button"
-                    onClick={() => setDisplayMode(mode)}
-                    title={mode === "diff" ? "Compare working tree with HEAD" : undefined}
-                    aria-pressed={active}
-                    className="file-viewer-mode-button"
-                    style={{
-                      background: active ? "var(--bg-selected)" : "transparent",
-                      color: active ? "var(--text)" : "var(--text-muted)",
-                    }}
-                  >
-                    {DISPLAY_MODE_LABELS[mode]}
-                  </button>
-                );
-              })}
-            </div>
-          )}
-
-          <div className="file-viewer-action-slot">
-            {displayMode === "source" && (
+        <div className="file-viewer-controls" role="toolbar" aria-label="File editor tools">
+          {displayModes.map((mode) => (
+            <button key={mode} type="button" onClick={() => setDisplayMode(mode)} title={mode === "diff" ? "Git diff (saved working tree)" : DISPLAY_MODE_LABELS[mode]} aria-label={mode === "diff" ? "Git diff of saved working tree" : DISPLAY_MODE_LABELS[mode]} aria-pressed={displayMode === mode} className="file-viewer-icon-button" data-active={displayMode === mode}>
+              {mode === "source" ? <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+                : mode === "preview" ? <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg>
+                : <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M8 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h3"/><path d="M16 3h3a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-3"/><path d="M12 2v20"/></svg>}
+            </button>
+          ))}
+          {displayMode === "source" && (
               <button
                 type="button"
                 onClick={() => setWrapLines((value) => !value)}
@@ -913,10 +1016,7 @@ function TextFileViewer({ filePath, cwd, sourceSessionId, onOpenFile, gitRefresh
                 aria-label={wrapLines ? "Disable word wrap" : "Enable word wrap"}
                 aria-pressed={wrapLines}
                 className="file-viewer-icon-button"
-                style={{
-                  background: wrapLines ? "var(--bg-selected)" : "transparent",
-                  color: wrapLines ? "var(--text)" : "var(--text-muted)",
-                }}
+                data-active={wrapLines}
               >
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                   <path d="M3 6h18" />
@@ -925,20 +1025,40 @@ function TextFileViewer({ filePath, cwd, sourceSessionId, onOpenFile, gitRefresh
                   <path d="M3 18h7" />
                 </svg>
               </button>
-            )}
-          </div>
-
+          )}
+          <span className="file-viewer-toolbar-separator" aria-hidden="true" />
+          <button type="button" className="file-viewer-icon-button" onClick={runUndo} disabled={!writable || !canUndo(buffer)} title="Undo (Ctrl/Cmd+Z)" aria-label="Undo"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M9 14 4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 6 6v1"/></svg></button>
+          <button type="button" className="file-viewer-icon-button" onClick={runRedo} disabled={!writable || !canRedo(buffer)} title="Redo (Ctrl/Cmd+Shift+Z)" aria-label="Redo"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m15 14 5-5-5-5"/><path d="M20 9H10a6 6 0 0 0-6 6v1"/></svg></button>
+          <button type="button" className="file-viewer-icon-button is-save" onClick={() => void runSave()} disabled={!writable || !buffer?.dirty || buffer.saveState === "saving"} title="Save (Ctrl/Cmd+S)" aria-label="Save file">
+            {buffer?.saveState === "saving" ? <span className="file-save-spinner" aria-hidden="true" /> : <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>}
+          </button>
           <DownloadLink filePath={filePath} sourceSessionId={sourceSessionId} />
         </div>
       </div>
 
+      {(showExternalChange || buffer?.saveState === "error" || readOnlyReason || savedFlash) && (
+        <div className={`file-editor-notice${showExternalChange ? " is-warning" : buffer?.saveState === "error" ? " is-error" : savedFlash ? " is-success" : ""}`} role={buffer?.saveState === "error" ? "alert" : "status"}>
+          <span>{buffer?.externalChange ? "File changed outside the editor. Your draft is preserved." : buffer?.saveState === "conflict" ? (buffer.error ?? "Save conflict: the file changed externally.") : buffer?.saveState === "error" ? buffer.error : savedFlash ? "Saved" : readOnlyReason}</span>
+          {showExternalChange && (
+            <span className="file-editor-notice__actions">
+              <button type="button" onClick={() => {
+                setAcknowledgedExternalChange(externalChangeFingerprint);
+                setDisplayMode("source");
+                requestAnimationFrame(() => editorRef.current?.focus());
+              }} title="Keep local draft" aria-label="Keep local draft">Keep draft</button>
+              <button type="button" className="is-danger" onClick={discardAndReload} title="Discard local draft and reload" aria-label="Discard local draft and reload latest file">Discard &amp; reload</button>
+            </span>
+          )}
+        </div>
+      )}
+
       {/* Content area */}
       <div className="file-viewer-content" style={{ flex: 1, overflow: "auto", background: "var(--bg)" }}>
         {displayMode === "diff" && hasGitDiff ? (
-          <DiffView patch={gitDiff.patch!} />
+          <><div className="file-viewer-context-label">Git diff shows the saved working tree, not unsaved editor changes.</div><DiffView patch={gitDiff.patch!} /></>
         ) : isHtml && displayMode === "preview" ? (
           <iframe
-            srcDoc={data.content}
+            srcDoc={visibleContent}
             sandbox="allow-scripts"
             style={{ width: "100%", height: "100%", border: "none", background: "var(--bg)" }}
             title="HTML preview"
@@ -972,13 +1092,26 @@ function TextFileViewer({ filePath, cwd, sourceSessionId, onOpenFile, gitRefresh
                 },
               }}
             >
-              {data.content}
+              {visibleContent}
             </ReactMarkdown>
           </div>
         ) : (
-          <SyntaxHighlighter
+          writable && buffer && dispatchBuffer ? (
+            <textarea
+              ref={editorRef}
+              className={wrapLines ? "file-source-editor is-wrapped" : "file-source-editor"}
+              value={visibleContent}
+              onChange={(event) => handleEditorChange(event.target.value)}
+              onKeyDown={handleEditorKeyDown}
+              onPaste={() => { forceBoundaryRef.current = true; }}
+              onCut={() => { forceBoundaryRef.current = true; }}
+              wrap={wrapLines ? "soft" : "off"}
+              spellCheck={false}
+              aria-label={`Edit ${getFileName(filePath)}`}
+            />
+          ) : <SyntaxHighlighter
             className={wrapLines ? "file-source-view is-wrapped" : "file-source-view"}
-            language={data.language === "text" ? "plaintext" : data.language}
+            language={visibleLanguage === "text" ? "plaintext" : visibleLanguage}
             style={isDark ? vscDarkPlus : vs}
             showLineNumbers
             lineNumberStyle={{
@@ -1006,7 +1139,7 @@ function TextFileViewer({ filePath, cwd, sourceSessionId, onOpenFile, gitRefresh
             )}
             wrapLongLines={wrapLines}
           >
-            {data.content}
+            {visibleContent}
           </SyntaxHighlighter>
         )}
       </div>

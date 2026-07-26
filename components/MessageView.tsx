@@ -1,6 +1,7 @@
 "use client";
 
 import { memo, useState, useRef, useEffect, useMemo } from "react";
+import { Check, ChevronDown, ChevronUp, Copy } from "lucide-react";
 import { MarkdownBody } from "./MarkdownBody";
 import { copyText } from "@/lib/clipboard";
 import { parseCompactionSummary } from "@/lib/compaction-summary";
@@ -240,31 +241,20 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
             <button
               onClick={copyContent}
               title="Copy message"
+              aria-label="Copy message"
               style={{
-                display: "flex", alignItems: "center", gap: 4,
-                padding: "3px 8px", height: 22,
+                display: "flex", alignItems: "center", justifyContent: "center",
+                padding: "3px 6px", height: 22,
                 background: "none", border: "none",
                 borderRadius: 5,
                 color: copied ? "var(--accent)" : "var(--text-dim)",
                 cursor: "pointer",
-                fontSize: 11, fontWeight: 400,
-                whiteSpace: "nowrap",
                 transition: "color 0.12s",
               }}
               onMouseEnter={(e) => { if (!copied) e.currentTarget.style.color = "var(--accent)"; }}
               onMouseLeave={(e) => { if (!copied) e.currentTarget.style.color = "var(--text-dim)"; }}
             >
-              {copied ? (
-                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                  <polyline points="20 6 9 17 4 12" />
-                </svg>
-              ) : (
-                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-                </svg>
-              )}
-              {copied ? "Copied" : "Copy"}
+              {copied ? <Check size={11} strokeWidth={1.8} /> : <Copy size={11} strokeWidth={1.8} />}
             </button>
           </div>
           {(canFork || canNavigate) && (
@@ -541,15 +531,14 @@ function AssistantMessageView({
           <button
             onClick={copyContent}
             title="Copy message"
+            aria-label="Copy message"
             style={{
-              display: "flex", alignItems: "center", gap: 4,
-              padding: "3px 8px", height: 22,
+              display: "flex", alignItems: "center", justifyContent: "center",
+              padding: "3px 6px", height: 22,
               background: "none", border: "none",
               borderRadius: 5,
               color: copied ? "var(--accent)" : "var(--text-dim)",
               cursor: "pointer",
-              fontSize: 11, fontWeight: 400,
-              whiteSpace: "nowrap",
               opacity: hovered ? 1 : 0,
               pointerEvents: hovered ? "auto" : "none",
               transition: "opacity 0.12s, color 0.12s",
@@ -557,17 +546,7 @@ function AssistantMessageView({
             onMouseEnter={(e) => { if (!copied) e.currentTarget.style.color = "var(--accent)"; }}
             onMouseLeave={(e) => { if (!copied) e.currentTarget.style.color = "var(--text-dim)"; }}
           >
-            {copied ? (
-              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                <polyline points="20 6 9 17 4 12" />
-              </svg>
-            ) : (
-              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-              </svg>
-            )}
-            {copied ? "Copied" : "Copy"}
+            {copied ? <Check size={11} strokeWidth={1.8} /> : <Copy size={11} strokeWidth={1.8} />}
           </button>
         )}
         {time && !isStreaming && (
@@ -1235,16 +1214,18 @@ function CustomMessageView({ message, cwd, onOpenFile }: { message: CustomMessag
           {text || detailsText ? (
             <button
               onClick={copyContent}
+              title="Copy message"
+              aria-label="Copy message"
               style={{
+                display: "flex", alignItems: "center", justifyContent: "center",
                 padding: "3px 7px",
                 border: "none",
                 background: "none",
                 color: copied ? "var(--accent)" : "var(--text-dim)",
                 cursor: "pointer",
-                fontSize: 11,
               }}
             >
-              {copied ? "Copied" : "Copy"}
+              {copied ? <Check size={11} strokeWidth={1.8} /> : <Copy size={11} strokeWidth={1.8} />}
             </button>
           ) : null}
           {(hasDetails || isHiddenDisplay) && (
@@ -1253,19 +1234,25 @@ function CustomMessageView({ message, cwd, onOpenFile }: { message: CustomMessag
                 if (isHiddenDisplay) setContentExpanded((v) => !v);
                 else setDetailsExpanded((v) => !v);
               }}
+              title={isHiddenDisplay
+                ? (contentExpanded ? "Collapse" : "Expand")
+                : (detailsExpanded ? "Hide details" : "Show details")}
+              aria-label={isHiddenDisplay
+                ? (contentExpanded ? "Collapse" : "Expand")
+                : (detailsExpanded ? "Hide details" : "Show details")}
               style={{
+                display: "flex", alignItems: "center", justifyContent: "center",
                 marginLeft: "auto",
                 padding: "3px 7px",
                 border: "none",
                 background: "none",
                 color: "var(--text-dim)",
                 cursor: "pointer",
-                fontSize: 11,
               }}
             >
-              {isHiddenDisplay
-                ? (contentExpanded ? "Collapse" : "Expand")
-                : (detailsExpanded ? "Hide details" : "Show details")}
+              {(isHiddenDisplay ? contentExpanded : detailsExpanded)
+                ? <ChevronUp size={12} strokeWidth={1.8} />
+                : <ChevronDown size={12} strokeWidth={1.8} />}
             </button>
           )}
         </div>

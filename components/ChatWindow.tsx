@@ -8,6 +8,8 @@ import { composeChatPlan, type ChatRenderItem } from "@/lib/chat-compositor";
 import { MessageView } from "./MessageView";
 import { ChatInput, type ChatInputHandle } from "./ChatInput";
 import { ChatMinimap, useMessageRefs } from "./ChatMinimap";
+import { InlineExtensionCard } from "./InlineExtensionCard";
+import { TodoPanel } from "./TodoPanel";
 import { useAgentSession, type AgentPhase, type NoticeItem } from "@/hooks/useAgentSession";
 import { useAudio } from "@/hooks/useAudio";
 import { useDragDrop } from "@/hooks/useDragDrop";
@@ -129,7 +131,8 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
     retryInfo, contextUsage, forkingEntryId,
     isCompacting, compactError, compactResult, displayModel: displayModelValue, sessionStats,
     slashCommands, slashCommandsLoading, queuedMessages,
-    notices, extensionDialog, extensionCustomUi, extensionStatuses, extensionWidgets, respondToExtensionUi, sendExtensionCustomInput,
+    notices, extensionDialog, extensionInlineRequest, extensionCustomUi, extensionStatuses, extensionWidgets, respondToExtensionUi, sendExtensionCustomInput,
+    todos,
     isAutoModelSelection,
     agentPhase,
     isNew,
@@ -145,6 +148,58 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
     modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSessionStatsPanelOpen,
   });
   const sessionBusy = agentRunning || bashRunning;
+  const [todosCollapsed, setTodosCollapsed] = useState(true);
+  const [expiredInlineRequestId, setExpiredInlineRequestId] = useState<string | null>(null);
+  const inlineExtensionCardRef = useRef<HTMLDivElement>(null);
+  const todoCollapseScope = session?.id ?? (newSessionCwd ? `new:${newSessionCwd}` : "new-session");
+
+  // Todo 展开状态只属于当前聊天视图；切换会话后恢复默认折叠。
+  useEffect(() => {
+    setTodosCollapsed(true);
+  }, [todoCollapseScope]);
+
+  // 这里只负责在 expiresAt 到达时刷新 UI 并禁用卡片，不发送任何协议响应。
+  useEffect(() => {
+    setExpiredInlineRequestId(null);
+    const requestId = extensionInlineRequest?.id;
+    const expiresAt = extensionInlineRequest?.expiresAt;
+    if (!requestId || typeof expiresAt !== "number" || !Number.isFinite(expiresAt)) return;
+
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const scheduleExpiry = () => {
+      const remaining = expiresAt - Date.now();
+      if (remaining <= 0) {
+        setExpiredInlineRequestId(requestId);
+        return;
+      }
+      timer = setTimeout(scheduleExpiry, Math.min(remaining, 2_147_483_647));
+    };
+    scheduleExpiry();
+
+    return () => {
+      if (timer !== undefined) clearTimeout(timer);
+    };
+  }, [extensionInlineRequest?.id, extensionInlineRequest?.expiresAt]);
+
+  // 扩展请求不会改变 messages.length，因此补充一次受阅读位置约束的末端滚动。
+  // 用户若已向上阅读、卡片距离视口较远，则保持当前位置不动。
+  useEffect(() => {
+    if (!extensionInlineRequest?.id) return;
+    const frame = requestAnimationFrame(() => {
+      const container = scrollContainerRef.current;
+      const card = inlineExtensionCardRef.current;
+      if (!container || !card) return;
+
+      const containerRect = container.getBoundingClientRect();
+      const cardRect = card.getBoundingClientRect();
+      const distanceBelowViewport = cardRect.top - containerRect.bottom;
+      const nearbyThreshold = Math.min(180, container.clientHeight * 0.3);
+      if (distanceBelowViewport <= nearbyThreshold) {
+        card.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      }
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [extensionInlineRequest?.id, scrollContainerRef]);
 
   // Register the abort handler for the global Esc shortcut
   useEffect(() => {
@@ -288,6 +343,24 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
     />
   );
 
+  const todoPanelElement = todos.length === 0 ? null : (
+    <div
+      style={{
+        flexShrink: 0,
+        padding: `0 ${CHAT_COLUMN_PADDING}px`,
+        paddingRight: isMobile ? CHAT_COLUMN_PADDING : CHAT_INPUT_RIGHT_PADDING,
+      }}
+    >
+      <div style={{ maxWidth: 820, margin: "0 auto" }}>
+        <TodoPanel
+          todos={todos}
+          collapsed={todosCollapsed}
+          onToggle={() => setTodosCollapsed((value) => !value)}
+        />
+      </div>
+    </div>
+  );
+
   const aboveEditorWidgets = extensionWidgets.filter((widget) => widget.placement !== "belowEditor");
   const belowEditorWidgets = extensionWidgets.filter((widget) => widget.placement === "belowEditor");
 
@@ -390,6 +463,7 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
               </div>
             </div>
             <NoticeShelf notices={notices} align="right" />
+            {todoPanelElement}
             {chatInputElement}
           </div>
         </div>
@@ -541,6 +615,22 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
               />
             )}
 
+            {extensionInlineRequest && (
+              <div ref={inlineExtensionCardRef}>
+                <InlineExtensionCard
+                  request={extensionInlineRequest}
+                  disabled={
+                    isReadOnly
+                    || !sessionIdRef.current
+                    || expiredInlineRequestId === extensionInlineRequest.id
+                  }
+                  onRespond={(response) => {
+                    void respondToExtensionUi(extensionInlineRequest, response);
+                  }}
+                />
+              </div>
+            )}
+
             {agentRunning && (
               <div style={{ height: scrollContainerRef.current ? scrollContainerRef.current.clientHeight : "80vh" }} />
             )}
@@ -570,6 +660,7 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
             <ExtensionWidgets widgets={belowEditorWidgets} />
           </div>
         </div>
+        {todoPanelElement}
         {chatInputElement}
       </div>
       </>

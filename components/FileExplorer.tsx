@@ -100,7 +100,7 @@ async function fetchGitStatus(cwd: string): Promise<GitStatusResponse> {
   return res.json() as Promise<GitStatusResponse>;
 }
 
-const GIT_STATUS_LABELS: Record<GitFileStatusKind, string> = {
+export const GIT_STATUS_LABELS: Record<GitFileStatusKind, string> = {
   modified: "Modified",
   added: "Added",
   deleted: "Deleted",
@@ -109,7 +109,7 @@ const GIT_STATUS_LABELS: Record<GitFileStatusKind, string> = {
   conflict: "Conflict",
 };
 
-const GIT_STATUS_COLORS: Record<GitFileStatusKind, string> = {
+export const GIT_STATUS_COLORS: Record<GitFileStatusKind, string> = {
   modified: "#d6a84b",
   added: "#4ade80",
   deleted: "#f87171",
@@ -253,6 +253,7 @@ function TreeNode({
   return (
     <div>
       <div
+        className="file-row"
         onClick={handleClick}
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
@@ -298,13 +299,15 @@ function TreeNode({
         </span>
         {highlighted && (
           <span
+            className="file-row-badge"
             title="Newly uploaded"
             aria-label="Newly uploaded"
             style={{ width: 6, height: 6, flexShrink: 0, borderRadius: "50%", background: "#3b82f6" }}
           />
         )}
-        {!hovered && !node.isDir && gitStatus && (
+        {!node.isDir && gitStatus && (
           <span
+            className="file-row-badge"
             title={GIT_STATUS_LABELS[gitStatus.status]}
             aria-label={GIT_STATUS_LABELS[gitStatus.status]}
             style={{
@@ -320,8 +323,9 @@ function TreeNode({
             {gitStatus.code}
           </span>
         )}
-        {!hovered && containsGitChanges && (
+        {containsGitChanges && (
           <span
+            className="file-row-badge"
             title="Contains changed files"
             aria-label="Contains changed files"
             style={{
@@ -338,72 +342,41 @@ function TreeNode({
             <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4" />
           </svg>
         )}
-        {onAtMention && hovered && (
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onAtMention(getRelativeFilePath(node.fullPath, cwd), node.isDir);
-            }}
-            title="Insert path into chat"
-            style={{
-              position: "absolute",
-              right: !node.isDir ? 28 : 4,
-              top: "50%",
-              transform: "translateY(-50%)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: 4,
-              padding: "0 8px",
-              height: 20,
-              background: "var(--bg-panel)",
-              border: "1px solid var(--border)",
-              borderRadius: 4,
-              color: "var(--accent)",
-              cursor: "pointer",
-              fontSize: 11,
-              fontWeight: 600,
-              whiteSpace: "nowrap",
-            }}
-          >
-            <MentionIcon />
-            mention
-          </button>
-        )}
-        {hovered && !node.isDir && (
-          <a
-            href={`/api/files/${encodeFilePathForApi(node.fullPath)}?type=download`}
-            download
-            onClick={(e) => e.stopPropagation()}
-            title="Download file"
-            style={{
-              position: "absolute",
-              right: 4,
-              top: "50%",
-              transform: "translateY(-50%)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: 4,
-              padding: "0 5px",
-              height: 20,
-              background: "var(--bg-panel)",
-              border: "1px solid var(--border)",
-              borderRadius: 4,
-              color: "var(--text-muted)",
-              cursor: "pointer",
-              fontSize: 11,
-              fontWeight: 600,
-              whiteSpace: "nowrap",
-              textDecoration: "none",
-            }}
-          >
-            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-              <polyline points="7 10 12 15 17 10" />
-              <line x1="12" y1="15" x2="12" y2="3" />
-            </svg>
-          </a>
+        {/* mention/download 恒渲染，由 CSS 渐进显露；粗指针恒显（触屏首点可达） */}
+        {(onAtMention || !node.isDir) && (
+          <div className="file-row-actions">
+            {onAtMention && (
+            <button
+              type="button"
+              className="file-row-action-btn"
+              onClick={(e) => {
+                e.stopPropagation();
+                onAtMention(getRelativeFilePath(node.fullPath, cwd), node.isDir);
+              }}
+              title="Insert path into chat"
+              aria-label={`Insert ${node.name} into chat`}
+              style={{ color: "var(--accent)" }}
+            >
+              <MentionIcon />
+            </button>
+            )}
+            {!node.isDir && (
+            <a
+              className="file-row-action-btn"
+              href={`/api/files/${encodeFilePathForApi(node.fullPath)}?type=download`}
+              download
+              onClick={(e) => e.stopPropagation()}
+              title="Download file"
+              aria-label={`Download ${node.name}`}
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                <polyline points="7 10 12 15 17 10" />
+                <line x1="12" y1="15" x2="12" y2="3" />
+              </svg>
+            </a>
+            )}
+          </div>
         )}
       </div>
       {node.isDir && open && (
@@ -729,10 +702,10 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
                   onClick={addUploadedFilesToChat}
                   title={uploadSummary.uploaded.length === 1 ? "Add uploaded file to chat" : "Add all uploaded files to chat"}
                   aria-label={uploadSummary.uploaded.length === 1 ? "Add uploaded file to chat" : "Add all uploaded files to chat"}
-                  style={{ height: 22, padding: "0 7px", display: "flex", alignItems: "center", justifyContent: "center", gap: 4, flexShrink: 0, border: "1px solid var(--border)", borderRadius: 4, background: "var(--bg-panel)", color: "var(--accent)", cursor: "pointer", fontSize: 11, fontWeight: 600, whiteSpace: "nowrap" }}
+                  className="file-row-action-btn"
+                  style={{ color: "var(--accent)" }}
                 >
                   <MentionIcon />
-                  mention
                 </button>
               )}
               <DismissButton onClick={() => setUploadSummary(null)} title="Dismiss upload results" />

@@ -9,6 +9,55 @@ import type {
   SkillUpdateResult,
 } from "@/lib/api-types";
 import { shortenPath } from "@/lib/file-paths";
+import { LoaderCircle, RefreshCw } from "lucide-react";
+
+// 设置类界面的图标按钮：24×24 盒、细描边，对齐 sidebar-icon-btn 惯例；
+// label 同时落在 title 与 aria-label 上，loading 时换旋转 LoaderCircle。
+function IconButton({
+  label,
+  onClick,
+  disabled = false,
+  loading = false,
+  children,
+}: {
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+  loading?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      title={label}
+      aria-label={label}
+      style={{
+        width: 24,
+        height: 24,
+        padding: 0,
+        flexShrink: 0,
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        background: "none",
+        border: "1px solid var(--border)",
+        borderRadius: 5,
+        color: disabled ? "var(--text-dim)" : "var(--text-muted)",
+        cursor: disabled ? "not-allowed" : "pointer",
+        opacity: disabled ? 0.5 : 1,
+        boxSizing: "border-box",
+      }}
+    >
+      {loading ? (
+        <LoaderCircle size={12} className="animate-spin" aria-hidden />
+      ) : (
+        children
+      )}
+    </button>
+  );
+}
 
 function sourceLabel(skill: Skill): string {
   const src = skill.sourceInfo?.source;
@@ -220,22 +269,14 @@ function SkillDetail({
               {shortVersion(updateStatus?.currentVersion ?? skill.install.versionHash)}
             </span>
             {skill.install.canCheckForUpdates && (
-              <button
+              <IconButton
+                label={checkingUpdate ? "Checking for updates…" : "Check for updates"}
                 onClick={onCheckUpdate}
                 disabled={checkingUpdate || updating}
-                style={{
-                  padding: "4px 9px",
-                  border: "1px solid var(--border)",
-                  borderRadius: 5,
-                  background: "none",
-                  color: "var(--text-muted)",
-                  cursor: checkingUpdate || updating ? "not-allowed" : "pointer",
-                  opacity: checkingUpdate || updating ? 0.5 : 1,
-                  fontSize: 11,
-                }}
+                loading={checkingUpdate}
               >
-                Check
-              </button>
+                <RefreshCw size={12} aria-hidden />
+              </IconButton>
             )}
             {updateStatus?.state === "update-available" && (
               <span
@@ -1240,25 +1281,18 @@ export function SkillsConfig({
         >
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             {skills.some((skill) => Boolean(skill.install)) && (
-              <button
+              <IconButton
+                label={
+                  checkingAll
+                    ? "Checking all skills for updates…"
+                    : "Check all skills for updates"
+                }
                 onClick={() => void checkForUpdates()}
                 disabled={checkingAll || updatingSkill !== null}
-                style={{
-                  padding: "6px 12px",
-                  background: "none",
-                  border: "1px solid var(--border)",
-                  borderRadius: 6,
-                  color: "var(--text-muted)",
-                  cursor:
-                    checkingAll || updatingSkill !== null
-                      ? "not-allowed"
-                      : "pointer",
-                  opacity: checkingAll || updatingSkill !== null ? 0.5 : 1,
-                  fontSize: 12,
-                }}
+                loading={checkingAll}
               >
-                {checkingAll ? "Checking..." : "Check updates"}
-              </button>
+                <RefreshCw size={12} aria-hidden />
+              </IconButton>
             )}
             {Object.values(updateStatuses).filter(
               (status) => status.state === "update-available",

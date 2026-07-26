@@ -690,26 +690,18 @@ span.linenumber {
 }
 
 
-/* Right panel: animate width */
+/* 右侧工作区（Files/Git）：桌面宽度动画（宽度由组件内联驱动） */
 @media (min-width: 641px) {
-  .right-panel-container {
+  .workspace-container {
     overflow: hidden;
     transition: width 0.2s ease, min-width 0.2s ease;
     flex-shrink: 0;
   }
-  .right-panel-container.right-panel-open {
-    width: 42%;
-    min-width: 300px;
+  .workspace-container.workspace-dragging {
+    transition: none;
   }
-  .right-panel-container.right-panel-closed {
-    width: 0;
-    min-width: 0;
+  .workspace-container.workspace-closed {
     border-left: none !important;
-  }
-  /* keep inner content at fixed width so it doesn't reflow during animation */
-  .right-panel-container > * {
-    width: 42vw;
-    min-width: 300px;
   }
 }
 
@@ -736,19 +728,458 @@ span.linenumber {
     box-shadow: none;
   }
 
-  .right-panel-container {
-    overflow: hidden;
-    transition: width 0.2s ease, min-width 0.2s ease;
-    flex-shrink: 0;
-  }
-  .right-panel-container.right-panel-open {
-    width: 100%;
-    min-width: 0;
-  }
-  .right-panel-container.right-panel-closed {
-    width: 0 !important;
+  /* 右侧工作区：移动端全屏右侧抽屉，不产生三栏挤压 */
+  .workspace-container {
+    position: fixed !important;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 100% !important;
     min-width: 0 !important;
-    border-left: none !important;
-    display: none !important;
+    transition: transform 0.25s ease, box-shadow 0.25s ease;
   }
+  .workspace-container.workspace-open {
+    transform: translateX(0);
+    box-shadow: -4px 0 20px rgba(0,0,0,0.15);
+  }
+  .workspace-container.workspace-closed {
+    transform: translateX(100%);
+    box-shadow: none;
+    border-left: none !important;
+  }
+  .workspace-container > .workspace-inner {
+    width: 100% !important;
+    min-width: 0 !important;
+  }
+}
+
+/* ── 会话栏图标按钮（OpenChamber 规格：24×24 盒、6px 圆角、图标约 18×18） ── */
+.sidebar-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.12s, color 0.12s;
+}
+.sidebar-icon-btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.sidebar-icon-btn:active:not(:disabled) {
+  background: var(--bg-selected);
+}
+.sidebar-icon-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.sidebar-icon-btn:disabled {
+  color: var(--text-dim);
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+/* toggle 开启态（搜索/菜单展开） */
+.sidebar-icon-btn--active,
+.sidebar-icon-btn--active:hover:not(:disabled) {
+  background: var(--bg-selected);
+  color: var(--accent);
+}
+/* 危险操作 hover（删除） */
+.sidebar-icon-btn--danger:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.08);
+  color: #ef4444;
+}
+/* 刷新完成反馈态 */
+.sidebar-icon-btn--done,
+.sidebar-icon-btn--done:hover:not(:disabled) {
+  background: rgba(74, 222, 128, 0.18);
+  color: #4ade80;
+}
+
+/* 行内操作按钮：默认隐藏，行 hover / 行内键盘焦点时显现 */
+.sidebar-row .sidebar-icon-btn--hover {
+  opacity: 0;
+}
+.sidebar-row:hover .sidebar-icon-btn--hover,
+.sidebar-row:focus-within .sidebar-icon-btn--hover {
+  opacity: 1;
+}
+.sidebar-row .sidebar-icon-btn--hover:focus-visible {
+  opacity: 1;
+}
+
+/* 移动端：24px 视觉按钮通过容器间距保持 ≥36px 节奏可用，桌面保持紧凑 */
+@media (max-width: 640px) {
+  .sidebar-toolbar {
+    gap: 12px !important;
+  }
+}
+
+/* ── 右侧工作区 ── */
+/* 拖拽调宽手柄（桌面；移动端禁用） */
+.workspace-resize-handle {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 5px;
+  cursor: col-resize;
+  z-index: 10;
+  touch-action: none;
+}
+.workspace-resize-handle:hover,
+.workspace-resize-handle.dragging {
+  background: color-mix(in srgb, var(--accent) 35%, transparent);
+}
+@media (max-width: 640px) {
+  .workspace-resize-handle {
+    display: none;
+  }
+}
+
+/* 文件树行内操作：恒渲染 + 渐进显露（visibility 保证不可见时退出 Tab 序） */
+.file-row-actions {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 1px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.12s, visibility 0.12s;
+}
+.file-row:hover .file-row-actions,
+.file-row:focus-within .file-row-actions {
+  opacity: 1;
+  visibility: visible;
+}
+.file-row-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  text-decoration: none;
+  flex-shrink: 0;
+  transition: background 0.12s, color 0.12s;
+}
+.file-row-action-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.file-row-action-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+/* 粗指针（触屏）：操作恒显，状态徽章让位，解决首点不可达 */
+@media (pointer: coarse) {
+  .file-row-actions {
+    opacity: 1;
+    visibility: visible;
+  }
+  .file-row .file-row-badge {
+    display: none;
+  }
+}
+
+/* Git 变更文件行 */
+.git-file-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  height: 26px;
+  padding: 0 8px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text);
+  font-size: 12px;
+  text-align: left;
+}
+.git-file-row:hover {
+  background: var(--bg-hover);
+}
+.git-file-row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* 触屏 / 无 hover 设备：行内操作常显可发现，不再依赖 hover 揭示。
+   命中区折中：24px 视觉盒放大到 28px，伪元素四向扩至约 36×32
+   （相邻按钮 gap ≥ 4 时水平扩展不重叠；26–46px 行高内垂直溢出 ≤3px），
+   朝向 44px 目标但不挤掉行内标题空间。 */
+@media (hover: none), (pointer: coarse) {
+  .sidebar-row .sidebar-icon-btn--hover {
+    opacity: 1;
+  }
+  .sidebar-icon-btn {
+    width: 28px;
+    height: 28px;
+    position: relative;
+  }
+  .sidebar-icon-btn::after {
+    content: "";
+    position: absolute;
+    inset: -4px -2px;
+  }
+}
+
+/* ── 中央文件编辑工作区 ─────────────────────────────────────────────── */
+.file-viewer-toolbar {
+  min-width: 0;
+}
+.file-viewer-path {
+  min-width: 72px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.file-viewer-meta {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.file-viewer-controls {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+.file-viewer-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  flex: 0 0 auto;
+  text-decoration: none;
+  transition: color 120ms ease, background 120ms ease, border-color 120ms ease;
+}
+.file-viewer-icon-button:hover:not(:disabled),
+.file-viewer-icon-button[data-active="true"] {
+  color: var(--text);
+  background: var(--bg-selected);
+  border-color: var(--border);
+}
+.file-viewer-icon-button.is-save:not(:disabled) {
+  color: var(--accent);
+}
+.file-viewer-icon-button:focus-visible,
+.file-close-confirm__button:focus-visible,
+.file-editor-notice button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.file-viewer-icon-button:disabled {
+  opacity: 0.34;
+  cursor: not-allowed;
+}
+.file-viewer-toolbar-separator {
+  width: 1px;
+  height: 16px;
+  margin: 0 2px;
+  background: var(--border);
+  flex: 0 0 auto;
+}
+.file-viewer-live-indicator {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+.file-source-editor {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: max-content;
+  min-height: 100%;
+  margin: 0;
+  padding: 14px 18px;
+  resize: none;
+  border: 0;
+  outline: 0;
+  background: var(--bg);
+  color: var(--text);
+  caret-color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.6;
+  tab-size: 2;
+  white-space: pre;
+  overflow: auto;
+}
+.file-source-editor.is-wrapped {
+  min-width: 100%;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.file-editor-notice,
+.file-close-confirm {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 34px;
+  padding: 5px 10px 5px 12px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--accent) 7%, var(--bg-panel));
+  color: var(--text-muted);
+  font-size: 11.5px;
+  flex: 0 0 auto;
+}
+.file-editor-notice.is-warning {
+  background: color-mix(in srgb, #f59e0b 10%, var(--bg-panel));
+  color: color-mix(in srgb, #f59e0b 72%, var(--text));
+}
+.file-editor-notice.is-error {
+  background: color-mix(in srgb, #ef4444 9%, var(--bg-panel));
+  color: #f87171;
+}
+.file-editor-notice.is-success {
+  background: color-mix(in srgb, #22c55e 8%, var(--bg-panel));
+  color: #4ade80;
+}
+.file-editor-notice__actions {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: auto;
+}
+.file-editor-notice button,
+.file-close-confirm__button {
+  min-height: 24px;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg);
+  color: var(--text-muted);
+  font: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.file-editor-notice button:hover,
+.file-close-confirm__button:hover {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+.file-editor-notice button.is-danger,
+.file-close-confirm__button.is-danger {
+  color: #f87171;
+  border-color: color-mix(in srgb, #ef4444 35%, var(--border));
+}
+.file-close-confirm {
+  min-height: 36px;
+  background: color-mix(in srgb, #f59e0b 7%, var(--bg-panel));
+}
+.file-close-confirm__message {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-right: auto;
+}
+.file-close-confirm__button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.file-tab-dirty-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.file-tab-dirty-dot.is-saving,
+.file-save-spinner {
+  animation: file-editor-pulse 900ms ease-in-out infinite alternate;
+}
+.file-save-spinner {
+  width: 11px;
+  height: 11px;
+  border: 2px solid color-mix(in srgb, var(--accent) 28%, transparent);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation-name: file-editor-spin;
+  animation-duration: 650ms;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+}
+.file-viewer-context-label {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding: 5px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-panel);
+  color: var(--text-dim);
+  font-size: 10.5px;
+}
+@keyframes file-editor-spin { to { transform: rotate(360deg); } }
+@keyframes file-editor-pulse { to { opacity: 0.45; } }
+
+@media (max-width: 640px) {
+  .file-viewer-toolbar {
+    padding-left: 8px !important;
+    padding-right: 0 !important;
+    gap: 6px !important;
+  }
+  .file-viewer-meta { display: none; }
+  .file-viewer-controls {
+    max-width: 68vw;
+    padding-right: 8px;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .file-viewer-controls::-webkit-scrollbar { display: none; }
+  .file-close-confirm,
+  .file-editor-notice {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+  .file-editor-notice__actions {
+    width: 100%;
+    margin-left: 0;
+  }
+  .file-close-confirm__message {
+    width: 100%;
+    flex-basis: 100%;
+  }
+  .file-close-confirm__button span { display: none; }
+  .file-close-confirm__button {
+    width: 28px;
+    justify-content: center;
+    padding: 0;
+  }
+  .file-source-editor { padding: 12px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .file-tab-dirty-dot.is-saving,
+  .file-save-spinner { animation: none; }
 }

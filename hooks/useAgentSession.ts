@@ -16,7 +16,9 @@ import { sendAgentCommand } from "@/lib/agent-client";
 import { getToolNamesForPreset, type ToolEntry } from "@/lib/tool-presets";
 import { createEventStreamManager, EventStreamConnectionError, type EventStreamManager, type EventStreamConnectionResult } from "@/lib/event-stream-manager";
 import type { SessionStatsInfo } from "@/lib/pi-types";
-import { applyExtensionUiRequest, type ExtensionUiState } from "@/lib/extension-ui-bridge";
+import { applyExtensionUiRequest, clearExtensionUiRequest, type ExtensionUiState } from "@/lib/extension-ui-bridge";
+import type { ExtensionUiInlineRequest } from "@/lib/extension-ui-bridge";
+import { parseTodos } from "@/lib/todo-parser";
 import { getSessionCapabilities } from "@/components/session-capabilities";
 
 export interface SessionData {
@@ -343,6 +345,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const [noticeState, dispatchNotice] = useReducer(noticeReducer, { visible: [], pending: [] });
   const [sessionStatsOverride, setSessionStatsOverride] = useState<SessionStatsInfo | null>(null);
   const [extensionDialog, setExtensionDialog] = useState<ExtensionUiDialogRequest | null>(null);
+  const [extensionInlineRequest, setExtensionInlineRequest] = useState<ExtensionUiInlineRequest | null>(null);
   const [extensionCustomUi, setExtensionCustomUi] = useState<ExtensionUiCustomRequest | null>(null);
   const [extensionStatuses, setExtensionStatuses] = useState<ExtensionStatusItem[]>([]);
   const [extensionWidgets, setExtensionWidgets] = useState<ExtensionWidgetItem[]>([]);
@@ -369,6 +372,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const optimisticUserMessageKeyRef = useRef<string | null>(null);
   const extensionUiStateRef = useRef<ExtensionUiState>({
     dialog: extensionDialog,
+    inlineRequest: extensionInlineRequest,
     customUi: extensionCustomUi,
     statuses: extensionStatuses,
     widgets: extensionWidgets,
@@ -376,6 +380,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const commitExtensionUiState = useCallback((next: ExtensionUiState) => {
     extensionUiStateRef.current = next;
     setExtensionDialog(next.dialog);
+    setExtensionInlineRequest(next.inlineRequest ?? null);
     setExtensionCustomUi(next.customUi);
     setExtensionStatuses(next.statuses);
     setExtensionWidgets(next.widgets);
@@ -383,6 +388,13 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const patchExtensionUiState = useCallback((patch: Partial<ExtensionUiState>) => {
     commitExtensionUiState({ ...extensionUiStateRef.current, ...patch });
   }, [commitExtensionUiState]);
+
+  const todos = useMemo(() => {
+    const todoMessages = streamState.streamingMessage
+      ? [...messages, streamState.streamingMessage as AgentMessage]
+      : messages;
+    return parseTodos(todoMessages);
+  }, [messages, streamState.streamingMessage]);
 
   // SSE 连接管理交由可注入、可独立测试的 EventStreamManager（见
   // lib/event-stream-manager.ts）。这里只保留 lazy 初始化的 ref 通过引用
@@ -633,14 +645,16 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   }, [capabilities.canConnectEvents]);
 
   const respondToExtensionUi = useCallback(async (
-    request: ExtensionUiDialogRequest,
+    request: ExtensionUiDialogRequest | ExtensionUiInlineRequest,
     response: { value: string } | { confirmed: boolean } | { cancelled: true },
   ) => {
     if (!capabilities.canSendSessionCommands) return;
     const sid = sessionIdRef.current;
-    // 响应和关闭都必须绑定当前请求；旧弹窗的延迟回调不能关闭或回复新请求。
-    if (extensionUiStateRef.current.dialog?.id !== request.id) return;
-    patchExtensionUiState({ dialog: null });
+    // 响应和关闭都必须绑定当前请求；旧弹窗/内联卡片的延迟回调不能关闭或回复新请求。
+    const currentState = extensionUiStateRef.current;
+    const nextState = clearExtensionUiRequest(currentState, request.id);
+    if (nextState === currentState) return;
+    commitExtensionUiState(nextState);
     if (!sid) return;
     try {
       await sendAgentCommand(sid, {
@@ -651,7 +665,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     } catch (e) {
       console.error("Failed to send extension UI response:", e);
     }
-  }, [capabilities.canSendSessionCommands, patchExtensionUiState]);
+  }, [capabilities.canSendSessionCommands, commitExtensionUiState]);
 
   const sendExtensionCustomInput = useCallback(async (request: ExtensionUiCustomRequest, data: string) => {
     if (!capabilities.canSendSessionCommands) return;
@@ -1479,6 +1493,15 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
   // Load session on mount
   useEffect(() => {
+    commitExtensionUiState({
+      ...extensionUiStateRef.current,
+      dialog: null,
+      inlineRequest: null,
+      customUi: null,
+    });
+  }, [session?.id, newSessionCwd, commitExtensionUiState]);
+
+  useEffect(() => {
     if (session) {
       sessionIdRef.current = session.id;
       if (session.readOnly === true) {
@@ -1621,7 +1644,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     retryInfo, contextUsage, systemPrompt, forkingEntryId,
     isCompacting, compactError, compactResult, currentModel, displayModel, sessionStats,
     slashCommands, slashCommandsLoading, queuedMessages,
-    notices: noticeState.visible, extensionDialog, extensionCustomUi, extensionStatuses, extensionWidgets, respondToExtensionUi, sendExtensionCustomInput,
+    notices: noticeState.visible, extensionDialog, extensionInlineRequest, extensionCustomUi, extensionStatuses, extensionWidgets, respondToExtensionUi, sendExtensionCustomInput,
+    todos,
     isAutoModelSelection: isNew && newSessionModel === null,
     agentPhase,
     isNew,

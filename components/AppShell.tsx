@@ -1,18 +1,26 @@
 "use client";
 
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback, useRef, useEffect, useMemo, useReducer } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useGlobalKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { SessionSidebar } from "./SessionSidebar";
 import { ChatWindow } from "./ChatWindow";
 import { FileViewer } from "./FileViewer";
 import { TabBar, type Tab } from "./TabBar";
+import { RightWorkspace } from "./RightWorkspace";
 import { SettingsView } from "./SettingsView";
 import { BranchNavigator } from "./BranchNavigator";
 import { useTheme } from "@/hooks/useTheme";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { copyText } from "@/lib/clipboard";
-import { getFileName } from "@/lib/file-paths";
+import { encodeFilePathForApi, getFileName } from "@/lib/file-paths";
+import {
+  EMPTY_FILE_EDITOR_STATE,
+  fileEditorReducer,
+  getBuffer,
+  hasDirtyBuffers,
+  makeFileBufferKey,
+} from "@/lib/file-editor-state";
 import { buildAtMentionText, buildFileAtMentionsText } from "@/lib/file-fuzzy";
 import { getInitialNavigation } from "@/lib/initial-navigation";
 import type { SessionInfo, SessionTreeNode } from "@/lib/types";
@@ -49,13 +57,20 @@ function AppShellInner() {
   const [modelsRefreshKey, setModelsRefreshKey] = useState(0);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [mobileSidebarReady, setMobileSidebarReady] = useState(false);
+  const [workspaceOpen, setWorkspaceOpen] = useState(true);
+  const [workspaceWidth, setWorkspaceWidth] = useState(288);
+  const [mobileWorkspaceReady, setMobileWorkspaceReady] = useState(false);
   // On mobile the sidebar is an overlay drawer; hide it by default so the chat
   // is visible on load. Runs once the breakpoint resolves after hydration.
   useEffect(() => {
-    if (isMobile) setSidebarOpen(false);
+    if (isMobile) {
+      setSidebarOpen(false);
+      setWorkspaceOpen(false);
+    }
   }, [isMobile]);
   useEffect(() => {
     setMobileSidebarReady(true);
+    setMobileWorkspaceReady(true);
   }, []);
   const chatInputRef = useRef<ChatInputHandle | null>(null);
   const topBarRef = useRef<HTMLDivElement>(null);
@@ -119,18 +134,35 @@ function AppShellInner() {
   const [topPanelPos, setTopPanelPos] = useState<{ top: number; left: number; width: number } | null>(null);
 
   const toggleTopPanel = useCallback((panel: "branches" | "system" | "session") => {
-    if (isMobile) setSidebarOpen(false);
+    if (isMobile) {
+      setSidebarOpen(false);
+      setWorkspaceOpen(false);
+    }
     setActiveTopPanel((cur) => cur === panel ? null : panel);
   }, [isMobile]);
 
   const openSessionStatsPanel = useCallback(() => {
-    if (isMobile) setSidebarOpen(false);
+    if (isMobile) {
+      setSidebarOpen(false);
+      setWorkspaceOpen(false);
+    }
     setActiveTopPanel("session");
   }, [isMobile]);
 
   const handleSidebarToggle = useCallback(() => {
-    if (isMobile) setActiveTopPanel(null);
+    if (isMobile) {
+      setActiveTopPanel(null);
+      setWorkspaceOpen(false);
+    }
     setSidebarOpen((open) => !open);
+  }, [isMobile]);
+
+  const handleWorkspaceToggle = useCallback(() => {
+    if (isMobile) {
+      setSidebarOpen(false);
+      setActiveTopPanel(null);
+    }
+    setWorkspaceOpen((open) => !open);
   }, [isMobile]);
 
   useEffect(() => {
@@ -145,10 +177,86 @@ function AppShellInner() {
     return () => ro.disconnect();
   }, [activeTopPanel]);
 
-  // Right panel — file tabs only
+  // 中央工作区文件 tabs：Chat 固定首 tab，文件预览不进入最右窄栏。
   const [fileTabs, setFileTabs] = useState<Tab[]>([]);
   const [activeFileTabId, setActiveFileTabId] = useState<string | null>(null);
-  const [rightPanelOpen, setRightPanelOpen] = useState(false);
+  const [pendingCloseTabId, setPendingCloseTabId] = useState<string | null>(null);
+  const [fileEditorState, dispatchFileEditor] = useReducer(fileEditorReducer, EMPTY_FILE_EDITOR_STATE);
+  const fileEditorStateRef = useRef(fileEditorState);
+  fileEditorStateRef.current = fileEditorState;
+  const dispatchFileEditorAction = useCallback((action: Parameters<typeof fileEditorReducer>[1]) => {
+    // 同步镜像让异步保存回调能看到尚未经过 React render 的最新键入 revision。
+    fileEditorStateRef.current = fileEditorReducer(fileEditorStateRef.current, action);
+    dispatchFileEditor(action);
+  }, []);
+
+  useEffect(() => {
+    if (!hasDirtyBuffers(fileEditorState)) return;
+    const protectDirtyBuffers = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", protectDirtyBuffers);
+    return () => window.removeEventListener("beforeunload", protectDirtyBuffers);
+  }, [fileEditorState]);
+
+  const saveFileBuffer = useCallback(async (key: string): Promise<boolean> => {
+    const buffer = getBuffer(fileEditorStateRef.current, key);
+    if (!buffer || !buffer.sourceSessionId || !buffer.dirty || buffer.saveState === "saving") return false;
+    const requestId = globalThis.crypto?.randomUUID?.()
+      ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+    const requestRevision = buffer.revision;
+    const requestedContent = buffer.content;
+    dispatchFileEditorAction({ type: "markSaving", key, requestId, requestRevision });
+    try {
+      const encoded = encodeFilePathForApi(buffer.filePath);
+      const params = new URLSearchParams({ type: "save", sessionId: buffer.sourceSessionId });
+      const response = await fetch(`/api/files/${encoded}?${params.toString()}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: requestedContent, baseline: buffer.baseline }),
+      });
+      const body = await response.json().catch(() => ({})) as {
+        error?: string;
+        size?: number;
+        mtimeMs?: number;
+        baseline?: { size: number; mtimeMs: number };
+      };
+      if (response.status === 409) {
+        dispatchFileEditorAction({
+          type: "saveConflict",
+          key,
+          requestId,
+          baseline: body.baseline,
+          message: body.error ?? "File changed externally",
+        });
+        return false;
+      }
+      if (!response.ok || typeof body.size !== "number" || typeof body.mtimeMs !== "number") {
+        throw new Error(body.error ?? `Save failed (HTTP ${response.status})`);
+      }
+      dispatchFileEditorAction({
+        type: "saveSuccess",
+        key,
+        requestId,
+        requestRevision,
+        savedContent: requestedContent,
+        baseline: { size: body.size, mtimeMs: body.mtimeMs },
+      });
+      setExplorerRefreshKey((value) => value + 1);
+      // 若保存过程中继续输入，服务器保存成功但 tab 仍有新草稿，不能用于“保存并关闭”。
+      const latest = getBuffer(fileEditorStateRef.current, key);
+      return Boolean(latest && latest.revision === requestRevision && !latest.dirty);
+    } catch (error) {
+      dispatchFileEditorAction({
+        type: "saveError",
+        key,
+        requestId,
+        message: error instanceof Error ? error.message : String(error),
+      });
+      return false;
+    }
+  }, [dispatchFileEditorAction]);
 
   // Same @mention format as the chat input's @ autocomplete, so the agent's
   // read tool resolves it the same way (it strips the @ prefix).
@@ -330,10 +438,6 @@ function AppShellInner() {
     setAutoNameStatus({ kind: "idle" });
   }, [selectedSession?.id]);
 
-  const handleExplorerRefresh = useCallback(() => {
-    setExplorerRefreshKey((k) => k + 1);
-  }, []);
-
   const handleSessionForked = useCallback((newSessionId: string) => {
     setRefreshKey((k) => k + 1);
     setSessionKey((k) => k + 1);
@@ -362,36 +466,80 @@ function AppShellInner() {
     }
   }, [selectedSession, router]);
 
-  const handleOpenFile = useCallback((filePath: string, fileName: string, sourceSessionId?: string | null) => {
-    const tabId = `file:${filePath}`;
+  const handleOpenFile = useCallback((filePath: string, fileName: string, sourceSessionId?: string | null, writable = false) => {
+    const bufferKey = makeFileBufferKey(filePath, sourceSessionId);
+    const tabId = `file:${bufferKey}`;
     setFileTabs((prev) => {
       const existing = prev.find((t) => t.id === tabId);
-      if (!existing) return [...prev, { id: tabId, label: fileName, filePath, sourceSessionId }];
-      if (!sourceSessionId || existing.sourceSessionId === sourceSessionId) return prev;
-      return prev.map((t) => t.id === tabId ? { ...t, sourceSessionId } : t);
+      if (!existing) return [...prev, { id: tabId, label: fileName, filePath, sourceSessionId, bufferKey, writable, readOnly: !writable }];
+      return prev;
     });
+    setPendingCloseTabId(null);
     setActiveFileTabId(tabId);
-    setRightPanelOpen(true);
-    // On mobile the file panel is full-screen; close the drawer so it shows.
-    if (isMobile) setSidebarOpen(false);
+    // 移动端文件预览在中央主工作区显示：关闭左右抽屉，避免三层覆盖。
+    if (isMobile) {
+      setSidebarOpen(false);
+      setWorkspaceOpen(false);
+    }
   }, [isMobile]);
 
   const handleOpenLinkedFile = useCallback((filePath: string) => {
-    handleOpenFile(filePath, getFileName(filePath), selectedSession?.id ?? null);
-  }, [handleOpenFile, selectedSession?.id]);
+    handleOpenFile(filePath, getFileName(filePath), selectedSession?.id ?? null, Boolean(selectedSession?.id && selectedSession.readOnly !== true));
+  }, [handleOpenFile, selectedSession?.id, selectedSession?.readOnly]);
 
-  const handleCloseFileTab = useCallback((tabId: string) => {
+  const closeFileTabNow = useCallback((tabId: string, removeBuffer = true) => {
+    const tab = fileTabs.find((item) => item.id === tabId);
+    if (removeBuffer && tab?.bufferKey) dispatchFileEditorAction({ type: "remove", key: tab.bufferKey });
     setFileTabs((prev) => {
-      const next = prev.filter((t) => t.id !== tabId);
-      if (next.length === 0) setRightPanelOpen(false);
-      return next;
+      return prev.filter((t) => t.id !== tabId);
     });
     setActiveFileTabId((cur) => {
       if (cur !== tabId) return cur;
       const remaining = fileTabs.filter((t) => t.id !== tabId);
       return remaining.length > 0 ? remaining[remaining.length - 1].id : null;
     });
-  }, [fileTabs]);
+    setPendingCloseTabId((current) => current === tabId ? null : current);
+  }, [dispatchFileEditorAction, fileTabs]);
+
+  const handleCloseFileTab = useCallback((tabId: string) => {
+    const tab = fileTabs.find((item) => item.id === tabId);
+    const buffer = tab?.bufferKey ? getBuffer(fileEditorStateRef.current, tab.bufferKey) : undefined;
+    if (buffer?.dirty) {
+      setActiveFileTabId(tabId);
+      setPendingCloseTabId(tabId);
+      return;
+    }
+    closeFileTabNow(tabId);
+  }, [closeFileTabNow, fileTabs]);
+
+  const handleSaveAndClose = useCallback(async () => {
+    const tab = fileTabs.find((item) => item.id === pendingCloseTabId);
+    if (!tab?.bufferKey) return;
+    if (await saveFileBuffer(tab.bufferKey)) closeFileTabNow(tab.id);
+  }, [closeFileTabNow, fileTabs, pendingCloseTabId, saveFileBuffer]);
+
+  const handleDiscardAndClose = useCallback(() => {
+    const tab = fileTabs.find((item) => item.id === pendingCloseTabId);
+    if (!tab) return;
+    if (tab.bufferKey) {
+      dispatchFileEditorAction({ type: "discard", key: tab.bufferKey });
+      dispatchFileEditorAction({ type: "remove", key: tab.bufferKey });
+    }
+    closeFileTabNow(tab.id, false);
+  }, [closeFileTabNow, dispatchFileEditorAction, fileTabs, pendingCloseTabId]);
+
+  const centerTabs = useMemo<Tab[]>(() => [
+    { id: "chat", label: "Chat", filePath: "", kind: "chat" },
+    ...fileTabs.map((tab) => {
+      const buffer = tab.bufferKey ? getBuffer(fileEditorState, tab.bufferKey) : undefined;
+      return { ...tab, dirty: buffer?.dirty, saving: buffer?.saveState === "saving" };
+    }),
+  ], [fileEditorState, fileTabs]);
+
+  const handleSelectCenterTab = useCallback((tabId: string) => {
+    setPendingCloseTabId(null);
+    setActiveFileTabId(tabId === "chat" ? null : tabId);
+  }, []);
 
   // Show chat area if a session is selected, or if we have a cwd to start a new session in
   const effectiveNewSessionCwd = selectedSession === null ? activeCwd : null;
@@ -425,32 +573,20 @@ function AppShellInner() {
         onInitialRestoreDone={handleInitialRestoreDone}
         refreshKey={refreshKey}
         onSessionDeleted={handleSessionDeleted}
-        onOpenFile={handleOpenFile}
-        explorerRefreshKey={explorerRefreshKey}
-        onExplorerRefresh={handleExplorerRefresh}
-        onAtMention={handleAtMention}
-        onAtMentions={handleAtMentions}
       />
-      <div style={{ padding: "8px", flexShrink: 0 }}>
+      {/* 底部 Settings：同规格图标按钮（24×24），不显示永久文字标签 */}
+      <div style={{ padding: "6px 8px", flexShrink: 0, display: "flex", alignItems: "center" }}>
         <button
           type="button"
           onClick={() => setSettingsOpen(true)}
           title="Settings"
-          style={{
-            width: "100%", height: 32, padding: "0 10px",
-            display: "flex", alignItems: "center", justifyContent: "flex-start", gap: 8,
-            background: "none", border: "none", borderRadius: 9,
-            color: "var(--text-muted)", cursor: "pointer", fontSize: 12,
-            transition: "background 0.12s, color 0.12s",
-          }}
-          onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-hover)"; e.currentTarget.style.color = "var(--text)"; }}
-          onMouseLeave={(e) => { e.currentTarget.style.background = "none"; e.currentTarget.style.color = "var(--text-muted)"; }}
+          aria-label="Settings"
+          className="sidebar-icon-btn"
         >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
             <circle cx="12" cy="12" r="3" />
             <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.03 1.56V21h-4v-.08A1.7 1.7 0 0 0 8.95 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.56-1.03H3v-4h.08A1.7 1.7 0 0 0 4.6 8.95a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 8.95 4.6 1.7 1.7 0 0 0 9.97 3.04V3h4v.08A1.7 1.7 0 0 0 15 4.6a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.4 9c.12.42.52.98 1.56 1.03H21v4h-.08A1.7 1.7 0 0 0 19.4 15Z" />
           </svg>
-          Settings
         </button>
       </div>
     </>
@@ -525,6 +661,14 @@ function AppShellInner() {
         }
         .sidebar-container.sidebar-mobile-pending.sidebar-open {
           transform: translateX(-100%);
+          box-shadow: none;
+        }
+        .workspace-overlay-backdrop.workspace-mobile-pending {
+          opacity: 0 !important;
+          pointer-events: none !important;
+        }
+        .workspace-container.workspace-mobile-pending.workspace-open {
+          transform: translateX(100%);
           box-shadow: none;
         }
       }
@@ -777,7 +921,7 @@ function AppShellInner() {
                   marginLeft: "auto",
                   display: "flex", alignItems: "center", gap: 10,
                   paddingLeft: 12,
-                  paddingRight: rightPanelOpen ? 12 : 48,
+                  paddingRight: 12,
                   height: "100%",
                   background: activeTopPanel === "session" ? "var(--bg-selected)" : "none",
                   border: "none",
@@ -835,6 +979,29 @@ function AppShellInner() {
               </button>
             );
           })()}
+          {/* 最右侧 Files/Git 工作区开关：在顶栏内占位，不再固定覆盖内容 */}
+          <button
+            type="button"
+            onClick={handleWorkspaceToggle}
+            title={workspaceOpen ? "Hide Files/Git workspace" : "Show Files/Git workspace"}
+            aria-label={workspaceOpen ? "Hide Files/Git workspace" : "Show Files/Git workspace"}
+            aria-pressed={workspaceOpen}
+            style={{
+              marginLeft: showChat && (sessionStats || contextUsage) ? 0 : "auto",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              width: 36, height: 36, padding: 0,
+              background: workspaceOpen ? "var(--bg-selected)" : "none",
+              border: "none", borderLeft: "1px solid var(--border)",
+              color: workspaceOpen ? "var(--text)" : "var(--text-muted)",
+              cursor: "pointer", flexShrink: 0,
+              transition: "background 0.12s, color 0.12s",
+            }}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <rect x="3" y="3" width="18" height="18" rx="2" />
+              <line x1="15" y1="3" x2="15" y2="21" />
+            </svg>
+          </button>
           {/* Top panel dropdown — shared, only one active at a time */}
           {activeTopPanel && topPanelPos && (
             <div style={{
@@ -1038,134 +1205,132 @@ function AppShellInner() {
 
         </div>
 
-        {/* Chat content */}
-        <div style={{ flex: 1, overflow: "hidden", position: "relative" }}>
-          {showChat ? (
-            <ChatWindow
-              key={sessionKey}
-              session={selectedSession}
-              newSessionCwd={effectiveNewSessionCwd}
-              onAgentEnd={handleAgentEnd}
-              onSessionCreated={handleSessionCreated}
-              onSessionForked={handleSessionForked}
-              modelsRefreshKey={modelsRefreshKey}
-              chatInputRef={chatInputRef}
-              onBranchDataChange={handleBranchDataChange}
-              onSystemPromptChange={handleSystemPromptChange}
-              onSessionStatsChange={handleSessionStatsChange}
-              onSessionStatsPanelOpen={openSessionStatsPanel}
-              onContextUsageChange={handleContextUsageChange}
-              onOpenFile={handleOpenLinkedFile}
-            />
-          ) : initialCwdStatus === "validating" ? (
-            <div
-              role="status"
-              style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, padding: 24, color: "var(--text-muted)", textAlign: "center" }}
-            >
-              <div style={{ fontSize: 14, color: "var(--text)" }}>Opening workspace...</div>
-              <div style={{ maxWidth: "min(720px, 100%)", overflowWrap: "anywhere", fontFamily: "var(--font-mono)", fontSize: 12 }}>
-                {initialNavigation.requestedCwd}
-              </div>
-            </div>
-          ) : initialCwdStatus === "error" ? (
-            <div
-              role="alert"
-              style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, padding: 24, color: "var(--text-muted)", textAlign: "center" }}
-            >
-              <div style={{ fontSize: 14, color: "#dc2626" }}>Unable to open workspace</div>
-              <div style={{ maxWidth: "min(720px, 100%)", overflowWrap: "anywhere", fontFamily: "var(--font-mono)", fontSize: 12 }}>
-                {initialNavigation.requestedCwd}
-              </div>
-              <div style={{ maxWidth: 720, fontSize: 12 }}>{initialCwdError}</div>
-            </div>
-          ) : showPlaceholder ? (
-            activeCwd ? (
-              <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-muted)", fontSize: 15 }}>
-                Select a session from the sidebar
-              </div>
-            ) : (
-              <div style={{ position: "absolute", top: 12, left: 12, display: "flex", alignItems: "flex-start", gap: 8, userSelect: "none", pointerEvents: "none" }}>
-                <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.7, flexShrink: 0 }}>
-                  <line x1="20" y1="12" x2="4" y2="12" /><polyline points="10 6 4 12 10 18" />
-                </svg>
-                <div>
-                  <div style={{ fontSize: 18, fontWeight: 600, color: "var(--text)", marginBottom: 8 }}>Get Started</div>
-                  <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.8 }}>
-                    <span style={{ color: "var(--text-dim)", marginRight: 6 }}>1.</span>Select a project directory from the sidebar<br />
-                    <span style={{ color: "var(--text-dim)", marginRight: 6 }}>2.</span>Add models via the <strong style={{ color: "var(--text)" }}>Models</strong> button at the bottom
-                  </div>
-                </div>
-              </div>
-            )
-          ) : null}
-        </div>
-      </div>
-
-      {/* Right panel: file viewer — always mounted, width animated via CSS */}
-      <div
-        className={`right-panel-container${rightPanelOpen ? " right-panel-open" : " right-panel-closed"}`}
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          borderLeft: "1px solid var(--border)",
-          background: "var(--bg)",
-        }}
-      >
-        {/* Right panel tab bar */}
-        <div style={{ display: "flex", alignItems: "center", flexShrink: 0, background: "var(--bg-panel)", borderBottom: "1px solid var(--border)", height: 36 }}>
-          <div style={{ flex: 1, overflow: "hidden" }}>
+        {/* 中央主工作区 tab：只有打开文件时出现，Chat 固定首项 */}
+        {fileTabs.length > 0 && (
+          <div style={{ flexShrink: 0, borderBottom: "1px solid var(--border)" }}>
             <TabBar
-              tabs={fileTabs}
-              activeTabId={activeFileTabId ?? ""}
-              onSelectTab={setActiveFileTabId}
+              tabs={centerTabs}
+              activeTabId={activeFileTabId ?? "chat"}
+              onSelectTab={handleSelectCenterTab}
               onCloseTab={handleCloseFileTab}
             />
+            {pendingCloseTabId && fileTabs.some((tab) => tab.id === pendingCloseTabId) && (
+              <div className="file-close-confirm" role="alert">
+                <span className="file-close-confirm__message">Unsaved changes in {fileTabs.find((tab) => tab.id === pendingCloseTabId)?.label}</span>
+                <button type="button" className="file-close-confirm__button" onClick={() => void handleSaveAndClose()} title="Save and close" aria-label="Save and close">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+                  <span>Save &amp; close</span>
+                </button>
+                <button type="button" className="file-close-confirm__button is-danger" onClick={handleDiscardAndClose} title="Discard changes" aria-label="Discard changes">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="m19 6-1 14H6L5 6m3 0V4h8v2"/></svg>
+                  <span>Discard</span>
+                </button>
+                <button type="button" className="file-close-confirm__button" onClick={() => setPendingCloseTabId(null)} title="Cancel closing" aria-label="Cancel closing">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                  <span>Cancel</span>
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Chat 保持挂载：切到文件 tab 只视觉隐藏，SSE/流式状态与滚动不丢失 */}
+        <div style={{ flex: 1, overflow: "hidden", position: "relative" }}>
+          <div style={{ display: activeFileTab ? "none" : "block", height: "100%", overflow: "hidden", position: "relative" }}>
+            {showChat ? (
+              <ChatWindow
+                key={sessionKey}
+                session={selectedSession}
+                newSessionCwd={effectiveNewSessionCwd}
+                onAgentEnd={handleAgentEnd}
+                onSessionCreated={handleSessionCreated}
+                onSessionForked={handleSessionForked}
+                modelsRefreshKey={modelsRefreshKey}
+                chatInputRef={chatInputRef}
+                onBranchDataChange={handleBranchDataChange}
+                onSystemPromptChange={handleSystemPromptChange}
+                onSessionStatsChange={handleSessionStatsChange}
+                onSessionStatsPanelOpen={openSessionStatsPanel}
+                onContextUsageChange={handleContextUsageChange}
+                onOpenFile={handleOpenLinkedFile}
+              />
+            ) : initialCwdStatus === "validating" ? (
+              <div role="status" style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, padding: 24, color: "var(--text-muted)", textAlign: "center" }}>
+                <div style={{ fontSize: 14, color: "var(--text)" }}>Opening workspace...</div>
+                <div style={{ maxWidth: "min(720px, 100%)", overflowWrap: "anywhere", fontFamily: "var(--font-mono)", fontSize: 12 }}>{initialNavigation.requestedCwd}</div>
+              </div>
+            ) : initialCwdStatus === "error" ? (
+              <div role="alert" style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, padding: 24, color: "var(--text-muted)", textAlign: "center" }}>
+                <div style={{ fontSize: 14, color: "#dc2626" }}>Unable to open workspace</div>
+                <div style={{ maxWidth: "min(720px, 100%)", overflowWrap: "anywhere", fontFamily: "var(--font-mono)", fontSize: 12 }}>{initialNavigation.requestedCwd}</div>
+                <div style={{ maxWidth: 720, fontSize: 12 }}>{initialCwdError}</div>
+              </div>
+            ) : showPlaceholder ? (
+              activeCwd ? (
+                <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-muted)", fontSize: 15 }}>Select a session from the sidebar</div>
+              ) : (
+                <div style={{ position: "absolute", top: 12, left: 12, display: "flex", alignItems: "flex-start", gap: 8, userSelect: "none", pointerEvents: "none" }}>
+                  <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.7, flexShrink: 0 }}>
+                    <line x1="20" y1="12" x2="4" y2="12" /><polyline points="10 6 4 12 10 18" />
+                  </svg>
+                  <div>
+                    <div style={{ fontSize: 18, fontWeight: 600, color: "var(--text)", marginBottom: 8 }}>Get Started</div>
+                    <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.8 }}>
+                      <span style={{ color: "var(--text-dim)", marginRight: 6 }}>1.</span>Select a project directory from the sidebar<br />
+                      <span style={{ color: "var(--text-dim)", marginRight: 6 }}>2.</span>Add models via the <strong style={{ color: "var(--text)" }}>Settings</strong> button at the bottom
+                    </div>
+                  </div>
+                </div>
+              )
+            ) : null}
           </div>
 
-        </div>
-
-        {/* File content */}
-        <div style={{ flex: 1, overflow: "hidden" }}>
-          {activeFileTab?.filePath ? (
-            <FileViewer
-              filePath={activeFileTab.filePath}
-              cwd={activeCwd ?? undefined}
-              sourceSessionId={activeFileTab.sourceSessionId}
-              gitRefreshKey={explorerRefreshKey}
-              onOpenFile={(filePath) => handleOpenFile(
-                filePath,
-                getFileName(filePath),
-                activeFileTab.sourceSessionId,
-              )}
-            />
-          ) : (
-            <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-dim)", fontSize: 12 }}>
-              No file open
+          {activeFileTab?.filePath && (
+            <div style={{ height: "100%", overflow: "hidden" }}>
+              <FileViewer
+                filePath={activeFileTab.filePath}
+                cwd={activeCwd ?? undefined}
+                sourceSessionId={activeFileTab.sourceSessionId}
+                writable={activeFileTab.writable === true}
+                buffer={activeFileTab.bufferKey ? getBuffer(fileEditorState, activeFileTab.bufferKey) : undefined}
+                dispatchBuffer={dispatchFileEditorAction}
+                onSave={activeFileTab.bufferKey ? () => saveFileBuffer(activeFileTab.bufferKey!) : undefined}
+                gitRefreshKey={explorerRefreshKey}
+                onOpenFile={(filePath) => handleOpenFile(filePath, getFileName(filePath), activeFileTab.sourceSessionId, activeFileTab.writable === true)}
+              />
             </div>
           )}
         </div>
       </div>
+
+      {/* 移动端遮罩：点击关闭最右工作区 */}
+      <div
+        className={`sidebar-overlay-backdrop workspace-overlay-backdrop${mobileWorkspaceReady ? "" : " workspace-mobile-pending"}`}
+        onClick={() => setWorkspaceOpen(false)}
+        style={{
+          position: "fixed", inset: 0, zIndex: 199,
+          background: "rgba(0,0,0,0.4)",
+          opacity: workspaceOpen ? 1 : 0,
+          pointerEvents: workspaceOpen ? "auto" : "none",
+          transition: "opacity 0.25s ease",
+        }}
+      />
+
+      <RightWorkspace
+        open={workspaceOpen}
+        width={workspaceWidth}
+        onWidthChange={setWorkspaceWidth}
+        onClose={() => setWorkspaceOpen(false)}
+        cwd={activeCwd}
+        isMobile={isMobile}
+        mobileReady={mobileWorkspaceReady}
+        onOpenFile={(filePath, fileName) => handleOpenFile(filePath, fileName, selectedSession?.id ?? null, Boolean(selectedSession?.id && selectedSession.readOnly !== true))}
+        fileRefreshKey={explorerRefreshKey}
+        gitRefreshKey={explorerRefreshKey}
+        onAtMention={handleAtMention}
+        onAtMentions={handleAtMentions}
+      />
     </div>
-    {/* File panel toggle — always visible at top-right */}
-    <button
-      onClick={() => setRightPanelOpen((v) => !v)}
-      title={rightPanelOpen ? "Hide file panel" : "Show file panel"}
-      aria-label={rightPanelOpen ? "Hide file panel" : "Show file panel"}
-      style={{
-        position: "fixed", top: 0, right: 0, zIndex: 300,
-        display: "flex", alignItems: "center", justifyContent: "center",
-        width: 36, height: 36, padding: 0,
-        background: "var(--bg-panel)", border: "none", borderLeft: "1px solid var(--border)", borderBottom: "1px solid var(--border)",
-        color: rightPanelOpen ? "var(--text)" : "var(--text-muted)",
-        cursor: "pointer", transition: "color 0.12s",
-      }}
-      onMouseEnter={(e) => { e.currentTarget.style.color = "var(--text)"; }}
-      onMouseLeave={(e) => { e.currentTarget.style.color = rightPanelOpen ? "var(--text)" : "var(--text-muted)"; }}
-    >
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <rect x="3" y="3" width="18" height="18" rx="2" /><line x1="15" y1="3" x2="15" y2="21" />
-      </svg>
-    </button>
     {settingsOpen && (
       <SettingsView
         cwd={activeCwd ?? selectedSession?.cwd ?? null}

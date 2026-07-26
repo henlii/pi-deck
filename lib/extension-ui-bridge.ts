@@ -5,14 +5,33 @@ import type {
 } from "./types";
 
 export type ExtensionUiDialogRequest = Extract<ExtensionUiRequest, { method: "select" | "confirm" | "input" | "editor" }>;
+export type ExtensionUiInlineRequest = Extract<ExtensionUiRequest, { method: "select" | "confirm" | "input" }>;
 export type ExtensionUiCustomRequest = Extract<ExtensionUiRequest, { method: "custom" }>;
 export type ExtensionUiNoticeType = "info" | "success" | "warning" | "error";
 
 export interface ExtensionUiState {
   dialog: ExtensionUiDialogRequest | null;
+  inlineRequest?: ExtensionUiInlineRequest | null;
   customUi: ExtensionUiCustomRequest | null;
   statuses: ExtensionStatusItem[];
   widgets: ExtensionWidgetItem[];
+}
+
+export function isShortSelectOptions(options: readonly string[]): boolean {
+  if (options.length < 1 || options.length > 8) return false;
+  const trimmedOptions = options.map((option) => option.trim());
+  return trimmedOptions.every((option) => option.length > 0 && option.length <= 80)
+    && trimmedOptions.reduce((total, option) => total + option.length, 0) <= 320;
+}
+
+export function isShortSelectRequest(request: ExtensionUiRequest): request is Extract<ExtensionUiRequest, { method: "select" }> {
+  return request.method === "select" && isShortSelectOptions(request.options);
+}
+
+export function clearExtensionUiRequest(state: ExtensionUiState, requestId: string): ExtensionUiState {
+  if (state.inlineRequest?.id === requestId) return { ...state, inlineRequest: null };
+  if (state.dialog?.id === requestId) return { ...state, dialog: null };
+  return state;
 }
 
 export type ExtensionUiEffect =
@@ -26,10 +45,15 @@ export function applyExtensionUiRequest(
 ): { state: ExtensionUiState; effects: ExtensionUiEffect[] } {
   switch (request.method) {
     case "select":
+      if (isShortSelectRequest(request)) {
+        return { state: { ...state, dialog: null, inlineRequest: request }, effects: [] };
+      }
+      return { state: { ...state, dialog: request, inlineRequest: null }, effects: [] };
     case "confirm":
     case "input":
+      return { state: { ...state, dialog: null, inlineRequest: request }, effects: [] };
     case "editor":
-      return { state: { ...state, dialog: request }, effects: [] };
+      return { state: { ...state, dialog: request, inlineRequest: null }, effects: [] };
     case "notify":
       return {
         state,
