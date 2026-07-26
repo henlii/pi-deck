@@ -38,6 +38,7 @@ interface Props {
   onSessionStatsPanelOpen?: () => void;
   onContextUsageChange?: (usage: { percent: number | null; contextWindow: number; tokens: number | null } | null) => void;
   onOpenFile?: (filePath: string) => void;
+  onOpenSubagentSession?: (sessionFile: string) => void;
 }
 
 function phaseLabel(phase: AgentPhase, t: ReturnType<typeof useI18n>["t"]): string {
@@ -100,7 +101,7 @@ function ProcessDetailsGroup({ messageCount, toolCallCount, children, t }: { mes
   );
 }
 
-export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreated, onSessionForked, modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSessionStatsChange, onSessionStatsPanelOpen, onContextUsageChange, onOpenFile }: Props) {
+export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreated, onSessionForked, modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSessionStatsChange, onSessionStatsPanelOpen, onContextUsageChange, onOpenFile, onOpenSubagentSession }: Props) {
   const { t } = useI18n();
   const { soundEnabled, onSoundToggle, playDoneSound, unlockAudio } = useAudio();
   const isMobile = useIsMobile();
@@ -532,6 +533,7 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
                     modelNames={modelNames}
                     cwd={messageCwd}
                     onOpenFile={onOpenFile}
+                    onOpenSubagentSession={onOpenSubagentSession}
                     entryId={entryIds[idx]}
                     // 只读会话：Fork/Continue 等写入口一律不下发（hook 侧另有 guard）。
                     onFork={sessionBusy || isNew || isReadOnly || (idx === 0 && msg.role === "user") ? undefined : handleFork}
@@ -591,7 +593,7 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
               );
             })()}
             {streamState.isStreaming && streamState.streamingMessage && (
-              <MessageView message={streamState.streamingMessage as AgentMessage} isStreaming modelNames={modelNames} cwd={messageCwd} onOpenFile={onOpenFile} />
+              <MessageView message={streamState.streamingMessage as AgentMessage} isStreaming modelNames={modelNames} cwd={messageCwd} onOpenFile={onOpenFile} onOpenSubagentSession={onOpenSubagentSession} />
             )}
 
             {agentRunning && !streamState.streamingMessage && (

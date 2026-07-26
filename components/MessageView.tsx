@@ -7,6 +7,7 @@ import { copyText } from "@/lib/clipboard";
 import { parseCompactionSummary } from "@/lib/compaction-summary";
 import { isEmptyThinkingBlock } from "@/lib/message-display";
 import { parseUnifiedPatch, type SplitDiffCell } from "@/lib/patch";
+import { parseSubagentResult, SUBAGENT_TOOL_NAME, type SubagentRunSummary, type SubagentResultSummary } from "@/lib/subagent-result";
 import { useI18n } from "@/lib/i18n";
 import type {
   AgentMessage,
@@ -61,6 +62,8 @@ interface Props {
   modelNames?: Record<string, string>;
   cwd?: string;
   onOpenFile?: (filePath: string) => void;
+  /** 打开 subagent 结果卡片中的只读子会话（按会话文件路径解析）。 */
+  onOpenSubagentSession?: (sessionFile: string) => void;
   entryId?: string;
   onFork?: (entryId: string) => void;
   forking?: boolean;
@@ -99,12 +102,12 @@ function haveSameRelevantToolResults(
   return true;
 }
 
-export const MessageView = memo(function MessageView({ message, isStreaming, toolResults, modelNames, cwd, onOpenFile, entryId, onFork, forking, onNavigate, prevAssistantEntryId, onEditContent, showTimestamp, prevTimestamp, sessionId }: Props) {
+export const MessageView = memo(function MessageView({ message, isStreaming, toolResults, modelNames, cwd, onOpenFile, onOpenSubagentSession, entryId, onFork, forking, onNavigate, prevAssistantEntryId, onEditContent, showTimestamp, prevTimestamp, sessionId }: Props) {
   if (message.role === "user") {
     return <UserMessageView message={message as UserMessage} cwd={cwd} onOpenFile={onOpenFile} entryId={entryId} onFork={onFork} forking={forking} onNavigate={onNavigate} prevAssistantEntryId={prevAssistantEntryId} onEditContent={onEditContent} />;
   }
   if (message.role === "assistant") {
-    return <AssistantMessageView message={message as AssistantMessage} isStreaming={isStreaming} toolResults={toolResults} modelNames={modelNames} cwd={cwd} onOpenFile={onOpenFile} showTimestamp={showTimestamp} prevTimestamp={prevTimestamp} sessionId={sessionId} entryId={entryId} />;
+    return <AssistantMessageView message={message as AssistantMessage} isStreaming={isStreaming} toolResults={toolResults} modelNames={modelNames} cwd={cwd} onOpenFile={onOpenFile} onOpenSubagentSession={onOpenSubagentSession} showTimestamp={showTimestamp} prevTimestamp={prevTimestamp} sessionId={sessionId} entryId={entryId} />;
   }
   if (message.role === "toolResult") {
     // Rendered inline under its toolCall — skip standalone rendering if paired
@@ -127,6 +130,7 @@ export const MessageView = memo(function MessageView({ message, isStreaming, too
     && prev.modelNames === next.modelNames
     && prev.cwd === next.cwd
     && prev.onOpenFile === next.onOpenFile
+    && prev.onOpenSubagentSession === next.onOpenSubagentSession
     && prev.entryId === next.entryId
     && prev.onFork === next.onFork
     && prev.forking === next.forking
@@ -335,6 +339,7 @@ function AssistantMessageView({
   modelNames,
   cwd,
   onOpenFile,
+  onOpenSubagentSession,
   showTimestamp,
   prevTimestamp,
   sessionId,
@@ -346,6 +351,7 @@ function AssistantMessageView({
   modelNames?: Record<string, string>;
   cwd?: string;
   onOpenFile?: (filePath: string) => void;
+  onOpenSubagentSession?: (sessionFile: string) => void;
   showTimestamp?: boolean;
   prevTimestamp?: number;
   sessionId?: string;
@@ -518,7 +524,7 @@ function AssistantMessageView({
 
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         {blockItems.map(({ block, originalIndex }) => (
-          <BlockView key={`${entryId ?? "stream"}-${originalIndex}`} block={block} toolResults={toolResults} isStreaming={isStreaming} streamingDuration={streamingDurations.get(originalIndex) ?? (block.type === "thinking" ? thinkingDurationFromFile : undefined)} toolCallDurations={toolCallDurations} cwd={cwd} onOpenFile={onOpenFile} sessionId={sessionId} entryId={entryId} blockIndex={originalIndex} />
+          <BlockView key={`${entryId ?? "stream"}-${originalIndex}`} block={block} toolResults={toolResults} isStreaming={isStreaming} streamingDuration={streamingDurations.get(originalIndex) ?? (block.type === "thinking" ? thinkingDurationFromFile : undefined)} toolCallDurations={toolCallDurations} cwd={cwd} onOpenFile={onOpenFile} onOpenSubagentSession={onOpenSubagentSession} sessionId={sessionId} entryId={entryId} blockIndex={originalIndex} />
         ))}
       </div>
 
@@ -560,7 +566,7 @@ function AssistantMessageView({
   );
 }
 
-function BlockView({ block, toolResults, isStreaming, streamingDuration, toolCallDurations, cwd, onOpenFile, sessionId, entryId, blockIndex }: { block: AssistantContentBlock; toolResults?: Map<string, ToolResultMessage>; isStreaming?: boolean; streamingDuration?: number; toolCallDurations?: Map<string, number>; cwd?: string; onOpenFile?: (filePath: string) => void; sessionId?: string; entryId?: string; blockIndex: number }) {
+function BlockView({ block, toolResults, isStreaming, streamingDuration, toolCallDurations, cwd, onOpenFile, onOpenSubagentSession, sessionId, entryId, blockIndex }: { block: AssistantContentBlock; toolResults?: Map<string, ToolResultMessage>; isStreaming?: boolean; streamingDuration?: number; toolCallDurations?: Map<string, number>; cwd?: string; onOpenFile?: (filePath: string) => void; onOpenSubagentSession?: (sessionFile: string) => void; sessionId?: string; entryId?: string; blockIndex: number }) {
   if (block.type === "text") {
     return <TextBlock block={block as TextContent} isStreaming={isStreaming} cwd={cwd} onOpenFile={onOpenFile} />;
   }
@@ -571,7 +577,7 @@ function BlockView({ block, toolResults, isStreaming, streamingDuration, toolCal
     const tc = block as ToolCallContent;
     const result = toolResults?.get(tc.toolCallId);
     const duration = toolCallDurations?.get(tc.toolCallId);
-    return <ToolCallBlock block={tc} result={result} duration={duration} />;
+    return <ToolCallBlock block={tc} result={result} duration={duration} onOpenSubagentSession={onOpenSubagentSession} />;
   }
   return null;
 }
@@ -663,7 +669,7 @@ function ThinkingBlock({ block, duration, sessionId, entryId, blockIndex }: {
 }
 
 
-function ToolCallBlock({ block, result, duration }: { block: ToolCallContent; result?: ToolResultMessage; duration?: number }) {
+function ToolCallBlock({ block, result, duration, onOpenSubagentSession }: { block: ToolCallContent; result?: ToolResultMessage; duration?: number; onOpenSubagentSession?: (sessionFile: string) => void }) {
   const [expanded, setExpanded] = useState(false);
   const inputStr = JSON.stringify(block.input, null, 2);
   const isEditTool = isEditToolName(block.toolName);
@@ -675,6 +681,12 @@ function ToolCallBlock({ block, result, duration }: { block: ToolCallContent; re
     : null;
   const resultIsEmpty = resultText === null ? false : (resultText.trim() === "(no output)" || resultText.trim() === "");
   const isError = result?.isError ?? false;
+  // pi-subagents 把每个子运行的模型、用量、验收与会话文件写在 details 里；
+  // 文本内容通常只有一句占位，因此优先渲染结构化卡片，形状不符时回退文本。
+  const subagentSummary = useMemo(
+    () => (block.toolName === SUBAGENT_TOOL_NAME && result ? parseSubagentResult(result.details) : null),
+    [block.toolName, result],
+  );
 
   return (
     <div
@@ -740,7 +752,9 @@ function ToolCallBlock({ block, result, duration }: { block: ToolCallContent; re
 
       {/* ── Paired result — only shown when expanded ── */}
       {expanded && result && (
-        resultDiff ? (
+        subagentSummary ? (
+          <SubagentResultCard summary={subagentSummary} onOpenSubagentSession={onOpenSubagentSession} />
+        ) : resultDiff ? (
           <PairedDiffResult
             diff={resultDiff}
           />
@@ -753,6 +767,203 @@ function ToolCallBlock({ block, result, duration }: { block: ToolCallContent; re
         )
       )}
     </div>
+  );
+}
+
+const SUBAGENT_STATUS_KEYS = {
+  ok: "subagent_statusOk",
+  error: "subagent_statusError",
+  timeout: "subagent_statusTimeout",
+  interrupted: "subagent_statusInterrupted",
+  stopped: "subagent_statusStopped",
+  detached: "subagent_statusDetached",
+} as const;
+
+const SUBAGENT_STATUS_COLORS: Record<keyof typeof SUBAGENT_STATUS_KEYS, string> = {
+  ok: "#16a34a",
+  error: "#f87171",
+  timeout: "#d97706",
+  interrupted: "#d97706",
+  stopped: "var(--text-dim)",
+  detached: "var(--accent)",
+};
+
+function formatSubagentTokens(value: number): string {
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
+  if (value >= 1_000) return `${(value / 1_000).toFixed(1)}K`;
+  return String(value);
+}
+
+/**
+ * 结构化展示 pi-subagents 的运行结果。只读：不发起运行、不接管子会话，
+ * 「打开子会话」只是跳转到侧栏已发现的只读子会话。
+ */
+function SubagentResultCard({ summary, onOpenSubagentSession }: {
+  summary: SubagentResultSummary;
+  onOpenSubagentSession?: (sessionFile: string) => void;
+}) {
+  const { t } = useI18n();
+  const total = summary.totalUsage;
+
+  return (
+    <div style={{ borderTop: "1px solid rgba(34,197,94,0.15)", background: "var(--bg)" }}>
+      {(summary.chainAgents || total || summary.timedOut || summary.stopped) && (
+        <div
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            alignItems: "center",
+            gap: "4px 10px",
+            padding: "6px 10px",
+            borderBottom: "1px solid var(--border)",
+            color: "var(--text-dim)",
+            fontFamily: "var(--font-mono)",
+            fontSize: 10.5,
+          }}
+        >
+          {summary.chainAgents && <span>{summary.chainAgents.join(" → ")}</span>}
+          {total && (
+            <span>
+              {t("subagent_totalTokens", {
+                input: formatSubagentTokens(total.input),
+                output: formatSubagentTokens(total.output),
+              })}
+            </span>
+          )}
+          {summary.totalCost !== undefined && summary.totalCost > 0 && <span>${summary.totalCost.toFixed(4)}</span>}
+          {summary.timedOut && <span style={{ color: "#d97706" }}>{t("subagent_statusTimeout")}</span>}
+          {summary.stopped && <span>{t("subagent_statusStopped")}</span>}
+        </div>
+      )}
+
+      <ul style={{ margin: 0, padding: 0, listStyle: "none" }}>
+        {summary.runs.map((run) => (
+          <SubagentRunRow key={run.index} run={run} onOpenSubagentSession={onOpenSubagentSession} />
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function SubagentRunRow({ run, onOpenSubagentSession }: {
+  run: SubagentRunSummary;
+  onOpenSubagentSession?: (sessionFile: string) => void;
+}) {
+  const { t } = useI18n();
+  const [showOutput, setShowOutput] = useState(false);
+  const output = run.finalOutput ?? run.error;
+
+  return (
+    <li style={{ padding: "7px 10px", borderTop: run.index === 0 ? "none" : "1px solid var(--border)" }}>
+      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "3px 8px", minWidth: 0 }}>
+        <span style={{ color: "var(--text)", fontFamily: "var(--font-mono)", fontSize: 11.5, fontWeight: 600 }}>
+          {run.agent ?? t("common_unknown")}
+        </span>
+        <span
+          style={{
+            padding: "0 5px",
+            borderRadius: 999,
+            border: `1px solid ${SUBAGENT_STATUS_COLORS[run.status]}`,
+            color: SUBAGENT_STATUS_COLORS[run.status],
+            fontSize: 9.5,
+            lineHeight: 1.6,
+            textTransform: "uppercase",
+          }}
+        >
+          {t(SUBAGENT_STATUS_KEYS[run.status])}
+        </span>
+        {run.acceptanceStatus && (
+          <span style={{ color: "var(--text-dim)", fontSize: 10.5 }}>
+            {t("subagent_acceptance", { status: run.acceptanceStatus })}
+          </span>
+        )}
+        {run.model && (
+          <span style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)", fontSize: 10.5, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {run.model}
+          </span>
+        )}
+        {run.nestedRuns !== undefined && (
+          <span style={{ color: "var(--text-dim)", fontSize: 10.5 }}>{t("subagent_nestedRuns", { count: run.nestedRuns })}</span>
+        )}
+      </div>
+
+      {run.task && (
+        <div
+          title={run.task}
+          style={{
+            marginTop: 2,
+            display: "-webkit-box",
+            WebkitBoxOrient: "vertical",
+            WebkitLineClamp: 2,
+            overflow: "hidden",
+            color: "var(--text-muted)",
+            fontSize: 11.5,
+            lineHeight: 1.45,
+          }}
+        >
+          {run.task}
+        </div>
+      )}
+
+      <div style={{ marginTop: 3, display: "flex", flexWrap: "wrap", alignItems: "center", gap: "3px 8px", color: "var(--text-dim)", fontFamily: "var(--font-mono)", fontSize: 10 }}>
+        {run.usage && (
+          <>
+            <span>{t("subagent_tokensInOut", { input: formatSubagentTokens(run.usage.input), output: formatSubagentTokens(run.usage.output) })}</span>
+            {run.usage.cacheRead > 0 && <span>{t("subagent_cacheRead", { count: formatSubagentTokens(run.usage.cacheRead) })}</span>}
+            {run.usage.turns > 0 && <span>{t("subagent_turns", { count: run.usage.turns })}</span>}
+            {run.usage.cost > 0 && <span>${run.usage.cost.toFixed(4)}</span>}
+          </>
+        )}
+        {run.failedModels && (
+          <span style={{ color: "#d97706" }}>{t("subagent_failedModels", { models: run.failedModels.join(", ") })}</span>
+        )}
+      </div>
+
+      {(output || (run.sessionFile && onOpenSubagentSession)) && (
+        <div style={{ marginTop: 4, display: "flex", flexWrap: "wrap", gap: 6 }}>
+          {output && (
+            <button
+              type="button"
+              onClick={() => setShowOutput((value) => !value)}
+              aria-expanded={showOutput}
+              style={{ padding: "1px 6px", border: "1px solid var(--border)", borderRadius: 5, background: "none", color: "var(--text-muted)", cursor: "pointer", font: "inherit", fontSize: 10.5 }}
+            >
+              {showOutput ? t("message_hideDetails") : t("subagent_showOutput")}
+            </button>
+          )}
+          {run.sessionFile && onOpenSubagentSession && (
+            <button
+              type="button"
+              onClick={() => onOpenSubagentSession(run.sessionFile as string)}
+              title={run.sessionFile}
+              style={{ padding: "1px 6px", border: "1px solid var(--border)", borderRadius: 5, background: "none", color: "var(--accent)", cursor: "pointer", font: "inherit", fontSize: 10.5 }}
+            >
+              {t("subagent_openSession")}
+            </button>
+          )}
+        </div>
+      )}
+
+      {showOutput && output && (
+        <pre
+          style={{
+            margin: "5px 0 0",
+            padding: "6px 8px",
+            maxHeight: 320,
+            overflow: "auto",
+            borderRadius: 5,
+            background: "var(--bg-subtle)",
+            color: run.finalOutput ? "var(--text-muted)" : "#f87171",
+            fontSize: 11.5,
+            lineHeight: 1.5,
+            whiteSpace: "pre-wrap",
+            wordBreak: "break-word",
+          }}
+        >
+          {output}
+        </pre>
+      )}
+    </li>
   );
 }
 

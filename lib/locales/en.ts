@@ -387,6 +387,22 @@ export const en = {
   plugins_versionConfigured: "configured {version}",
   plugins_diagnostics_one: "{count} diagnostic",
   plugins_diagnostics_other: "{count} diagnostics",
+  // phase2 D3 subagent result card
+  subagent_statusOk: "done",
+  subagent_statusError: "failed",
+  subagent_statusTimeout: "timed out",
+  subagent_statusInterrupted: "interrupted",
+  subagent_statusStopped: "stopped",
+  subagent_statusDetached: "detached",
+  subagent_acceptance: "acceptance: {status}",
+  subagent_nestedRuns: "{count} nested",
+  subagent_tokensInOut: "{input} in · {output} out",
+  subagent_totalTokens: "total {input} in · {output} out",
+  subagent_cacheRead: "{count} cached",
+  subagent_turns: "{count} turns",
+  subagent_failedModels: "fell back from {models}",
+  subagent_showOutput: "Show output",
+  subagent_openSession: "Open child session",
 } as const;
 
 export type TranslationKey = keyof typeof en;

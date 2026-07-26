@@ -390,9 +390,21 @@ function AppShellInner() {
       .catch(() => {});
   }, []);
 
+  // subagent 结果卡片按会话文件路径跳转到侧栏已发现的只读子会话。
+  // 子会话由 /api/sessions 的嵌套发现返回，这里只做路径匹配与选中，
+  // 不创建 AgentSession，也不改变子会话的只读能力门禁。
+  const handleOpenSubagentSession = useCallback((sessionFile: string) => {
+    void fetch("/api/sessions")
+      .then((r) => (r.ok ? (r.json() as Promise<{ sessions: SessionInfo[] }>) : null))
+      .then((d) => {
+        const match = d?.sessions.find((s) => s.path === sessionFile);
+        if (match) handleSelectSession(match);
+      })
+      .catch(() => {});
+  }, [handleSelectSession]);
+
   // Called by ChatWindow when a new session gets its real id from pi
-  const handleSessionCreated = useCallback((session: SessionInfo) => {
-    setSelectedSession(session);
+  const handleSessionCreated = useCallback((session: SessionInfo) => {    setSelectedSession(session);
     setRefreshKey((k) => k + 1);
     hydrateSelectedSession(session.id);
     router.replace(`?session=${encodeURIComponent(session.id)}`, { scroll: false });
@@ -1255,6 +1267,7 @@ function AppShellInner() {
                 onSessionStatsPanelOpen={openSessionStatsPanel}
                 onContextUsageChange={handleContextUsageChange}
                 onOpenFile={handleOpenLinkedFile}
+                onOpenSubagentSession={handleOpenSubagentSession}
               />
             ) : initialCwdStatus === "validating" ? (
               <div role="status" style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, padding: 24, color: "var(--text-muted)", textAlign: "center" }}>
