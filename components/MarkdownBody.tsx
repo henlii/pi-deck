@@ -9,6 +9,7 @@ import { useTheme } from "@/hooks/useTheme";
 import { copyText } from "@/lib/clipboard";
 import { resolveLocalFileHref } from "@/lib/file-links";
 import { markdownRehypePlugins, markdownRemarkPlugins } from "@/lib/markdown";
+import { useI18n } from "@/lib/i18n";
 
 interface MarkdownBodyProps {
   children: string;
@@ -122,6 +123,7 @@ function normalizeDisplayMath(markdown: string): string {
 }
 
 function MermaidBlock({ code, isStreaming }: { code: string; isStreaming?: boolean }) {
+  const { t } = useI18n();
   const { isDark } = useTheme();
   const [showPreview, setShowPreview] = useState(false);
   const [svg, setSvg] = useState<string | null>(null);
@@ -171,10 +173,10 @@ function MermaidBlock({ code, isStreaming }: { code: string; isStreaming?: boole
     <button
       onClick={() => setShowPreview((v) => !v)}
       disabled={isStreaming}
-      title={isStreaming ? "Preview available after streaming" : (showPreview ? "Show Mermaid source" : "Preview Mermaid diagram")}
+      title={isStreaming ? t("markdown_previewAfterStreaming") : (showPreview ? t("markdown_showSource") : t("markdown_preview"))}
       className={["markdown-code-action", showPreview ? "is-active" : ""].filter(Boolean).join(" ")}
     >
-      {showPreview ? "Source" : "Preview"}
+      {showPreview ? t("markdown_source") : t("markdown_previewShort")}
     </button>
   );
 
@@ -184,9 +186,9 @@ function MermaidBlock({ code, isStreaming }: { code: string; isStreaming?: boole
 
   const body =
     failedKey === currentKey ? (
-      <div className="mermaid-block mermaid-block-error">Invalid Mermaid diagram</div>
+      <div className="mermaid-block mermaid-block-error">{t("markdown_invalidMermaid")}</div>
     ) : !svg || renderedKey !== currentKey ? (
-      <div className="mermaid-block mermaid-block-loading" aria-label="Rendering Mermaid diagram" />
+      <div className="mermaid-block mermaid-block-loading" aria-label={t("markdown_renderingMermaid")} />
     ) : (
       <div
         className="mermaid-block"
@@ -206,6 +208,7 @@ function MermaidBlock({ code, isStreaming }: { code: string; isStreaming?: boole
 }
 
 function CodeBlock({ code, lang, headerAction }: { code: string; lang: string; headerAction?: ReactNode }) {
+  const { t } = useI18n();
   const { isDark } = useTheme();
   const [copied, setCopied] = useState(false);
 
@@ -226,7 +229,7 @@ function CodeBlock({ code, lang, headerAction }: { code: string; lang: string; h
             onClick={copy}
             className="markdown-code-action"
           >
-            {copied ? "copied" : "copy"}
+            {copied ? t("markdown_copied") : t("markdown_copy")}
           </button>
         </div>
       </div>

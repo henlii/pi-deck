@@ -12,19 +12,24 @@ import {
 import {
   buildSidebarTree,
   collectAllCollapseIds,
+  filterClosedProjects,
   filterSidebarTree,
   locateSessionInSidebarTree,
+  pickProjectRootAfterClose,
   type SidebarProjectNode,
   type SidebarWorktreeGroup,
 } from "./session-sidebar-model";
 import {
   loadSidebarPreferences,
   saveSidebarPreferences,
+  type ProjectAliases,
   type SidebarDisplayMode,
   type SidebarPreferences,
 } from "@/lib/ui-preferences";
 import { getSessionCapabilities } from "./session-capabilities";
 import { useProjectActions, useProjectIdentity } from "./ProjectProvider";
+import { ViewportDialog } from "./ui/ViewportDialog";
+import { useI18n } from "@/lib/i18n";
 
 declare global {
   interface Window {
@@ -70,17 +75,17 @@ function saveUnreadSessionIds(ids: Set<string>): void {
   }
 }
 
-function formatRelativeTime(dateStr: string): string {
+function formatRelativeTime(dateStr: string, t: ReturnType<typeof useI18n>["t"]): string {
   const date = new Date(dateStr);
   const now = new Date();
   const diff = now.getTime() - date.getTime();
   const mins = Math.floor(diff / 60000);
   const hours = Math.floor(diff / 3600000);
   const days = Math.floor(diff / 86400000);
-  if (mins < 1) return "just now";
-  if (mins < 60) return `${mins}m ago`;
-  if (hours < 24) return `${hours}h ago`;
-  if (days < 7) return `${days}d ago`;
+  if (mins < 1) return t("sidebar_justNow");
+  if (mins < 60) return t("sidebar_minutesAgo", { count: mins });
+  if (hours < 24) return t("sidebar_hoursAgo", { count: hours });
+  if (days < 7) return t("sidebar_daysAgo", { count: days });
   return date.toLocaleDateString();
 }
 
@@ -254,6 +259,8 @@ function SidebarIconButton({
   hoverReveal = false,
   expanded,
   pressed,
+  haspopup,
+  buttonRef,
   children,
 }: {
   label: string;
@@ -270,6 +277,10 @@ function SidebarIconButton({
   hoverReveal?: boolean;
   expanded?: boolean;
   pressed?: boolean;
+  /** 弹出菜单语义（aria-haspopup），项目行三点菜单使用。 */
+  haspopup?: "menu" | boolean;
+  /** 触发按钮 ref：菜单关闭后焦点恢复用。 */
+  buttonRef?: React.Ref<HTMLButtonElement>;
   children: ReactNode;
 }) {
   const classes = ["sidebar-icon-btn"];
@@ -280,12 +291,14 @@ function SidebarIconButton({
   return (
     <button
       type="button"
+      ref={buttonRef}
       onClick={onClick}
       disabled={disabled}
       title={label}
       aria-label={label}
       aria-expanded={expanded}
       aria-pressed={pressed}
+      aria-haspopup={haspopup}
       className={classes.join(" ")}
     >
       {children}
@@ -420,6 +433,15 @@ const LayersIcon = ({ size = 10 }: { size?: number }) => (
   </svg>
 );
 
+/** 竖向三点（⋮）：项目行菜单触发图标。 */
+const MoreVerticalIcon = ({ size = 14 }: { size?: number }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+    <circle cx="12" cy="5" r="1.7" />
+    <circle cx="12" cy="12" r="1.7" />
+    <circle cx="12" cy="19" r="1.7" />
+  </svg>
+);
+
 /** 折叠 chevron：20×20 透明小按钮，旋转表示折叠态。 */
 function ChevronButton({ collapsed, label, onClick }: {
   collapsed: boolean;
@@ -451,18 +473,27 @@ function ChevronButton({ collapsed, label, onClick }: {
 // ── 主组件 ─────────────────────────────────────────────────────────────────
 
 export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSession, initialSessionId, skipInitialProjectSelection, onInitialRestoreDone, refreshKey, onSessionDeleted }: Props) {
+  const { t } = useI18n();
   const [allSessions, setAllSessions] = useState<SessionInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const { cwd: selectedCwd } = useProjectIdentity();
   const { setIdentity } = useProjectActions();
   const [homeDir, setHomeDir] = useState<string>("");
-  // 添加项目（自定义路径第二行面板；桌面端优先原生目录选择）
+  // 添加项目弹窗（ViewportDialog；原生目录选择仅在弹窗内填充输入，不直接提交）
   const [customPathOpen, setCustomPathOpen] = useState(false);
   const [customPathValue, setCustomPathValue] = useState("");
   const [customPathError, setCustomPathError] = useState<string | null>(null);
   const [customPathValidating, setCustomPathValidating] = useState(false);
   const customPathInputRef = useRef<HTMLInputElement>(null);
+  // 桌面端原生目录选择器可用性（仅客户端探测，避免 SSR 水合不一致）
+  const [desktopPickerAvailable, setDesktopPickerAvailable] = useState(false);
+  // 项目行三点菜单：同一时刻仅一个打开（root 标识）
+  const [openProjectMenuRoot, setOpenProjectMenuRoot] = useState<string | null>(null);
+  // 编辑项目弹窗：目标项目根 + 名称草稿（打开时由 alias/路径显示名初始化）
+  const [editProjectRoot, setEditProjectRoot] = useState<string | null>(null);
+  const [editProjectValue, setEditProjectValue] = useState("");
+  const editProjectInputRef = useRef<HTMLInputElement>(null);
   // Worktree 管理状态（仅作用于当前选中项目）
   const [worktreeState, setWorktreeState] = useState<WorktreeState | null>(null);
   const [wtNewForProject, setWtNewForProject] = useState<string | null>(null);
@@ -506,6 +537,12 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   const displayMode = prefs.displayMode;
   const collapsedProjectRoots = useMemo(() => new Set(prefs.collapsedProjectRoots), [prefs.collapsedProjectRoots]);
   const collapsedWorktreePaths = useMemo(() => new Set(prefs.collapsedWorktreePaths), [prefs.collapsedWorktreePaths]);
+  // 已关闭项目集合：仅影响侧栏可见性与自动选择，绝不触碰会话/目录/Git 数据
+  const closedRoots = useMemo(() => new Set(prefs.closedProjectRoots), [prefs.closedProjectRoots]);
+
+  useEffect(() => {
+    setDesktopPickerAvailable(typeof window !== "undefined" && Boolean(window.piDesktop?.selectDirectory));
+  }, []);
 
   const loadSessions = useCallback(async (showLoading = false) => {
     try {
@@ -686,16 +723,25 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
       onInitialRestoreDone?.();
     }
     if (selectedCwd === null) {
+      // 已关闭项目不参与自动选择：全部关闭时保持空工作区，而不是复活已关闭项目。
       const projects = getRecentProjects(allSessions);
-      if (projects.length > 0) selectCwd(projects[0]);
+      const next = projects.find((root) => !closedRoots.has(root));
+      if (next) selectCwd(next);
     }
-  }, [allSessions, selectedCwd, initialSessionId, skipInitialProjectSelection, onSelectSession, onInitialRestoreDone, selectCwd]);
+  }, [allSessions, selectedCwd, initialSessionId, skipInitialProjectSelection, onSelectSession, onInitialRestoreDone, selectCwd, closedRoots]);
 
   const closeCustomPathPanel = useCallback(() => {
     setCustomPathOpen(false);
     setCustomPathValue("");
     setCustomPathError(null);
   }, []);
+
+  /** 重新打开已关闭项目：仅移除关闭标记，不触碰任何项目数据。 */
+  const restoreClosedProject = useCallback((root: string) => {
+    updatePrefs((prev) => prev.closedProjectRoots.includes(root)
+      ? { ...prev, closedProjectRoots: prev.closedProjectRoots.filter((item) => item !== root) }
+      : prev);
+  }, [updatePrefs]);
 
   const commitCustomPath = useCallback(async (candidate?: string) => {
     const path = (candidate ?? customPathValue).trim();
@@ -714,51 +760,59 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
         setCustomPathError(data.error ?? `HTTP ${res.status}`);
         return;
       }
-      selectCwd(data.cwd ?? path);
+      const resolvedCwd = data.cwd ?? path;
+      // 重复添加：已打开项目仅切换选中；已关闭项目移除关闭标记后恢复。
+      const root = projectRootFor(resolvedCwd) ?? resolvedCwd;
+      restoreClosedProject(root);
+      selectCwd(resolvedCwd, root);
       closeCustomPathPanel();
     } catch (e) {
       setCustomPathError(e instanceof Error ? e.message : String(e));
     } finally {
       setCustomPathValidating(false);
     }
-  }, [customPathValue, customPathValidating, selectCwd, closeCustomPathPanel]);
+  }, [customPathValue, customPathValidating, projectRootFor, restoreClosedProject, selectCwd, closeCustomPathPanel]);
 
-  const handleCustomPathClick = useCallback(async () => {
+  /** 添加项目按钮：总是打开弹窗，不直接拉起原生目录选择器。 */
+  const openAddProjectDialog = useCallback(() => {
+    setCustomPathError(null);
+    setCustomPathOpen(true);
+  }, []);
+
+  /** 弹窗内「选择目录」：仅调用原生选择器填充输入框，不直接提交。 */
+  const handlePickDirectory = useCallback(async () => {
     const desktop = window.piDesktop;
-    if (!desktop) {
-      setCustomPathOpen(true);
-      setCustomPathError(null);
-      setTimeout(() => customPathInputRef.current?.focus(), 0);
-      return;
-    }
-
+    if (!desktop) return;
     try {
       setCustomPathError(null);
       const path = await desktop.selectDirectory();
-      if (path === null) return;
-
-      setCustomPathValue(path);
-      setCustomPathOpen(true);
-      await commitCustomPath(path);
+      if (path !== null) setCustomPathValue(path);
     } catch (e) {
-      setCustomPathOpen(true);
       setCustomPathError(e instanceof Error ? e.message : String(e));
-      setTimeout(() => customPathInputRef.current?.focus(), 0);
     }
-  }, [commitCustomPath]);
+  }, []);
 
   const handleDefaultCwd = useCallback(async () => {
+    if (customPathValidating) return;
+    setCustomPathValidating(true);
+    setCustomPathError(null);
     try {
       const res = await fetch("/api/default-cwd", { method: "POST" });
-      const data = await res.json() as { cwd?: string; error?: string };
-      if (data.cwd) {
-        selectCwd(data.cwd);
-        closeCustomPathPanel();
+      const data = await res.json().catch(() => ({})) as { cwd?: string; error?: string };
+      if (!res.ok || data.error || !data.cwd) {
+        setCustomPathError(data.error ?? `HTTP ${res.status}`);
+        return;
       }
-    } catch {
-      // ignore
+      const root = projectRootFor(data.cwd) ?? data.cwd;
+      restoreClosedProject(root);
+      selectCwd(data.cwd, root);
+      closeCustomPathPanel();
+    } catch (e) {
+      setCustomPathError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setCustomPathValidating(false);
     }
-  }, [selectCwd, closeCustomPathPanel]);
+  }, [customPathValidating, projectRootFor, restoreClosedProject, selectCwd, closeCustomPathPanel]);
 
   const handleCreateWorktree = useCallback(async () => {
     const branch = wtNewBranch.trim();
@@ -876,11 +930,17 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     () => buildSidebarTree(allSessions, { selectedCwd, selectedProjectRoot: selectedProject, knownWorktrees }),
     [allSessions, selectedCwd, selectedProject, knownWorktrees],
   );
+  // 已关闭项目先从树中隐藏（纯 UI 过滤，不删数据），再进入搜索管线。
+  const openTree = useMemo(
+    () => filterClosedProjects(sidebarTree, closedRoots),
+    [sidebarTree, closedRoots],
+  );
   const normalizedSessionQuery = normalizeSessionQuery(sessionQuery);
   const searchActive = normalizedSessionQuery.length > 0;
+  // 项目 alias 参与搜索：命中 alias 与命中根路径同语义（保留整个项目）。
   const visibleTree = useMemo(
-    () => filterSidebarTree(sidebarTree, normalizedSessionQuery),
-    [sidebarTree, normalizedSessionQuery],
+    () => filterSidebarTree(openTree, normalizedSessionQuery, prefs.projectAliases),
+    [openTree, normalizedSessionQuery, prefs.projectAliases],
   );
 
   // 选中或 URL 恢复会话时自动展开 project/worktree/session 三级祖先，
@@ -971,18 +1031,64 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
       : prev);
   }, [selectCwd, updatePrefs]);
 
+  /**
+   * 关闭项目：仅把 root 写入 UI 偏好并从侧栏隐藏——绝不删除目录、会话、
+   * AgentSession、worktree 或 Git 数据；重新添加同路径项目即可恢复。
+   */
+  const handleCloseProject = useCallback((root: string) => {
+    setOpenProjectMenuRoot(null);
+    const nextClosedRoots = new Set(prefs.closedProjectRoots);
+    nextClosedRoots.add(root);
+    updatePrefs((prev) => (prev.closedProjectRoots.includes(root)
+      ? prev
+      : { ...prev, closedProjectRoots: [...prev.closedProjectRoots, root] }));
+    // 关闭当前项目：切换到下一个未关闭项目；无剩余则置空 cwd 并回到
+    // 新会话/空工作区，避免继续显示已关闭项目的当前会话。
+    if (selectedProject === root) {
+      const next = pickProjectRootAfterClose(sidebarTree, root, nextClosedRoots);
+      if (next) {
+        selectCwd(next, next);
+      } else {
+        selectCwd(null);
+        onNewSession?.();
+      }
+    }
+  }, [prefs.closedProjectRoots, selectedProject, sidebarTree, updatePrefs, selectCwd, onNewSession]);
+
+  /** 打开编辑项目弹窗：名称初值为 alias 或路径显示名。 */
+  const handleOpenEditProject = useCallback((root: string) => {
+    setOpenProjectMenuRoot(null);
+    setEditProjectValue(prefs.projectAliases[root] ?? displayCwd(root, homeDir));
+    setEditProjectRoot(root);
+  }, [prefs.projectAliases, homeDir]);
+
+  /** 保存项目 alias：与路径显示名相同则清除 alias，回到默认显示。 */
+  const handleSaveProjectAlias = useCallback(() => {
+    if (!editProjectRoot) return;
+    const name = editProjectValue.trim();
+    if (!name) return;
+    const root = editProjectRoot;
+    setEditProjectRoot(null);
+    updatePrefs((prev) => {
+      const nextAliases = { ...prev.projectAliases };
+      if (name === displayCwd(root, homeDir)) delete nextAliases[root];
+      else nextAliases[root] = name;
+      return { ...prev, projectAliases: nextAliases };
+    });
+  }, [editProjectRoot, editProjectValue, homeDir, updatePrefs]);
+
   const setDisplayMode = useCallback((mode: SidebarDisplayMode) => {
     updatePrefs((prev) => (prev.displayMode === mode ? prev : { ...prev, displayMode: mode }));
   }, [updatePrefs]);
 
   const collapseAll = useCallback(() => {
-    const ids = collectAllCollapseIds(sidebarTree);
+    const ids = collectAllCollapseIds(openTree);
     updatePrefs((prev) => ({
       ...prev,
       collapsedProjectRoots: ids.projectRoots,
       collapsedWorktreePaths: ids.worktreePaths,
     }));
-  }, [sidebarTree, updatePrefs]);
+  }, [openTree, updatePrefs]);
 
   const expandAll = useCallback(() => {
     updatePrefs((prev) => (prev.collapsedProjectRoots.length === 0 && prev.collapsedWorktreePaths.length === 0
@@ -998,14 +1104,14 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     const state = worktreeState && worktreeState.projectRoot === projectRoot ? worktreeState : null;
     const canManage = Boolean(state?.isGit && state.isTopLevel);
     const createHint = canManage
-      ? "New worktree for this project"
+      ? t("sidebar_createWorktree")
       : worktreeLoading
-        ? "Checking worktrees for this directory…"
+        ? t("sidebar_checkingWorktree")
         : state?.isGit
-          ? "Open the repository root to manage worktrees."
-          : "Worktrees are available in Git repository roots.";
+          ? t("sidebar_worktreeOpenRoot")
+          : t("sidebar_worktreeGitOnly");
     return { canManage, createHint, busy: wtBusy };
-  }, [selectedProject, selectedCwd, worktreeState, worktreeLoading, wtBusy]);
+  }, [selectedProject, selectedCwd, worktreeState, worktreeLoading, wtBusy, t]);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
@@ -1021,21 +1127,21 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
           <PiWebTitle />
           <div className="sidebar-toolbar" style={{ display: "flex", alignItems: "center", gap: 6 }}>
             <SidebarIconButton
-              label="Add project directory…"
-              onClick={() => void handleCustomPathClick()}
+              label={t("sidebar_addProject")}
+              onClick={openAddProjectDialog}
               active={customPathOpen}
             >
               <FolderPlusIcon size={18} />
             </SidebarIconButton>
             <SidebarIconButton
-              label={selectedCwd ? `New session in ${displayCwd(selectedCwd, homeDir)}` : "Select a project first"}
+              label={selectedCwd ? t("sidebar_newSessionIn", { project: displayCwd(selectedCwd, homeDir) }) : t("sidebar_selectProject")}
               disabled={!selectedCwd}
               onClick={handleNewSession}
             >
               <ChatPlusIcon size={18} />
             </SidebarIconButton>
             <SidebarIconButton
-              label="Search sessions"
+              label={t("sidebar_searchSessions")}
               active={searchOpen}
               expanded={searchOpen}
               onClick={toggleSearch}
@@ -1044,7 +1150,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
             </SidebarIconButton>
             <div ref={displayMenuRef} style={{ position: "relative" }}>
               <SidebarIconButton
-                label="Display options"
+                label={t("sidebar_displayOptions")}
                 active={displayMenuOpen}
                 expanded={displayMenuOpen}
                 onClick={() => setDisplayMenuOpen((open) => !open)}
@@ -1068,29 +1174,29 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
               >
                 <div onKeyDown={(e) => { if (e.key === "Escape") setDisplayMenuOpen(false); }}>
                   <DisplayMenuItem
-                    label="Standard"
+                    label={t("sidebar_standard")}
                     checked={displayMode === "standard"}
                     onClick={() => { setDisplayMode("standard"); setDisplayMenuOpen(false); }}
                   />
                   <DisplayMenuItem
-                    label="Compact"
+                    label={t("sidebar_compact")}
                     checked={displayMode === "compact"}
                     onClick={() => { setDisplayMode("compact"); setDisplayMenuOpen(false); }}
                   />
                   <div style={{ borderTop: "1px solid var(--border)", margin: "2px 0" }} />
                   <DisplayMenuItem
-                    label="Collapse all"
+                    label={t("sidebar_collapseAll")}
                     onClick={() => { collapseAll(); setDisplayMenuOpen(false); }}
                   />
                   <DisplayMenuItem
-                    label="Expand all"
+                    label={t("sidebar_expandAll")}
                     onClick={() => { expandAll(); setDisplayMenuOpen(false); }}
                   />
                 </div>
               </AnimatedDropdown>
             </div>
             <SidebarIconButton
-              label="Refresh session list"
+              label={t("sidebar_refresh")}
               done={sessionRefreshDone}
               onClick={() => loadSessions(false)}
             >
@@ -1120,8 +1226,8 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                   }
                 }
               }}
-              placeholder="Search all sessions…"
-              aria-label="Search sessions"
+              placeholder={t("sidebar_searchPlaceholder")}
+              aria-label={t("sidebar_searchSessions")}
               style={{
                 width: "100%", height: 30, boxSizing: "border-box", padding: "0 28px 0 29px",
                 border: "1px solid var(--border)", borderRadius: 7,
@@ -1133,8 +1239,8 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
               <button
                 type="button"
                 onClick={() => setSessionQuery("")}
-                aria-label="Clear session search"
-                title="Clear search"
+                aria-label={t("sidebar_clearSearch")}
+                title={t("sidebar_clearSearch")}
                 style={{
                   position: "absolute", right: 4, top: "50%", transform: "translateY(-50%)",
                   width: 22, height: 22, display: "flex", alignItems: "center", justifyContent: "center",
@@ -1148,75 +1254,13 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
           </div>
         )}
 
-        {/* 添加项目行：自定义路径（桌面端 handleCustomPathClick 直接弹原生目录选择） */}
-        {customPathOpen && (
-          <div style={{ marginTop: 8 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <input
-                ref={customPathInputRef}
-                value={customPathValue}
-                onChange={(e) => {
-                  setCustomPathValue(e.target.value);
-                  setCustomPathError(null);
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    void commitCustomPath();
-                  }
-                  if (e.key === "Escape") closeCustomPathPanel();
-                }}
-                placeholder="/path/to/project"
-                aria-label="Project directory path"
-                style={{
-                  flex: 1,
-                  minWidth: 0,
-                  height: 30,
-                  fontSize: 11,
-                  fontFamily: "var(--font-mono)",
-                  padding: "0 8px",
-                  border: "1px solid var(--accent)",
-                  borderRadius: 6,
-                  outline: "none",
-                  background: "var(--bg)",
-                  color: "var(--text)",
-                  boxSizing: "border-box",
-                }}
-              />
-              <SidebarIconButton label="Use default directory" onClick={() => void handleDefaultCwd()}>
-                <HomeIcon size={15} />
-              </SidebarIconButton>
-              <SidebarIconButton
-                label={customPathValidating ? "Checking…" : "Open path"}
-                disabled={customPathValidating || !customPathValue.trim()}
-                onClick={() => void commitCustomPath()}
-              >
-                <CheckIcon size={15} />
-              </SidebarIconButton>
-              <SidebarIconButton label="Cancel" onClick={closeCustomPathPanel}>
-                <XIcon size={14} />
-              </SidebarIconButton>
-            </div>
-            {customPathError && (
-              <div style={{
-                marginTop: 5,
-                color: "#dc2626",
-                fontSize: 11,
-                lineHeight: 1.35,
-                overflowWrap: "anywhere",
-              }}>
-                {customPathError}
-              </div>
-            )}
-          </div>
-        )}
       </div>
 
       {/* 项目树：Project → (非主 Worktree) → Session → child */}
       <div ref={sessionListRef} style={{ flex: "1 1 auto", overflowY: "auto", padding: "2px 0", minHeight: 80 }}>
         {loading && (
           <div style={{ padding: "16px 14px", color: "var(--text-muted)", fontSize: 12 }}>
-            Loading...
+            {t("sidebar_loading")}
           </div>
         )}
         {error && (
@@ -1227,13 +1271,13 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
         {!loading && !error && visibleTree.length === 0 && (
           searchActive ? (
             <div style={{ padding: "18px 14px", color: "var(--text-muted)", fontSize: 12, lineHeight: 1.55 }}>
-              No sessions match “{sessionQuery.trim()}”
+              {t("sidebar_searchEmpty", { query: sessionQuery.trim() })}
             </div>
           ) : (
             <div style={{ padding: "18px 14px", color: "var(--text-muted)", fontSize: 12, lineHeight: 1.7 }}>
-              No projects yet.
+              {t("sidebar_noProjects")}
               <div style={{ color: "var(--text-dim)", fontSize: 11 }}>
-                Add a project directory with the folder button above.
+                {t("sidebar_addProject")}
               </div>
             </div>
           )
@@ -1244,6 +1288,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
             project={project}
             homeDir={homeDir}
             displayMode={displayMode}
+            projectAliases={prefs.projectAliases}
             selectedCwd={selectedCwd}
             selectedProject={selectedProject}
             selectedSessionId={selectedSessionId}
@@ -1258,6 +1303,10 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
             onSelectProject={handleSelectProject}
             onSelectWorktree={handleSelectWorktree}
             onSelectSession={handleSelectSessionFromList}
+            menuOpen={openProjectMenuRoot === project.root}
+            onMenuOpenChange={(open) => setOpenProjectMenuRoot(open ? project.root : null)}
+            onEditProject={() => handleOpenEditProject(project.root)}
+            onCloseProject={() => handleCloseProject(project.root)}
             onRenamed={loadSessions}
             onSessionDeleted={(id) => {
               onSessionDeleted?.(id);
@@ -1291,9 +1340,205 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
            />
          ))}
        </div>
-     </div>
-   );
- }
+
+      {/* 添加项目弹窗：总是经 ViewportDialog，不直接拉起原生选择器；
+          「选择目录」仅填充输入，提交仍走 /api/cwd/validate。 */}
+      <ViewportDialog
+        open={customPathOpen}
+        onClose={closeCustomPathPanel}
+        title={t("sidebar_addProjectDialog")}
+        width={440}
+        closeLabel={t("dialog_close")}
+        initialFocusRef={customPathInputRef}
+        description={t("sidebar_addProjectDescription")}
+        actions={
+          <>
+            <DialogButton onClick={closeCustomPathPanel}>{t("sidebar_cancel")}</DialogButton>
+            <DialogButton
+              primary
+              disabled={customPathValidating || !customPathValue.trim()}
+              onClick={() => void commitCustomPath()}
+            >
+              {customPathValidating ? t("sidebar_validating") : t("sidebar_add")}
+            </DialogButton>
+          </>
+        }
+      >
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            void commitCustomPath();
+          }}
+        >
+          <label
+            htmlFor="add-project-path"
+            style={{ display: "block", fontSize: 12, fontWeight: 600, color: "var(--text)", marginBottom: 6 }}
+          >
+            {t("sidebar_projectPath")}
+          </label>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <input
+              id="add-project-path"
+              ref={customPathInputRef}
+              value={customPathValue}
+              onChange={(e) => {
+                setCustomPathValue(e.target.value);
+                setCustomPathError(null);
+              }}
+              placeholder="/path/to/project"
+              aria-label={t("sidebar_projectPath")}
+              autoComplete="off"
+              spellCheck={false}
+              style={{
+                flex: 1,
+                minWidth: 0,
+                height: 32,
+                fontSize: 12,
+                fontFamily: "var(--font-mono)",
+                padding: "0 10px",
+                border: "1px solid var(--border)",
+                borderRadius: 7,
+                outline: "none",
+                background: "var(--bg-panel)",
+                color: "var(--text)",
+                boxSizing: "border-box",
+              }}
+            />
+            {desktopPickerAvailable && (
+              <DialogButton onClick={() => void handlePickDirectory()}>
+                {t("sidebar_selectDirectory")}
+              </DialogButton>
+            )}
+          </div>
+          {customPathError && (
+            <div role="alert" style={{ marginTop: 8, color: "#dc2626", fontSize: 12, lineHeight: 1.45, overflowWrap: "anywhere" }}>
+              {customPathError}
+            </div>
+          )}
+          {/* 次级动作：创建默认目录（~/pi-cwd-YYYYMMDD），同样只在弹窗内发起 */}
+          <div style={{
+            marginTop: 14,
+            paddingTop: 12,
+            borderTop: "1px solid var(--border)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 8,
+          }}>
+            <span style={{ fontSize: 11.5, color: "var(--text-dim)" }}>{t("sidebar_noExistingDirectory")}</span>
+            <DialogButton disabled={customPathValidating} onClick={() => void handleDefaultCwd()}>
+              <HomeIcon size={13} />
+              {t("sidebar_createDefaultDirectory")}
+            </DialogButton>
+          </div>
+        </form>
+      </ViewportDialog>
+
+      {/* 编辑项目弹窗：仅修改 Pi Deck 显示名 alias，不动 Pi schema/目录/Git */}
+      <ViewportDialog
+        open={editProjectRoot !== null}
+        onClose={() => setEditProjectRoot(null)}
+        title={t("sidebar_editProject")}
+        width={440}
+        closeLabel={t("dialog_close")}
+        initialFocusRef={editProjectInputRef}
+        description={editProjectRoot
+          ? t("sidebar_editProjectDescription", { path: editProjectRoot })
+          : undefined}
+        actions={
+          <>
+            <DialogButton onClick={() => setEditProjectRoot(null)}>{t("sidebar_cancel")}</DialogButton>
+            <DialogButton
+              primary
+              disabled={!editProjectValue.trim()}
+              onClick={handleSaveProjectAlias}
+            >
+              {t("sidebar_save")}
+            </DialogButton>
+          </>
+        }
+      >
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            handleSaveProjectAlias();
+          }}
+        >
+          <label
+            htmlFor="edit-project-name"
+            style={{ display: "block", fontSize: 12, fontWeight: 600, color: "var(--text)", marginBottom: 6 }}
+          >
+            {t("sidebar_projectName")}
+          </label>
+          <input
+            id="edit-project-name"
+            ref={editProjectInputRef}
+            value={editProjectValue}
+            onChange={(e) => setEditProjectValue(e.target.value)}
+            placeholder={t("sidebar_projectName")}
+            aria-label={t("sidebar_projectName")}
+            aria-invalid={!editProjectValue.trim()}
+            autoComplete="off"
+            spellCheck={false}
+            style={{
+              width: "100%",
+              height: 32,
+              fontSize: 12.5,
+              padding: "0 10px",
+              border: "1px solid var(--border)",
+              borderRadius: 7,
+              outline: "none",
+              background: "var(--bg-panel)",
+              color: "var(--text)",
+              boxSizing: "border-box",
+            }}
+          />
+          {!editProjectValue.trim() && (
+            <div style={{ marginTop: 6, fontSize: 11.5, color: "#dc2626" }}>{t("sidebar_projectNameRequired")}</div>
+          )}
+        </form>
+      </ViewportDialog>
+      </div>
+    );
+  }
+
+// ── 弹窗按钮 ──────────────────────────────────────────────────────────────
+
+/** 弹窗按钮：primary 为主操作（accent 填充白字），其余为次级（描边）。 */
+function DialogButton({ primary = false, disabled = false, onClick, children }: {
+  primary?: boolean;
+  disabled?: boolean;
+  onClick: (e: React.MouseEvent) => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 6,
+        height: 30,
+        padding: "0 14px",
+        flexShrink: 0,
+        background: primary ? "var(--accent)" : "var(--bg)",
+        border: primary ? "none" : "1px solid var(--border)",
+        borderRadius: 7,
+        color: primary ? "#fff" : "var(--text-muted)",
+        cursor: disabled ? "not-allowed" : "pointer",
+        fontSize: 12,
+        fontWeight: primary ? 600 : 500,
+        opacity: disabled ? 0.55 : 1,
+        whiteSpace: "nowrap",
+      }}
+    >
+      {children}
+    </button>
+  );
+}
 
 // ── 显示模式菜单项 ─────────────────────────────────────────────────────────
 
@@ -1324,6 +1569,155 @@ function DisplayMenuItem({ label, checked, onClick }: { label: string; checked?:
   );
 }
 
+// ── 项目行三点菜单 ─────────────────────────────────────────────────────────
+
+/**
+ * 项目行竖向三点菜单：仅「编辑项目」「关闭项目」两项，均带图标。
+ * 同一时刻仅一个菜单打开（父组件以 root 标识控制）；Escape 与点击外部关闭，
+ * 关闭后焦点恢复触发按钮；桌面行 hover/focus-within 渐进显露，粗指针常显。
+ * 本轮不提供右键菜单。
+ */
+function ProjectRowMenu({ open, onOpenChange, projectName, onEdit, onClose }: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  /** 当前显示名（alias 或路径显示名），仅用于 aria 文案。 */
+  projectName: string;
+  onEdit: () => void;
+  onClose: () => void;
+}) {
+  const { t } = useI18n();
+  const wrapperRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  const closeMenu = useCallback((restoreFocus: boolean) => {
+    onOpenChange(false);
+    if (restoreFocus) triggerRef.current?.focus();
+  }, [onOpenChange]);
+
+  // 点击外部关闭（不抢焦点：点击目标自然获得焦点）
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (wrapperRef.current && !wrapperRef.current.contains(e.target as Node)) {
+        onOpenChange(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open, onOpenChange]);
+
+  // 打开后焦点移入第一个菜单项（菜单键盘可达；Esc 由 wrapper onKeyDown 拦截）
+  useEffect(() => {
+    if (!open) return;
+    const frame = requestAnimationFrame(() => {
+      menuRef.current?.querySelector<HTMLElement>("[role='menuitem']")?.focus();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [open]);
+
+  return (
+    <div
+      ref={wrapperRef}
+      style={{ position: "relative", flexShrink: 0, display: "flex" }}
+      onClick={(e) => e.stopPropagation()}
+      onKeyDown={(e) => {
+        if (e.key === "Escape" && open) {
+          e.stopPropagation();
+          e.preventDefault();
+          closeMenu(true);
+        }
+      }}
+    >
+      <SidebarIconButton
+        label={t("sidebar_projectMenuLabel", { project: projectName })}
+        active={open}
+        expanded={open}
+        haspopup="menu"
+        hoverReveal
+        buttonRef={triggerRef}
+        onClick={(e) => {
+          e.stopPropagation();
+          onOpenChange(!open);
+        }}
+      >
+        <MoreVerticalIcon size={14} />
+      </SidebarIconButton>
+      <AnimatedDropdown
+        open={open}
+        style={{
+          position: "absolute",
+          top: "calc(100% + 4px)",
+          right: 0,
+          zIndex: 100,
+          background: "var(--bg)",
+          border: "1px solid var(--border)",
+          borderRadius: 8,
+          boxShadow: "0 6px 20px rgba(0,0,0,0.10)",
+          overflow: "hidden",
+          minWidth: 148,
+        }}
+      >
+        <div ref={menuRef} role="menu" aria-label={t("sidebar_projectMenuLabel", { project: projectName })}>
+          <ProjectMenuItem
+            icon={<PencilIcon size={13} />}
+            label={t("sidebar_editProject")}
+            onClick={() => { closeMenu(true); onEdit(); }}
+          />
+          <ProjectMenuItem
+            icon={<XIcon size={13} />}
+            label={t("sidebar_closeProject")}
+            onClick={() => { closeMenu(true); onClose(); }}
+          />
+        </div>
+      </AnimatedDropdown>
+    </div>
+  );
+}
+
+function ProjectMenuItem({ icon, label, onClick }: { icon: ReactNode; label: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      role="menuitem"
+      onClick={onClick}
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        width: "100%",
+        padding: "7px 12px",
+        background: "var(--bg)",
+        border: "none",
+        color: "var(--text-muted)",
+        cursor: "pointer",
+        textAlign: "left",
+        fontSize: 12,
+        whiteSpace: "nowrap",
+      }}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.background = "var(--bg-hover)";
+        e.currentTarget.style.color = "var(--text)";
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.background = "var(--bg)";
+        e.currentTarget.style.color = "var(--text-muted)";
+      }}
+      onFocus={(e) => {
+        e.currentTarget.style.background = "var(--bg-hover)";
+        e.currentTarget.style.color = "var(--text)";
+      }}
+      onBlur={(e) => {
+        e.currentTarget.style.background = "var(--bg)";
+        e.currentTarget.style.color = "var(--text-muted)";
+      }}
+    >
+      <span style={{ display: "flex", flexShrink: 0, color: "var(--text-dim)" }} aria-hidden="true">{icon}</span>
+      {label}
+    </button>
+  );
+}
+
 // ── 项目分区（项目行 + 主仓会话 + 非主 worktree 分组） ──────────────────────
 
 interface WorktreeActions {
@@ -1337,6 +1731,7 @@ function ProjectSection({
   project,
   homeDir,
   displayMode,
+  projectAliases,
   selectedCwd,
   selectedProject,
   selectedSessionId,
@@ -1351,6 +1746,10 @@ function ProjectSection({
   onSelectProject,
   onSelectWorktree,
   onSelectSession,
+  menuOpen,
+  onMenuOpenChange,
+  onEditProject,
+  onCloseProject,
   onRenamed,
   onSessionDeleted,
   onToggleCollapse,
@@ -1371,6 +1770,7 @@ function ProjectSection({
   project: SidebarProjectNode;
   homeDir: string;
   displayMode: SidebarDisplayMode;
+  projectAliases: ProjectAliases;
   selectedCwd: string | null;
   selectedProject: string | null;
   selectedSessionId: string | null;
@@ -1385,6 +1785,10 @@ function ProjectSection({
   onSelectProject: (root: string) => void;
   onSelectWorktree: (path: string, projectRoot: string) => void;
   onSelectSession: (s: SessionInfo) => void;
+  menuOpen: boolean;
+  onMenuOpenChange: (open: boolean) => void;
+  onEditProject: () => void;
+  onCloseProject: () => void;
   onRenamed: () => void;
   onSessionDeleted: (id: string) => void;
   onToggleCollapse: (sessionId: string) => void;
@@ -1402,10 +1806,12 @@ function ProjectSection({
   onConfirmRemoveWorktree: (path: string) => void;
   onCancelRemoveWorktree: () => void;
 }) {
+  const { t } = useI18n();
   const isCurrentProject = selectedProject === project.root;
   const collapsed = isSessionNodeEffectivelyCollapsed(collapsedProjectRoots, project.root, searchActive);
   const hasSessions = project.mainTree.length > 0 || project.worktrees.some((group) => group.tree.length > 0);
-  const projectName = displayCwd(project.root, homeDir);
+  // 显示名优先 alias；title 仍保留真实 root 路径（见行 title 属性）。
+  const projectName = projectAliases[project.root] ?? displayCwd(project.root, homeDir);
 
   return (
     <div>
@@ -1428,7 +1834,7 @@ function ProjectSection({
       >
         <ChevronButton
           collapsed={collapsed}
-          label={collapsed ? `Expand project ${projectName}` : `Collapse project ${projectName}`}
+           label={collapsed ? t("sidebar_expandProjectNamed", { project: projectName }) : t("sidebar_collapseProjectNamed", { project: projectName })}
           onClick={(e) => {
             e.stopPropagation();
             onToggleProject(project.root);
@@ -1459,6 +1865,14 @@ function ProjectSection({
             <BranchPlusIcon size={14} />
           </SidebarIconButton>
         )}
+        {/* 三点菜单：worktree 按钮的 flex 邻居，互不遮挡 */}
+        <ProjectRowMenu
+          open={menuOpen}
+          onOpenChange={onMenuOpenChange}
+          projectName={projectName}
+          onEdit={onEditProject}
+          onClose={onCloseProject}
+        />
       </div>
 
       {!collapsed && (
@@ -1527,8 +1941,8 @@ function ProjectSection({
                   }
                   if (e.key === "Escape") onCancelCreateWorktree();
                 }}
-                placeholder="branch name"
-                aria-label="New worktree branch name"
+                placeholder={t("sidebar_branchName")}
+                aria-label={t("sidebar_branchName")}
                 style={{
                   flex: 1,
                   minWidth: 0,
@@ -1545,13 +1959,13 @@ function ProjectSection({
                 }}
               />
               <SidebarIconButton
-                label={worktreeActions.busy ? "Creating…" : "Create worktree"}
+                label={worktreeActions.busy ? t("sidebar_creating") : t("sidebar_createWorktreeAction")}
                 disabled={worktreeActions.busy || !wtNewBranch.trim()}
                 onClick={onSubmitCreateWorktree}
               >
                 <CheckIcon size={14} />
               </SidebarIconButton>
-              <SidebarIconButton label="Cancel" onClick={onCancelCreateWorktree}>
+              <SidebarIconButton label={t("sidebar_cancel")} onClick={onCancelCreateWorktree}>
                 <XIcon size={13} />
               </SidebarIconButton>
             </div>
@@ -1570,7 +1984,7 @@ function ProjectSection({
 
           {!hasSessions && project.worktrees.length === 0 && (
             <div style={{ padding: "2px 10px 6px 31px", color: "var(--text-dim)", fontSize: 11 }}>
-              No sessions yet
+              {t("sidebar_noSessionsYet")}
             </div>
           )}
         </div>
@@ -1626,6 +2040,7 @@ function WorktreeGroupSection({
   onConfirmRemove: () => void;
   onCancelRemove: () => void;
 }) {
+  const { t } = useI18n();
   const collapsed = isSessionNodeEffectivelyCollapsed(collapsedWorktreePaths, group.path, searchActive);
   const isCurrent = selectedCwd === group.path;
   const label = group.branch ?? displayCwd(group.path, homeDir);
@@ -1651,7 +2066,7 @@ function WorktreeGroupSection({
       >
         <ChevronButton
           collapsed={collapsed}
-          label={collapsed ? `Expand worktree ${label}` : `Collapse worktree ${label}`}
+           label={collapsed ? t("sidebar_expandWorktreeNamed", { name: label }) : t("sidebar_collapseWorktreeNamed", { name: label })}
           onClick={(e) => {
             e.stopPropagation();
             onToggleWorktree(group.path);
@@ -1671,7 +2086,7 @@ function WorktreeGroupSection({
         />
         {worktreeActions?.canManage && !confirmRemove && (
           <SidebarIconButton
-            label={`Remove worktree checkout ${group.path}; the branch is kept`}
+             label={t("sidebar_removeWorktreeAt", { path: group.path })}
             danger
             hoverReveal
             disabled={worktreeActions.busy}
@@ -1689,7 +2104,7 @@ function WorktreeGroupSection({
       {confirmRemove && (
         <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 8px 5px 30px", background: "rgba(239,68,68,0.06)" }}>
           <span style={{ flex: 1, minWidth: 0, fontSize: 11, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            Uncommitted changes. Force remove checkout?
+            {t("sidebar_dirtyWorktreeConfirm")}
           </span>
           <button
             type="button"
@@ -1697,14 +2112,14 @@ function WorktreeGroupSection({
             disabled={worktreeActions?.busy}
             style={{ padding: "3px 9px", background: "#ef4444", border: "none", borderRadius: 5, color: "#fff", fontSize: 11, fontWeight: 600, cursor: "pointer", flexShrink: 0 }}
           >
-            Force
+            {t("sidebar_forceRemove")}
           </button>
           <button
             type="button"
             onClick={onCancelRemove}
             style={{ padding: "3px 9px", background: "var(--bg-hover)", border: "1px solid var(--border)", borderRadius: 5, color: "var(--text-muted)", fontSize: 11, cursor: "pointer", flexShrink: 0 }}
           >
-            Cancel
+            {t("sidebar_cancel")}
           </button>
         </div>
       )}
@@ -1730,7 +2145,7 @@ function WorktreeGroupSection({
           ))}
           {group.tree.length === 0 && (
             <div style={{ padding: "2px 10px 5px 28px", color: "var(--text-dim)", fontSize: 11 }}>
-              No sessions
+              {t("sidebar_noSessions")}
             </div>
           )}
         </div>
@@ -1827,10 +2242,11 @@ function SessionTreeItem({
 }
 
 function RunningSessionIndicator({ size = 14 }: { size?: number }) {
+  const { t } = useI18n();
   return (
     <span
-      title="Agent running…"
-      aria-label="Agent running"
+      title={t("sidebar_running")}
+      aria-label={t("sidebar_running")}
       style={{
         width: size,
         height: size,
@@ -1864,10 +2280,11 @@ function RunningSessionIndicator({ size = 14 }: { size?: number }) {
 }
 
 function UnreadSessionIndicator({ size = 14 }: { size?: number }) {
+  const { t } = useI18n();
   return (
     <span
-      title="New activity"
-      aria-label="New session activity"
+      title={t("sidebar_activity")}
+      aria-label={t("sidebar_activity")}
       style={{
         width: size,
         height: size,
@@ -1919,6 +2336,7 @@ function SessionItem({
   onToggleCollapse?: () => void;
   displayMode: SidebarDisplayMode;
 }) {
+  const { t } = useI18n();
   const [hovered, setHovered] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState("");
@@ -1931,11 +2349,12 @@ function SessionItem({
   // 已有真实首消息时沿用内容标题，agent/run 由下方徽章补充，避免信息重复。
   const firstMessage = session.firstMessage.trim();
   const subagentFallback = session.subagent && (!firstMessage || firstMessage === "(no messages)")
-    ? `${session.subagent.agent ? `${session.subagent.agent} · ` : ""}run ${session.subagent.runIndex}`
+     ? `${session.subagent.agent ? `${session.subagent.agent} · ` : ""}${t("sidebar_runCount", { count: session.subagent.runIndex })}`
     : "";
+  const firstMessageLabel = firstMessage === "(no messages)" ? t("sidebar_noMessages") : session.firstMessage;
   const title = session.name
     || subagentFallback
-    || session.firstMessage.slice(0, 50)
+    || firstMessageLabel.slice(0, 50)
     || session.id.slice(0, 12);
 
   const startRename = useCallback((e: React.MouseEvent) => {
@@ -2030,7 +2449,7 @@ function SessionItem({
         /* ── Delete confirmation: same height, two flat buttons ── */
         <>
           <div style={{ flex: 1, minWidth: 0, fontSize: compact ? 11 : 12, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            Delete <span style={{ fontWeight: 600 }}>&ldquo;{title.slice(0, 22)}{title.length > 22 ? "…" : ""}&rdquo;</span>?
+            {t("sidebar_deleteSession")} <span style={{ fontWeight: 600 }}>&ldquo;{title.slice(0, 22)}{title.length > 22 ? "…" : ""}&rdquo;</span>?
           </div>
           <div style={{ display: "flex", gap: 5, flexShrink: 0 }}>
             <button
@@ -2045,7 +2464,7 @@ function SessionItem({
               }}
             >
               <TrashIcon size={11} />
-              Delete
+              {t("sidebar_deleteSession")}
             </button>
             <button
               onClick={handleDeleteCancel}
@@ -2058,7 +2477,7 @@ function SessionItem({
                 whiteSpace: "nowrap",
               }}
             >
-              Cancel
+              {t("sidebar_cancel")}
             </button>
           </div>
         </>
@@ -2074,7 +2493,7 @@ function SessionItem({
             if (e.key === "Escape") setRenaming(false);
           }}
           autoFocus
-          aria-label="Rename session"
+          aria-label={t("sidebar_renameSession")}
           style={{
             flex: 1,
             fontSize: compact ? 11 : 12,
@@ -2090,6 +2509,33 @@ function SessionItem({
       ) : (
         /* ── Normal view ── */
         <>
+          {/* 行首 gutter：child 折叠 chevron 位于 relation/状态/标题之前；
+              槽位常驻（无 child 留空）保证各行标题对齐。搜索期由
+              isSessionNodeEffectivelyCollapsed 强制展开；原生 button 支持
+              Enter/Space；粗指针命中区由 globals.css 媒体查询扩大。 */}
+          <span style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 20, height: 20, flexShrink: 0 }}>
+            {hasChildren && (
+              <button
+                type="button"
+                className="sidebar-chevron-btn"
+                onClick={(e) => { e.stopPropagation(); onToggleCollapse?.(); }}
+                title={collapsed ? t("sidebar_expandChild") : t("sidebar_collapseChild")}
+                aria-label={collapsed ? t("sidebar_expandChild") : t("sidebar_collapseChild")}
+                style={{
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  width: 20, height: 20, padding: 0, flexShrink: 0, position: "relative",
+                  background: "none", border: "none", borderRadius: 5,
+                  color: "var(--text-dim)", cursor: "pointer",
+                  transform: collapsed ? "rotate(-90deg)" : "none",
+                  transition: "transform 0.15s",
+                }}
+              >
+                <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <polyline points="2 3.5 5 6.5 8 3.5" />
+                </svg>
+              </button>
+            )}
+          </span>
           {/* 关系图标：fork 用分叉图标，subagent 用层叠图标，一眼可区分 */}
           {depth > 0 && relation === "subagent" && (
             <span style={{ display: "flex", flexShrink: 0, color: "var(--text-dim)" }} aria-hidden="true">
@@ -2123,7 +2569,7 @@ function SessionItem({
               {compact && !isRunning && isUnread && <UnreadSessionIndicator size={12} />}
               {compact && session.subagent && (
                 <span
-                  title={`Subagent session (read-only)${session.subagent.agent ? ` · agent: ${session.subagent.agent}` : ""} · run ${session.subagent.runIndex}`}
+                  title={`${t("sidebar_subagentReadOnly")}${session.subagent.agent ? ` · ${session.subagent.agent}` : ""} · ${t("sidebar_runCount", { count: session.subagent.runIndex })}`}
                   style={{ display: "flex", flexShrink: 0, color: "var(--text-muted)" }}
                 >
                   <LayersIcon size={9} />
@@ -2137,27 +2583,27 @@ function SessionItem({
                 ) : isUnread ? (
                   <UnreadSessionIndicator />
                 ) : (
-                  <span title={session.modified}>{formatRelativeTime(session.modified)}</span>
+                  <span title={session.modified}>{formatRelativeTime(session.modified, t)}</span>
                 )}
-                <span>{session.messageCount} msgs</span>
+                <span>{t("sidebar_messagesCount", { count: session.messageCount })}</span>
                 {/* subagent 徽章：agent 名 + run 次序 + 只读语义，克制但明确 */}
                 {session.subagent && (
                   <span
-                    title={`Subagent session (read-only)${session.subagent.agent ? ` · agent: ${session.subagent.agent}` : ""} · run ${session.subagent.runIndex} · started by this session's subagent tool call`}
+                    title={`${t("sidebar_subagentReadOnly")}${session.subagent.agent ? ` · ${session.subagent.agent}` : ""} · ${t("sidebar_runCount", { count: session.subagent.runIndex })}`}
                     style={{ display: "flex", alignItems: "center", gap: 3, color: "var(--text-muted)", minWidth: 0, overflow: "hidden" }}
                   >
                     <LayersIcon size={9} />
                     <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontFamily: "var(--font-mono)", fontSize: 10 }}>
-                      {session.subagent.agent ? `${session.subagent.agent} · ` : ""}run {session.subagent.runIndex}
+                      {session.subagent.agent ? `${session.subagent.agent} · ` : ""}{t("sidebar_runCount", { count: session.subagent.runIndex })}
                     </span>
                     <span style={{ flexShrink: 0, fontSize: 9, padding: "0 4px", borderRadius: 999, border: "1px solid var(--border)", color: "var(--text-dim)", lineHeight: 1.5 }}>
-                      read-only
+                      {t("sidebar_readOnly")}
                     </span>
                   </span>
                 )}
                 {session.worktreeBranch && (
                   <span
-                    title={`Worktree: ${session.cwd}`}
+                    title={t("sidebar_worktreeTooltip", { path: session.cwd })}
                     style={{ display: "flex", alignItems: "center", gap: 3, color: "var(--accent)", minWidth: 0, overflow: "hidden" }}
                   >
                     <BranchIcon size={9} />
@@ -2168,39 +2614,18 @@ function SessionItem({
             )}
           </div>
 
-          {/* Collapse toggle — always visible when has children */}
-          {hasChildren && (
-            <button
-              onClick={(e) => { e.stopPropagation(); onToggleCollapse?.(); }}
-              title={collapsed ? "Expand child sessions" : "Collapse child sessions"}
-              aria-label={collapsed ? "Expand child sessions" : "Collapse child sessions"}
-              style={{
-                display: "flex", alignItems: "center", justifyContent: "center",
-                width: 20, height: 20, padding: 0, flexShrink: 0,
-                background: "none", border: "none",
-                color: "var(--text-dim)", cursor: "pointer",
-                transform: collapsed ? "rotate(-90deg)" : "none",
-                transition: "transform 0.15s",
-              }}
-            >
-              <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                <polyline points="2 3.5 5 6.5 8 3.5" />
-              </svg>
-            </button>
-          )}
-
           {/* 行内操作：恒渲染保证触屏可发现、键盘可 Tab 到达；
               细指针下由 .sidebar-row hover/focus-within 渐进显露，
               粗指针设备常显（globals.css 媒体查询）；只读会话不提供写操作入口 */}
           {(capabilities.canRename || capabilities.canDelete) && (
             <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
               {capabilities.canRename && (
-                <SidebarIconButton label="Rename" hoverReveal onClick={startRename}>
+                <SidebarIconButton label={t("sidebar_renameSession")} hoverReveal onClick={startRename}>
                   <PencilIcon size={13} />
                 </SidebarIconButton>
               )}
               {capabilities.canDelete && (
-                <SidebarIconButton label="Delete" danger hoverReveal onClick={handleDeleteClick}>
+                <SidebarIconButton label={t("sidebar_deleteSession")} danger hoverReveal onClick={handleDeleteClick}>
                   <TrashIcon size={13} />
                 </SidebarIconButton>
               )}

@@ -28,6 +28,11 @@ interface SettingsViewProps {
   onPluginsReloaded?: () => void;
 }
 
+/** 设置页 id → 本地化标签 key：nav 按钮、对话框标题与 section aria-label 共用同一映射。 */
+function settingsPageLabelKey(id: SettingsPageId) {
+  return id === "appearance" ? "common_appearance" : id === "models" ? "common_models" : id === "skills" ? "common_skills" : "common_plugins";
+}
+
 function readInitialPage(): SettingsPageId {
   if (typeof window === "undefined") return parseStoredSettingsPage(null);
   try {
@@ -38,7 +43,9 @@ function readInitialPage(): SettingsPageId {
 }
 
 /** 无 cwd 页面的具体提示：保留导航项，内容区指引用户先选择项目。 */
-function NeedsProjectHint({ hint }: { hint: string }) {
+function NeedsProjectHint({ hint }: { hint: "skills" | "plugins" }) {
+  const { t } = useI18n();
+  void hint;
   return (
     <div style={{
       height: "100%",
@@ -53,8 +60,8 @@ function NeedsProjectHint({ hint }: { hint: string }) {
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--text-dim)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
         <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" />
       </svg>
-      <div style={{ fontSize: 13, color: "var(--text)", fontWeight: 600 }}>Select a project first</div>
-      <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.6, maxWidth: 380 }}>{hint}</div>
+      <div style={{ fontSize: 13, color: "var(--text)", fontWeight: 600 }}>{t("common_selectProject")}</div>
+      <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.6, maxWidth: 380 }}>{t("common_selectProjectHint")}</div>
     </div>
   );
 }
@@ -122,20 +129,20 @@ function SegmentedChoice<T extends string>({
 
 function AppearancePage() {
   const { theme, setTheme } = useTheme();
-  const { locale, setLocale } = useI18n();
+  const { locale, setLocale, t } = useI18n();
   return (
     <div style={{ padding: "18px 20px" }}>
       <SegmentedChoice
-        label="Theme"
+        label={t("appearance_theme")}
         options={[
-          { value: "light", label: "Light" },
-          { value: "dark", label: "Dark" },
+          { value: "light", label: t("appearance_light") },
+          { value: "dark", label: t("appearance_dark") },
         ]}
         value={theme}
         onChange={(next) => setTheme(next)}
       />
       <SegmentedChoice<Locale>
-        label="Language"
+        label={t("appearance_language")}
         options={[
           { value: "en", label: "English" },
           { value: "zh-CN", label: "简体中文" },
@@ -144,13 +151,14 @@ function AppearancePage() {
         onChange={(next) => setLocale(next)}
       />
       <div style={{ fontSize: 11, color: "var(--text-dim)", lineHeight: 1.6, maxWidth: 420 }}>
-        Language applies to the interface strings that are already localized; full bilingual coverage lands in a later update.
+        {t("appearance_coverage")}
       </div>
     </div>
   );
 }
 
 export function SettingsView({ cwd, sessionId, onClose, onModelsChanged, onPluginsReloaded }: SettingsViewProps) {
+  const { t } = useI18n();
   const isMobile = useIsMobile();
   const [activePage, setActivePage] = useState<SettingsPageId>(readInitialPage);
   // 移动端「导航首页 → 页面内容」：null 表示导航首页；桌面端始终双栏。
@@ -222,10 +230,10 @@ export function SettingsView({ cwd, sessionId, onClose, onModelsChanged, onPlugi
             }}
           >
             <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              {page.label}
+              {t(page.label === "appearance" ? "common_appearance" : page.label === "models" ? "common_models" : page.label === "skills" ? "common_skills" : "common_plugins")}
             </span>
             {!page.available && (
-              <span style={{ fontSize: 10, color: "var(--text-dim)", flexShrink: 0 }}>needs project</span>
+              <span style={{ fontSize: 10, color: "var(--text-dim)", flexShrink: 0 }}>{t("common_needsProject")}</span>
             )}
             {isMobile && (
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: "var(--text-dim)", flexShrink: 0 }} aria-hidden="true">
@@ -243,7 +251,7 @@ export function SettingsView({ cwd, sessionId, onClose, onModelsChanged, onPlugi
     <button
       type="button"
       onClick={goMobileHome}
-      aria-label="Back to settings"
+      aria-label={t("common_back")}
       style={{
         flexShrink: 0,
         display: "flex",
@@ -262,7 +270,7 @@ export function SettingsView({ cwd, sessionId, onClose, onModelsChanged, onPlugi
       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
         <polyline points="15 18 9 12 15 6" />
       </svg>
-      Back
+      {t("common_back")}
     </button>
   ) : undefined;
 
@@ -270,7 +278,8 @@ export function SettingsView({ cwd, sessionId, onClose, onModelsChanged, onPlugi
     <ViewportDialog
       open
       onClose={onClose}
-      title={isMobile && mobileView.page !== null ? activePageInfo.label : "Settings"}
+      closeLabel={t("dialog_close")}
+      title={isMobile && mobileView.page !== null ? t(activePageInfo.label === "appearance" ? "common_appearance" : activePageInfo.label === "models" ? "common_models" : activePageInfo.label === "skills" ? "common_skills" : "common_plugins") : t("common_settings")}
       width={920}
       zIndex={1000}
       headerActions={mobileBackAction}
@@ -279,11 +288,11 @@ export function SettingsView({ cwd, sessionId, onClose, onModelsChanged, onPlugi
       <div style={{ display: "flex", height: "min(72dvh, 660px)", minHeight: 0 }}>
         {isMobile ? (
           mobileView.page === null ? (
-            <nav aria-label="Settings" style={{ flex: 1, overflowY: "auto" }}>
+            <nav aria-label={t("common_settings")} style={{ flex: 1, overflowY: "auto" }}>
               {navList}
             </nav>
           ) : (
-            <section aria-label={activePageInfo.label} style={{ flex: 1, minWidth: 0, overflow: "hidden", display: "flex", flexDirection: "column" }}>
+            <section aria-label={t(settingsPageLabelKey(activePageInfo.id))} style={{ flex: 1, minWidth: 0, overflow: "hidden", display: "flex", flexDirection: "column" }}>
               <div style={{ flex: 1, minHeight: 0, overflowY: "auto", display: "flex", flexDirection: "column" }}>
                 {renderPageContent()}
               </div>
@@ -292,7 +301,7 @@ export function SettingsView({ cwd, sessionId, onClose, onModelsChanged, onPlugi
         ) : (
           <>
             <nav
-              aria-label="Settings"
+              aria-label={t("common_settings")}
               style={{
                 width: 190,
                 flexShrink: 0,
@@ -303,7 +312,7 @@ export function SettingsView({ cwd, sessionId, onClose, onModelsChanged, onPlugi
             >
               {navList}
             </nav>
-            <section aria-label={activePageInfo.label} style={{ flex: 1, minWidth: 0, overflow: "hidden", display: "flex", flexDirection: "column" }}>
+            <section aria-label={t(settingsPageLabelKey(activePageInfo.id))} style={{ flex: 1, minWidth: 0, overflow: "hidden", display: "flex", flexDirection: "column" }}>
               <div style={{ flex: 1, minHeight: 0, overflowY: "auto", display: "flex", flexDirection: "column" }}>
                 {renderPageContent()}
               </div>

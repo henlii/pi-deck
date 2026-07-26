@@ -14,9 +14,10 @@ test("页面清单：appearance/models 无 cwd 可用，skills/plugins 保留导
   const plugins = withoutCwd.find((p) => p.id === "plugins");
   // 不静默隐藏：导航项仍在，只是不可用且带具体提示。
   assert.equal(skills.available, false);
-  assert.ok(skills.unavailableHint.includes("Select a project"));
+  assert.equal(skills.unavailableHint, "skills");
   assert.equal(plugins.available, false);
-  assert.ok(plugins.unavailableHint.includes("Select a project"));
+  assert.equal(plugins.unavailableHint, "plugins");
+   assert.deepEqual(withoutCwd.map((p) => p.label), ["appearance", "models", "skills", "plugins"]);
 
   const withCwd = getSettingsPages(true);
   assert.ok(withCwd.every((p) => p.available));

@@ -944,6 +944,20 @@ span.linenumber {
   }
 }
 
+/* 三点菜单打开时触发按钮保持可见（覆盖行 hover 渐进显露的隐藏态） */
+.sidebar-row .sidebar-icon-btn--hover.sidebar-icon-btn--active {
+  opacity: 1;
+}
+
+/* 会话行首 child 折叠 chevron：粗指针下扩大命中区，视觉尺寸与行内布局不变 */
+@media (hover: none), (pointer: coarse) {
+  .sidebar-chevron-btn::after {
+    content: "";
+    position: absolute;
+    inset: -5px -3px;
+  }
+}
+
 /* ── 中央文件编辑工作区 ─────────────────────────────────────────────── */
 .file-viewer-toolbar {
   min-width: 0;

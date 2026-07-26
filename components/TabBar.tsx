@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { getFileIcon } from "./FileIcons";
+import { useI18n } from "@/lib/i18n";
 
 export interface Tab {
   id: string;
@@ -26,6 +27,7 @@ interface Props {
 }
 
 export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab }: Props) {
+  const { t } = useI18n();
   const [hoveredClose, setHoveredClose] = useState<string | null>(null);
 
   return (
@@ -100,7 +102,7 @@ export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab }: Props) {
                 flex: 1,
                 fontWeight: isActive ? 500 : 400,
               }}
-              title={isChat ? "Back to chat" : tab.filePath}
+              title={isChat ? t("tabs_backToChat") : tab.filePath}
             >
               {tab.label}
             </span>
@@ -121,8 +123,8 @@ export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab }: Props) {
                   flexShrink: 0,
                   transition: "background 0.1s, color 0.1s",
                 }}
-                title={tab.dirty ? "Close (unsaved changes)" : "Close"}
-                aria-label={`Close ${tab.label}`}
+                title={tab.dirty ? t("tabs_closeUnsaved") : t("tabs_close")}
+                aria-label={t("tabs_closeNamed", { label: tab.label })}
               >
                 {tab.dirty ? (
                   <span className={tab.saving ? "file-tab-dirty-dot is-saving" : "file-tab-dirty-dot"} aria-hidden="true" />

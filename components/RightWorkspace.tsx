@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { GitStatusResponse } from "@/lib/git-types";
 import { FileExplorer, type FileExplorerHandle } from "./FileExplorer";
 import { GitPanel } from "./GitPanel";
+import { useI18n } from "@/lib/i18n";
 
 interface Props {
   /** 桌面：折叠/展开；移动：抽屉显隐。 */
@@ -150,6 +151,7 @@ export function RightWorkspace({
   onAtMention,
   onAtMentions,
 }: Props) {
+  const { t } = useI18n();
   const [tab, setTab] = useState<WorkspaceTab>("files");
   const fileExplorerRef = useRef<FileExplorerHandle>(null);
   const [uploadBusy, setUploadBusy] = useState(false);
@@ -171,7 +173,7 @@ export function RightWorkspace({
       const params = new URLSearchParams({ cwd });
       const res = await fetch(`/api/git/status?${params.toString()}`);
       const data = await res.json().catch(() => ({})) as GitStatusResponse & { error?: string };
-      if (!res.ok) throw new Error(data.error ?? `Failed to load Git status (HTTP ${res.status})`);
+      if (!res.ok) throw new Error(data.error ?? t("workspace_gitStatusLoadFailed", { status: res.status }));
       setGitStatus(data);
       setGitError(null);
     } catch (e) {
@@ -180,7 +182,7 @@ export function RightWorkspace({
     } finally {
       setGitLoading(false);
     }
-  }, [cwd]);
+  }, [cwd, t]);
 
   // 仅打开时拉取；cwd / 外部刷新信号变化时重拉。
   useEffect(() => {
@@ -236,7 +238,7 @@ export function RightWorkspace({
         zIndex: 200,
       }}
       role="complementary"
-      aria-label="Files and Git workspace"
+      aria-label={t("workspace_filesAndGit")}
       aria-hidden={!open}
       inert={!open}
     >
@@ -249,7 +251,7 @@ export function RightWorkspace({
           onPointerUp={handleResizeEnd}
           onPointerCancel={handleResizeEnd}
           onDoubleClick={() => onWidthChange(288)}
-          title="Drag to resize workspace"
+          title={t("workspace_resizeHandle")}
           aria-hidden="true"
         />
       )}
@@ -258,7 +260,7 @@ export function RightWorkspace({
         {/* 顶部图标 tab 行（24×24 规格；tooltip/aria-label/focus-visible 由类承载） */}
         <div style={{ display: "flex", alignItems: "center", gap: 4, height: 36, padding: "0 8px", borderBottom: "1px solid var(--border)", flexShrink: 0 }}>
           <WorkspaceIconButton
-            label="Files"
+            label={t("workspace_files")}
             active={tab === "files"}
             pressed={tab === "files"}
             onClick={() => setTab("files")}
@@ -266,7 +268,7 @@ export function RightWorkspace({
             <FolderIcon size={16} />
           </WorkspaceIconButton>
           <WorkspaceIconButton
-            label="Git changes"
+            label={t("workspace_gitChanges")}
             active={tab === "git"}
             pressed={tab === "git"}
             onClick={() => setTab("git")}
@@ -278,14 +280,14 @@ export function RightWorkspace({
           {tab === "files" && (
             <>
               <WorkspaceIconButton
-                label="Upload files to project root"
+                label={t("workspace_upload")}
                 disabled={uploadBusy || !cwd}
                 onClick={() => fileExplorerRef.current?.openUploadPicker()}
               >
                 <UploadIcon size={15} />
               </WorkspaceIconButton>
               <WorkspaceIconButton
-                label="Refresh files"
+                label={t("workspace_refreshFiles")}
                 onClick={() => setFilesRefreshTick((tick) => tick + 1)}
               >
                 <RefreshIcon size={15} />
@@ -294,7 +296,7 @@ export function RightWorkspace({
           )}
           {tab === "git" && (
             <WorkspaceIconButton
-              label="Refresh Git status"
+              label={t("workspace_refreshGitStatus")}
               disabled={!cwd}
               onClick={() => void fetchGitStatus()}
             >
@@ -302,7 +304,7 @@ export function RightWorkspace({
             </WorkspaceIconButton>
           )}
           <WorkspaceIconButton
-            label={isMobile ? "Close workspace" : "Hide workspace"}
+            label={t("workspace_close")}
             onClick={onClose}
           >
             <CollapseIcon size={15} />
@@ -313,7 +315,7 @@ export function RightWorkspace({
         <div style={{ flex: 1, overflow: "hidden", position: "relative" }}>
           {!cwd ? (
             <div style={{ padding: "16px 12px", fontSize: 11.5, color: "var(--text-dim)", lineHeight: 1.6 }}>
-              Select a project to browse files and Git changes.
+              {t("workspace_selectProject")}
             </div>
           ) : (
             <>

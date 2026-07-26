@@ -23,6 +23,7 @@ import { markdownPreviewRehypePlugins, markdownPreviewRemarkPlugins } from "@/li
 import { parseUnifiedPatch } from "@/lib/patch";
 import type { GitFileDiffResponse } from "@/lib/git-types";
 import { canRedo, canUndo, type FileBuffer, type FileEditorAction } from "@/lib/file-editor-state";
+import { useI18n } from "@/lib/i18n";
 
 interface Props {
   filePath: string;
@@ -45,11 +46,7 @@ interface FileData {
 
 type DisplayMode = "source" | "preview" | "diff";
 
-const DISPLAY_MODE_LABELS: Record<DisplayMode, string> = {
-  source: "Source",
-  preview: "Preview",
-  diff: "Diff",
-};
+const DISPLAY_MODE_KEYS = { source: "viewer_source", preview: "viewer_preview", diff: "viewer_diff" } as const;
 
 const FILE_CODE_STYLE: CSSProperties = {
   fontFamily: "var(--font-mono)",
@@ -137,12 +134,13 @@ function getFileApiUrl(
 }
 
 function DownloadLink({ filePath, sourceSessionId }: { filePath: string; sourceSessionId?: string | null }) {
+  const { t } = useI18n();
   return (
     <a
       href={getFileApiUrl(filePath, "download", sourceSessionId)}
       download={getFileName(filePath)}
-      title="Download file"
-      aria-label="Download file"
+      title={t("viewer_download")}
+      aria-label={t("viewer_download")}
       className="file-viewer-icon-button"
     >
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -204,13 +202,14 @@ function diffLines(patch: string): DiffLine[] {
 }
 
 function DiffView({ patch }: { patch: string }) {
+  const { t } = useI18n();
   const diff = diffLines(patch);
 
   const hasChanges = diff.some((l) => l.type !== "unchanged");
   if (!hasChanges) {
     return (
       <div style={{ padding: "12px 16px", fontSize: 12, color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>
-        No changes
+        {t("viewer_noChanges")}
       </div>
     );
   }
@@ -338,6 +337,7 @@ function DiffView({ patch }: { patch: string }) {
 }
 
 function ImageViewer({ filePath, cwd, sourceSessionId }: Props) {
+  const { t } = useI18n();
   const [watching, setWatching] = useState(false);
   const [bust, setBust] = useState(0);
   const [size, setSize] = useState<number | null>(null);
@@ -405,7 +405,7 @@ function ImageViewer({ filePath, cwd, sourceSessionId }: Props) {
         {naturalSize && <span>{naturalSize.w} × {naturalSize.h}</span>}
         {formatSizeStr && <span>{formatSizeStr}</span>}
         <span
-          title={watching ? "Live sync active" : "Not watching"}
+          title={watching ? t("viewer_liveSyncOn") : t("viewer_liveSyncOff")}
           style={{ display: "flex", alignItems: "center", gap: 4, color: watching ? "#4ade80" : "var(--text-dim)" }}
         >
           <span
@@ -418,7 +418,7 @@ function ImageViewer({ filePath, cwd, sourceSessionId }: Props) {
               boxShadow: watching ? "0 0 4px #4ade80" : "none",
             }}
           />
-          {watching ? "live" : "static"}
+          {watching ? t("viewer_live") : t("viewer_static")}
         </span>
         <DownloadLink filePath={filePath} sourceSessionId={sourceSessionId} />
       </div>
@@ -448,7 +448,7 @@ function ImageViewer({ filePath, cwd, sourceSessionId }: Props) {
               const img = e.currentTarget;
               setNaturalSize({ w: img.naturalWidth, h: img.naturalHeight });
             }}
-            onError={() => setError("Failed to load image")}
+            onError={() => setError(t("viewer_loadFailed"))}
             style={{
               maxWidth: "100%",
               maxHeight: "100%",
@@ -471,6 +471,7 @@ function formatDuration(seconds: number): string {
 }
 
 function AudioViewer({ filePath, cwd, sourceSessionId }: Props) {
+  const { t } = useI18n();
   const [watching, setWatching] = useState(false);
   const [bust, setBust] = useState(0);
   const [size, setSize] = useState<number | null>(null);
@@ -538,7 +539,7 @@ function AudioViewer({ filePath, cwd, sourceSessionId }: Props) {
         {duration != null && <span>{formatDuration(duration)}</span>}
         {size != null && <span>{formatSize(size)}</span>}
         <span
-          title={watching ? "Live sync active" : "Not watching"}
+          title={watching ? t("viewer_liveSyncOn") : t("viewer_liveSyncOff")}
           style={{ display: "flex", alignItems: "center", gap: 4, color: watching ? "#4ade80" : "var(--text-dim)" }}
         >
           <span
@@ -551,7 +552,7 @@ function AudioViewer({ filePath, cwd, sourceSessionId }: Props) {
               boxShadow: watching ? "0 0 4px #4ade80" : "none",
             }}
           />
-          {watching ? "live" : "static"}
+          {watching ? t("viewer_live") : t("viewer_static")}
         </span>
         <DownloadLink filePath={filePath} sourceSessionId={sourceSessionId} />
       </div>
@@ -577,7 +578,7 @@ function AudioViewer({ filePath, cwd, sourceSessionId }: Props) {
             preload="metadata"
             src={src}
             onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
-            onError={() => setError("Failed to load audio")}
+            onError={() => setError(t("viewer_loadFailed"))}
             style={{ width: "100%" }}
           />
         </div>
@@ -587,6 +588,7 @@ function AudioViewer({ filePath, cwd, sourceSessionId }: Props) {
 }
 
 function DocumentViewer({ filePath, cwd, sourceSessionId }: Props) {
+  const { t } = useI18n();
   const [watching, setWatching] = useState(false);
   const [bust, setBust] = useState(0);
   const [size, setSize] = useState<number | null>(null);
@@ -617,7 +619,7 @@ function DocumentViewer({ filePath, cwd, sourceSessionId }: Props) {
         if (typeof d.size === "number") {
           setSize(d.size);
           if (!isPdf && d.size > DOCX_PREVIEW_MAX_BYTES) {
-            setError("DOCX too large for preview (>10MB)");
+            setError(t("viewer_docxTooLarge"));
           }
         }
       })
@@ -633,7 +635,7 @@ function DocumentViewer({ filePath, cwd, sourceSessionId }: Props) {
         if (typeof d.size === "number") {
           setSize(d.size);
           if (!isPdf && d.size > DOCX_PREVIEW_MAX_BYTES) {
-            setError("DOCX too large for preview (>10MB)");
+            setError(t("viewer_docxTooLarge"));
             return;
           }
         }
@@ -648,7 +650,7 @@ function DocumentViewer({ filePath, cwd, sourceSessionId }: Props) {
       es.close();
       esRef.current = null;
     };
-  }, [filePath, isPdf, sourceSessionId]);
+  }, [filePath, isPdf, sourceSessionId, t]);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
@@ -672,7 +674,7 @@ function DocumentViewer({ filePath, cwd, sourceSessionId }: Props) {
         {size != null && <span>{formatSize(size)}</span>}
         <DownloadLink filePath={filePath} sourceSessionId={sourceSessionId} />
         <span
-          title={watching ? "Live sync active" : "Not watching"}
+          title={watching ? t("viewer_liveSyncOn") : t("viewer_liveSyncOff")}
           style={{ display: "flex", alignItems: "center", gap: 4, color: watching ? "#4ade80" : "var(--text-dim)", flexShrink: 0 }}
         >
           <span
@@ -685,7 +687,7 @@ function DocumentViewer({ filePath, cwd, sourceSessionId }: Props) {
               boxShadow: watching ? "0 0 4px #4ade80" : "none",
             }}
           />
-          {watching ? "live" : "static"}
+          {watching ? t("viewer_live") : t("viewer_static")}
         </span>
       </div>
       <div style={{ flex: 1, minHeight: 0, background: "var(--bg-panel)" }}>
@@ -698,7 +700,7 @@ function DocumentViewer({ filePath, cwd, sourceSessionId }: Props) {
             key={previewUrl}
             src={previewUrl}
             sandbox={isPdf ? undefined : ""}
-            title={`Preview ${getFileName(filePath)}`}
+            title={`${t("viewer_preview")} ${getFileName(filePath)}`}
             style={{ width: "100%", height: "100%", border: "none", background: isPdf ? "var(--bg)" : "#eef1f5" }}
           />
         )}
@@ -722,6 +724,7 @@ export function FileViewer({ filePath, cwd, sourceSessionId, writable, buffer, d
 
 function TextFileViewer({ filePath, cwd, sourceSessionId, writable = false, buffer, dispatchBuffer, onSave, onOpenFile, gitRefreshKey }: Props) {
   const { isDark } = useTheme();
+  const { t } = useI18n();
   const [data, setData] = useState<FileData | null>(null);
   const [gitDiff, setGitDiff] = useState<GitFileDiffResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -907,7 +910,7 @@ function TextFileViewer({ filePath, cwd, sourceSessionId, writable = false, buff
   if (loading) {
     return (
       <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-muted)", fontSize: 13 }}>
-        Loading...
+        {t("common_loading")}
       </div>
     );
   }
@@ -934,11 +937,11 @@ function TextFileViewer({ filePath, cwd, sourceSessionId, writable = false, buff
     ...(hasPreview ? ["preview" as const] : []),
     ...(hasGitDiff ? ["diff" as const] : []),
   ];
-  const metadata = `${visibleLanguage} · ${lines.length} lines · ${formatSize(data.size)}`;
+  const metadata = `${visibleLanguage} · ${t("viewer_linesCount", { count: lines.length })} · ${formatSize(data.size)}`;
   const readOnlyReason = !sourceSessionId
-    ? "Read-only: open from a saved writable session to edit"
+    ? t("viewer_readOnlyNoSession")
     : !writable
-      ? "Read-only: this file was opened from a read-only session"
+      ? t("viewer_readOnlySession")
       : null;
 
   const handleEditorChange = (content: string) => {
@@ -991,8 +994,8 @@ function TextFileViewer({ filePath, cwd, sourceSessionId, writable = false, buff
 
         <span className="file-viewer-meta" title={metadata}>{metadata}</span>
         <span
-          title={watching ? "Live sync active" : "Not watching"}
-          aria-label={watching ? "Live sync active" : "Not watching"}
+          title={watching ? t("viewer_liveSyncOn") : t("viewer_liveSyncOff")}
+          aria-label={watching ? t("viewer_liveSyncOn") : t("viewer_liveSyncOff")}
           className="file-viewer-live-indicator"
           style={{
             background: watching ? "#4ade80" : "var(--border)",
@@ -1000,9 +1003,9 @@ function TextFileViewer({ filePath, cwd, sourceSessionId, writable = false, buff
           }}
         />
 
-        <div className="file-viewer-controls" role="toolbar" aria-label="File editor tools">
+        <div className="file-viewer-controls" role="toolbar" aria-label={t("viewer_fileEditAria")}>
           {displayModes.map((mode) => (
-            <button key={mode} type="button" onClick={() => setDisplayMode(mode)} title={mode === "diff" ? "Git diff (saved working tree)" : DISPLAY_MODE_LABELS[mode]} aria-label={mode === "diff" ? "Git diff of saved working tree" : DISPLAY_MODE_LABELS[mode]} aria-pressed={displayMode === mode} className="file-viewer-icon-button" data-active={displayMode === mode}>
+            <button key={mode} type="button" onClick={() => setDisplayMode(mode)} title={mode === "diff" ? t("viewer_gitDiff") : t(DISPLAY_MODE_KEYS[mode])} aria-label={mode === "diff" ? t("viewer_gitDiff") : t(DISPLAY_MODE_KEYS[mode])} aria-pressed={displayMode === mode} className="file-viewer-icon-button" data-active={displayMode === mode}>
               {mode === "source" ? <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
                 : mode === "preview" ? <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg>
                 : <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M8 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h3"/><path d="M16 3h3a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-3"/><path d="M12 2v20"/></svg>}
@@ -1012,8 +1015,8 @@ function TextFileViewer({ filePath, cwd, sourceSessionId, writable = false, buff
               <button
                 type="button"
                 onClick={() => setWrapLines((value) => !value)}
-                title={wrapLines ? "Disable word wrap" : "Enable word wrap"}
-                aria-label={wrapLines ? "Disable word wrap" : "Enable word wrap"}
+                title={wrapLines ? t("viewer_disableWrap") : t("viewer_enableWrap")}
+                aria-label={wrapLines ? t("viewer_disableWrap") : t("viewer_enableWrap")}
                 aria-pressed={wrapLines}
                 className="file-viewer-icon-button"
                 data-active={wrapLines}
@@ -1027,9 +1030,9 @@ function TextFileViewer({ filePath, cwd, sourceSessionId, writable = false, buff
               </button>
           )}
           <span className="file-viewer-toolbar-separator" aria-hidden="true" />
-          <button type="button" className="file-viewer-icon-button" onClick={runUndo} disabled={!writable || !canUndo(buffer)} title="Undo (Ctrl/Cmd+Z)" aria-label="Undo"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M9 14 4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 6 6v1"/></svg></button>
-          <button type="button" className="file-viewer-icon-button" onClick={runRedo} disabled={!writable || !canRedo(buffer)} title="Redo (Ctrl/Cmd+Shift+Z)" aria-label="Redo"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m15 14 5-5-5-5"/><path d="M20 9H10a6 6 0 0 0-6 6v1"/></svg></button>
-          <button type="button" className="file-viewer-icon-button is-save" onClick={() => void runSave()} disabled={!writable || !buffer?.dirty || buffer.saveState === "saving"} title="Save (Ctrl/Cmd+S)" aria-label="Save file">
+          <button type="button" className="file-viewer-icon-button" onClick={runUndo} disabled={!writable || !canUndo(buffer)} title={`${t("viewer_undo")} (Ctrl/Cmd+Z)`} aria-label={t("viewer_undo")}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M9 14 4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 6 6v1"/></svg></button>
+          <button type="button" className="file-viewer-icon-button" onClick={runRedo} disabled={!writable || !canRedo(buffer)} title={`${t("viewer_redo")} (Ctrl/Cmd+Shift+Z)`} aria-label={t("viewer_redo")}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m15 14 5-5-5-5"/><path d="M20 9H10a6 6 0 0 0-6 6v1"/></svg></button>
+          <button type="button" className="file-viewer-icon-button is-save" onClick={() => void runSave()} disabled={!writable || !buffer?.dirty || buffer.saveState === "saving"} title={`${t("viewer_save")} (Ctrl/Cmd+S)`} aria-label={t("viewer_save")}>
             {buffer?.saveState === "saving" ? <span className="file-save-spinner" aria-hidden="true" /> : <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>}
           </button>
           <DownloadLink filePath={filePath} sourceSessionId={sourceSessionId} />
@@ -1038,15 +1041,15 @@ function TextFileViewer({ filePath, cwd, sourceSessionId, writable = false, buff
 
       {(showExternalChange || buffer?.saveState === "error" || readOnlyReason || savedFlash) && (
         <div className={`file-editor-notice${showExternalChange ? " is-warning" : buffer?.saveState === "error" ? " is-error" : savedFlash ? " is-success" : ""}`} role={buffer?.saveState === "error" ? "alert" : "status"}>
-          <span>{buffer?.externalChange ? "File changed outside the editor. Your draft is preserved." : buffer?.saveState === "conflict" ? (buffer.error ?? "Save conflict: the file changed externally.") : buffer?.saveState === "error" ? buffer.error : savedFlash ? "Saved" : readOnlyReason}</span>
+          <span>{buffer?.externalChange ? t("viewer_externalChangeDraftKept") : buffer?.saveState === "conflict" ? (buffer.error ?? t("viewer_externalSaveConflict")) : buffer?.saveState === "error" ? buffer.error : savedFlash ? t("common_saved") : readOnlyReason}</span>
           {showExternalChange && (
             <span className="file-editor-notice__actions">
               <button type="button" onClick={() => {
                 setAcknowledgedExternalChange(externalChangeFingerprint);
                 setDisplayMode("source");
                 requestAnimationFrame(() => editorRef.current?.focus());
-              }} title="Keep local draft" aria-label="Keep local draft">Keep draft</button>
-              <button type="button" className="is-danger" onClick={discardAndReload} title="Discard local draft and reload" aria-label="Discard local draft and reload latest file">Discard &amp; reload</button>
+              }} title={t("viewer_keepLocalDraft")} aria-label={t("viewer_keepLocalDraft")}>{t("viewer_keepLocalDraft")}</button>
+              <button type="button" className="is-danger" onClick={discardAndReload} title={t("viewer_discardLocalDraftReload")} aria-label={t("viewer_discardLocalDraftReload")}>{t("viewer_discardLocalDraftReload")}</button>
             </span>
           )}
         </div>
@@ -1055,13 +1058,13 @@ function TextFileViewer({ filePath, cwd, sourceSessionId, writable = false, buff
       {/* Content area */}
       <div className="file-viewer-content" style={{ flex: 1, overflow: "auto", background: "var(--bg)" }}>
         {displayMode === "diff" && hasGitDiff ? (
-          <><div className="file-viewer-context-label">Git diff shows the saved working tree, not unsaved editor changes.</div><DiffView patch={gitDiff.patch!} /></>
+          <><div className="file-viewer-context-label">{t("viewer_gitDiffSavedWorktree")}</div><DiffView patch={gitDiff.patch!} /></>
         ) : isHtml && displayMode === "preview" ? (
           <iframe
             srcDoc={visibleContent}
             sandbox="allow-scripts"
             style={{ width: "100%", height: "100%", border: "none", background: "var(--bg)" }}
-            title="HTML preview"
+            title={t("viewer_htmlPreview")}
           />
         ) : isMarkdown && displayMode === "preview" ? (
           <div
@@ -1107,7 +1110,7 @@ function TextFileViewer({ filePath, cwd, sourceSessionId, writable = false, buff
               onCut={() => { forceBoundaryRef.current = true; }}
               wrap={wrapLines ? "soft" : "off"}
               spellCheck={false}
-              aria-label={`Edit ${getFileName(filePath)}`}
+              aria-label={`${t("viewer_fileEditAria")}: ${getFileName(filePath)}`}
             />
           ) : <SyntaxHighlighter
             className={wrapLines ? "file-source-view is-wrapped" : "file-source-view"}

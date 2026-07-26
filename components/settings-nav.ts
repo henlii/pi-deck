@@ -8,29 +8,19 @@ export type SettingsPageId = "appearance" | "models" | "skills" | "plugins";
 
 export interface SettingsPageInfo {
   id: SettingsPageId;
-  label: string;
+  label: SettingsPageId;
   /** 该页是否需要活动项目 cwd 才能使用业务能力 */
   requiresCwd: boolean;
   /** 当前是否可用（无 cwd 时 requiresCwd 页保留导航项但不可用） */
   available: boolean;
   /** 不可用时的具体提示文案（available=false 时必有值） */
-  unavailableHint?: string;
+  unavailableHint?: "skills" | "plugins";
 }
 
 const PAGE_ORDER: SettingsPageId[] = ["appearance", "models", "skills", "plugins"];
 
-const PAGE_LABEL: Record<SettingsPageId, string> = {
-  appearance: "Appearance",
-  models: "Models",
-  skills: "Skills",
-  plugins: "Plugins",
-};
-
 /** 无 cwd 提示：保留导航项，内容区显示具体指引，不静默隐藏。 */
-const PAGE_NO_CWD_HINT: Partial<Record<SettingsPageId, string>> = {
-  skills: "Skills are configured per project. Select a project directory in the sidebar, then open this page again.",
-  plugins: "Plugins are configured per project. Select a project directory in the sidebar, then open this page again.",
-};
+const PAGE_NO_CWD_HINT: Partial<Record<SettingsPageId, "skills" | "plugins">> = { skills: "skills", plugins: "plugins" };
 
 export const SETTINGS_PAGE_STORAGE_KEY = "pi-deck:settings:page:v1";
 export const DEFAULT_SETTINGS_PAGE: SettingsPageId = "appearance";
@@ -46,7 +36,7 @@ export function getSettingsPages(hasCwd: boolean): SettingsPageInfo[] {
     const available = !requiresCwd || hasCwd;
     return {
       id,
-      label: PAGE_LABEL[id],
+      label: id,
       requiresCwd,
       available,
       ...(available ? {} : { unavailableHint: PAGE_NO_CWD_HINT[id]! }),

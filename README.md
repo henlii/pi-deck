@@ -94,6 +94,10 @@ npm run dev
 
 The local dev server runs at [http://localhost:30141](http://localhost:30141).
 
+### Deployment
+
+The continuous test deployment listens on `0.0.0.0:30142` and is publicly accessible at [https://deck.namixinxi.cn](https://deck.namixinxi.cn) through an Alibaba Cloud Nginx reverse proxy. The shell Cookie and Basic Auth are managed by p0017. The default CLI/production port remains `30141`.
+
 Common checks:
 
 ```bash

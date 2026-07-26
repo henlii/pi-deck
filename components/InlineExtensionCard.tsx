@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 import type { ExtensionUiInlineRequest } from "@/lib/extension-ui-bridge";
+import { useI18n } from "@/lib/i18n";
 
 export type ExtensionUiInlineResponse =
   | { value: string }
@@ -38,6 +39,7 @@ function CloseIcon() {
 }
 
 export function InlineExtensionCard({ request, disabled = false, onRespond }: InlineExtensionCardProps) {
+  const { t } = useI18n();
   const respondedRequestRef = useRef<string | null>(null);
   const [respondedRequestId, setRespondedRequestId] = useState<string | null>(null);
   const [draft, setDraft] = useState<{ requestId: string; value: string }>({
@@ -63,16 +65,16 @@ export function InlineExtensionCard({ request, disabled = false, onRespond }: In
   };
 
   const statusMessage = expired
-    ? "Expired — the agent is no longer waiting for this response."
+    ? t("extension_expired")
     : disabled
-      ? "Waiting ended — responding is disabled for this session."
+      ? t("extension_waitingEnded")
       : responded
-        ? "Response sent."
+        ? t("extension_responseSent")
         : null;
 
   return (
     <section
-      aria-label={`Extension request: ${request.title}`}
+      aria-label={`${t("extension_extension")}: ${request.title}`}
       style={{
         margin: "8px 0",
         overflow: "hidden",
@@ -127,15 +129,15 @@ export function InlineExtensionCard({ request, disabled = false, onRespond }: In
             textTransform: "uppercase",
           }}
         >
-          extension · {request.method}
+          {t("extension_extension")} · {request.method}
         </span>
         {request.method === "select" && (
           <button
             type="button"
             className="sidebar-icon-btn sidebar-icon-btn--danger"
             disabled={inert}
-            title="Cancel"
-            aria-label="Cancel extension request"
+            title={t("extension_cancel")}
+            aria-label={t("extension_cancel")}
             onClick={() => respondOnce({ cancelled: true })}
           >
             <CloseIcon />
@@ -164,8 +166,8 @@ export function InlineExtensionCard({ request, disabled = false, onRespond }: In
                 type="button"
                 className="sidebar-icon-btn sidebar-icon-btn--danger"
                 disabled={inert}
-                title="Cancel"
-                aria-label="Cancel extension request"
+                title={t("extension_cancel")}
+                aria-label={t("extension_cancel")}
                 onClick={() => respondOnce({ cancelled: true })}
               >
                 <CloseIcon />
@@ -174,8 +176,8 @@ export function InlineExtensionCard({ request, disabled = false, onRespond }: In
                 type="button"
                 className="sidebar-icon-btn"
                 disabled={inert}
-                title="Confirm"
-                aria-label="Confirm extension request"
+                title={t("extension_confirm")}
+                aria-label={t("extension_confirm")}
                 onClick={() => respondOnce({ confirmed: true })}
                 style={{ color: "var(--accent)" }}
               >
@@ -226,8 +228,8 @@ export function InlineExtensionCard({ request, disabled = false, onRespond }: In
               type="button"
               className="sidebar-icon-btn"
               disabled={inert}
-              title="Submit"
-              aria-label="Submit extension response"
+              title={t("extension_submit")}
+              aria-label={t("extension_submit")}
               onClick={() => respondOnce({ value })}
               style={{ color: "var(--accent)" }}
             >
@@ -237,8 +239,8 @@ export function InlineExtensionCard({ request, disabled = false, onRespond }: In
               type="button"
               className="sidebar-icon-btn sidebar-icon-btn--danger"
               disabled={inert}
-              title="Cancel"
-              aria-label="Cancel extension request"
+              title={t("extension_cancel")}
+              aria-label={t("extension_cancel")}
               onClick={() => respondOnce({ cancelled: true })}
             >
               <CloseIcon />

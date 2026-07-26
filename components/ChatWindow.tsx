@@ -12,6 +12,7 @@ import { InlineExtensionCard } from "./InlineExtensionCard";
 import { TodoPanel } from "./TodoPanel";
 import { useAgentSession, type AgentPhase, type NoticeItem } from "@/hooks/useAgentSession";
 import { useAudio } from "@/hooks/useAudio";
+import { useI18n } from "@/lib/i18n";
 import { useDragDrop } from "@/hooks/useDragDrop";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import type { SessionStatsInfo } from "@/lib/pi-types";
@@ -39,27 +40,27 @@ interface Props {
   onOpenFile?: (filePath: string) => void;
 }
 
-function phaseLabel(phase: AgentPhase): string {
+function phaseLabel(phase: AgentPhase, t: ReturnType<typeof useI18n>["t"]): string {
   if (phase?.kind === "running_tools") {
     const names = phase.tools.map((t) => t.name);
-    if (names.length === 0) return "Running tool...";
-    if (names.length === 1) return `Running ${names[0]}...`;
-    if (names.length <= 3) return `Running ${names.join(", ")}...`;
-    return `Running ${names.slice(0, 2).join(", ")} (+${names.length - 2})...`;
+    if (names.length === 0) return `${t("chat_runningTool")}...`;
+    if (names.length === 1) return `${t("chat_runningNamed", { name: names[0] })}...`;
+    if (names.length <= 3) return `${t("chat_runningNamed", { name: names.join(", ") })}...`;
+    return `${t("chat_runningNamed", { name: `${names.slice(0, 2).join(", ")} (+${names.length - 2})` })}...`;
   }
-  if (phase?.kind === "waiting_model") return "Waiting for model...";
-  if (phase?.kind === "running_command") return "Running command...";
-  return "Thinking...";
+  if (phase?.kind === "waiting_model") return `${t("chat_waitingModel")}...`;
+  if (phase?.kind === "running_command") return `${t("chat_runningCommand")}...`;
+  return `${t("chat_thinking")}...`;
 }
 
 const CHAT_MINIMAP_WIDTH = 36;
 const CHAT_COLUMN_PADDING = 16;
 const CHAT_INPUT_RIGHT_PADDING = CHAT_COLUMN_PADDING + CHAT_MINIMAP_WIDTH;
 
-function ProcessDetailsGroup({ messageCount, toolCallCount, children }: { messageCount: number; toolCallCount: number; children: ReactNode }) {
+function ProcessDetailsGroup({ messageCount, toolCallCount, children, t }: { messageCount: number; toolCallCount: number; children: ReactNode; t: ReturnType<typeof useI18n>["t"] }) {
   const [expanded, setExpanded] = useState(false);
-  const parts = ["Process details", `${messageCount} ${messageCount === 1 ? "message" : "messages"}`];
-  if (toolCallCount > 0) parts.push(`${toolCallCount} ${toolCallCount === 1 ? "tool call" : "tool calls"}`);
+  const parts = [t("chat_processDetails"), `${messageCount} ${t(messageCount === 1 ? "chat_message" : "chat_messages")}`];
+  if (toolCallCount > 0) parts.push(`${toolCallCount} ${t(toolCallCount === 1 ? "chat_toolCall" : "chat_toolCalls")}`);
 
   return (
     <div style={{ marginBottom: 14 }}>
@@ -81,7 +82,7 @@ function ProcessDetailsGroup({ messageCount, toolCallCount, children }: { messag
           fontSize: 12,
           textAlign: "left",
         }}
-        title={expanded ? "Collapse process details" : "Expand process details"}
+        title={expanded ? t("chat_hideProcess") : t("chat_showProcess")}
       >
         <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, transform: expanded ? "rotate(90deg)" : "none", transition: "transform 0.15s" }}>
           <polyline points="4 2.5 7.5 6 4 9.5" />
@@ -100,6 +101,7 @@ function ProcessDetailsGroup({ messageCount, toolCallCount, children }: { messag
 }
 
 export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreated, onSessionForked, modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSessionStatsChange, onSessionStatsPanelOpen, onContextUsageChange, onOpenFile }: Props) {
+  const { t } = useI18n();
   const { soundEnabled, onSoundToggle, playDoneSound, unlockAudio } = useAudio();
   const isMobile = useIsMobile();
   // 只读（subagent 持久化）会话：历史正常读，一切写入口关闭，编辑器换成只读提示。
@@ -367,7 +369,7 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
   if (loading) {
     return (
       <div className="flex h-full items-center justify-center text-text-muted">
-        Loading session...
+        {t("chat_loadingSession")}
       </div>
     );
   }
@@ -560,6 +562,7 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
                 const processRefIdx = item.attachRefMessageIndex === undefined ? undefined : visibleRefIndexByMessage.get(item.attachRefMessageIndex);
                 const processGroup = (
                     <ProcessDetailsGroup
+                      t={t}
                       messageCount={item.messageCount}
                       toolCallCount={item.toolCallCount}
                     >
@@ -580,7 +583,7 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
                 <>
                   {hasMore && (
                     <div ref={sentinelRef} className="py-3 text-center text-xs text-text-muted">
-                      Scroll up to load earlier messages ({startIndex} hidden)
+                      {t("chat_loadEarlier", { count: startIndex })}
                     </div>
                   )}
                   {rendered.slice(startIndex)}
@@ -593,13 +596,13 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
 
             {agentRunning && !streamState.streamingMessage && (
               <div className="py-2 text-[13px] text-text-muted">
-                <span className="animate-[pulse_1.5s_infinite]">{phaseLabel(agentPhase)}</span>
+                <span className="animate-[pulse_1.5s_infinite]">{phaseLabel(agentPhase, t)}</span>
               </div>
             )}
 
             {bashRunning && !pendingBash && (
               <div className="py-2 text-[13px] text-text-muted">
-                <span className="animate-[pulse_1.5s_infinite]">Running command...</span>
+                <span className="animate-[pulse_1.5s_infinite]">{t("chat_runningCommand")}...</span>
               </div>
             )}
 
@@ -674,9 +677,10 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
  * 什么被关掉。文案保持具体直白，与现有英文界面一致。
  */
 function ReadOnlySessionBar({ session, isMobile }: { session: SessionInfo; isMobile: boolean }) {
+  const { t } = useI18n();
   const sub = session.subagent;
   const identity = sub
-    ? `${sub.agent ? `agent ${sub.agent}` : "subagent"} · run ${sub.runIndex}`
+    ? `${sub.agent ? t("chat_agentNamed", { name: sub.agent }) : t("chat_subagent")} · ${t("chat_subagentRun", { count: sub.runIndex })}`
     : null;
   return (
     // 与 ChatInput 相同的外边距节奏（桌面端右侧为 ChatMinimap 预留 36px）。
@@ -684,7 +688,7 @@ function ReadOnlySessionBar({ session, isMobile }: { session: SessionInfo; isMob
       <div style={{ maxWidth: 820, margin: "0 auto" }}>
         <div
           role="note"
-          aria-label="Read-only subagent session"
+          aria-label={t("chat_readOnlySession")}
           style={{
             display: "flex",
             alignItems: "flex-start",
@@ -703,9 +707,9 @@ function ReadOnlySessionBar({ session, isMobile }: { session: SessionInfo; isMob
             <path d="M7 11V7a5 5 0 0 1 10 0v4" />
           </svg>
           <span style={{ minWidth: 0 }}>
-            <span style={{ color: "var(--text)", fontWeight: 600 }}>Read-only session</span>
-            {identity ? ` — ${identity}` : " — subagent session"}
-            . Browsing only: sending, steering, follow-ups, compaction, forking, and setting changes are disabled. Messages, files and session stats remain viewable.
+            <span style={{ color: "var(--text)", fontWeight: 600 }}>{t("chat_readOnlySession")}</span>
+            {identity ? ` — ${identity}` : ` — ${t("chat_subagentSessionFallback")}`}
+            {`. ${t("chat_readOnlySessionDescription")}`}
           </span>
         </div>
       </div>
@@ -845,6 +849,7 @@ function ExtensionDialog({
   request: ExtensionDialogRequest;
   onRespond: (request: ExtensionDialogRequest, response: { value: string } | { confirmed: boolean } | { cancelled: true }) => void;
 }) {
+  const { t } = useI18n();
   const [value, setValue] = useState(request.method === "editor" ? request.prefill ?? "" : "");
 
   useEffect(() => {
@@ -886,7 +891,7 @@ function ExtensionDialog({
       >
         <div style={{ padding: "12px 14px", borderBottom: "1px solid var(--border)" }}>
           <div style={{ color: "var(--text)", fontSize: 14, fontWeight: 650 }}>{request.title}</div>
-          <div style={{ marginTop: 3, color: "var(--text-dim)", fontSize: 11, fontFamily: "var(--font-mono)" }}>extension request</div>
+          <div style={{ marginTop: 3, color: "var(--text-dim)", fontSize: 11, fontFamily: "var(--font-mono)" }}>{t("chat_extensionRequest")}</div>
         </div>
 
         <div style={{ padding: 14 }}>
@@ -977,7 +982,7 @@ function ExtensionDialog({
               cursor: "pointer",
             }}
           >
-            Cancel
+            {t("chat_cancel")}
           </button>
           {request.method === "confirm" ? (
             <button
@@ -991,7 +996,7 @@ function ExtensionDialog({
                 cursor: "pointer",
               }}
             >
-              Confirm
+              {t("chat_confirm")}
             </button>
           ) : request.method !== "select" ? (
             <button
@@ -1005,7 +1010,7 @@ function ExtensionDialog({
                 cursor: "pointer",
               }}
             >
-              Submit
+              {t("chat_submit")}
             </button>
           ) : null}
         </div>
@@ -1031,6 +1036,7 @@ function ExtensionCustomPanel({
   request: ExtensionCustomRequest;
   onInput: (request: ExtensionCustomRequest, data: string) => void;
 }) {
+  const { t } = useI18n();
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const composingRef = useRef(false);
   const displayLines = normalizeCustomPanelLines(request.lines);
@@ -1072,7 +1078,7 @@ function ExtensionCustomPanel({
       >
         <textarea
           ref={inputRef}
-          aria-label="Extension terminal input"
+          aria-label={t("chat_extensionPanel")}
           autoCapitalize="off"
           autoComplete="off"
           autoCorrect="off"
@@ -1119,7 +1125,7 @@ function ExtensionCustomPanel({
           }}
         />
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "10px 12px", borderBottom: "1px solid var(--border)" }}>
-          <div style={{ color: "var(--text)", fontSize: 13, fontWeight: 650 }}>Extension panel</div>
+          <div style={{ color: "var(--text)", fontSize: 13, fontWeight: 650 }}>{t("chat_extensionPanel")}</div>
           <button
             onClick={() => onInput(request, "\x03")}
             style={{
@@ -1132,7 +1138,7 @@ function ExtensionCustomPanel({
               fontSize: 12,
             }}
           >
-            Close
+            {t("chat_close")}
           </button>
         </div>
         <pre

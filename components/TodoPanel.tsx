@@ -2,6 +2,7 @@
 
 import { useId } from "react";
 import type { TodoItem, TodoPriority, TodoStatus } from "@/lib/todo-parser";
+import { useI18n } from "@/lib/i18n";
 
 export interface TodoPanelProps {
   todos: readonly TodoItem[];
@@ -9,16 +10,16 @@ export interface TodoPanelProps {
   onToggle: () => void;
 }
 
-const STATUS_LABELS: Record<TodoStatus, string> = {
-  pending: "Pending",
-  in_progress: "In progress",
-  completed: "Completed",
+const STATUS_LABELS: Record<TodoStatus, "todo_pending" | "todo_inProgress" | "todo_completed"> = {
+  pending: "todo_pending",
+  in_progress: "todo_inProgress",
+  completed: "todo_completed",
 };
 
-const PRIORITY_LABELS: Record<TodoPriority, string> = {
-  high: "high",
-  medium: "medium",
-  low: "low",
+const PRIORITY_LABELS: Record<TodoPriority, "todo_high" | "todo_medium" | "todo_low"> = {
+  high: "todo_high",
+  medium: "todo_medium",
+  low: "todo_low",
 };
 
 const PRIORITY_COLORS: Record<TodoPriority, string> = {
@@ -53,6 +54,7 @@ function TodoStatusIcon({ status }: { status: TodoStatus }) {
 }
 
 export function TodoPanel({ todos, collapsed, onToggle }: TodoPanelProps) {
+  const { t } = useI18n();
   const listId = useId();
 
   if (todos.length === 0) return null;
@@ -71,7 +73,7 @@ export function TodoPanel({ todos, collapsed, onToggle }: TodoPanelProps) {
 
   return (
     <section
-      aria-label="Todo list"
+      aria-label={t("todo_toggle")}
       style={{
         marginBottom: 8,
         overflow: "hidden",
@@ -84,7 +86,7 @@ export function TodoPanel({ todos, collapsed, onToggle }: TodoPanelProps) {
         type="button"
         aria-controls={listId}
         aria-expanded={!collapsed}
-        title={collapsed ? "Expand todo list" : "Collapse todo list"}
+        title={collapsed ? t("todo_expand") : t("todo_collapse")}
         onClick={onToggle}
         style={{
           display: "flex",
@@ -131,7 +133,7 @@ export function TodoPanel({ todos, collapsed, onToggle }: TodoPanelProps) {
             textTransform: "uppercase",
           }}
         >
-          Todos
+          {t("todo_toggle")}
         </span>
 
         <span
@@ -147,11 +149,11 @@ export function TodoPanel({ todos, collapsed, onToggle }: TodoPanelProps) {
 
         <span
           role="progressbar"
-          aria-label="Todo completion"
+          aria-label={t("todo_complete")}
           aria-valuemin={0}
           aria-valuemax={todos.length}
           aria-valuenow={completedCount}
-          title={`${progress}% complete`}
+          title={`${progress}% ${t("todo_complete")}`}
           style={{
             width: 46,
             height: 3,
@@ -184,7 +186,7 @@ export function TodoPanel({ todos, collapsed, onToggle }: TodoPanelProps) {
               style={{ width: 5, height: 5, flexShrink: 0, borderRadius: "50%", background: "var(--accent)" }}
             />
             <span style={{ flexShrink: 0, color: "var(--accent)", fontFamily: "var(--font-mono)", fontSize: 10 }}>
-              {activeCount > 1 ? `${activeCount} active` : "active"}
+              {activeCount > 1 ? `${activeCount} ${t("todo_active")}` : t("todo_active")}
             </span>
             <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
               {activeTodo.content}
@@ -226,7 +228,7 @@ export function TodoPanel({ todos, collapsed, onToggle }: TodoPanelProps) {
                 <span style={{ paddingTop: 2 }}>
                   <TodoStatusIcon status={todo.status} />
                 </span>
-                <span className="sr-only">{STATUS_LABELS[todo.status]}: </span>
+                <span className="sr-only">{t(STATUS_LABELS[todo.status])}: </span>
                 <span
                   style={{
                     minWidth: 0,
@@ -239,7 +241,7 @@ export function TodoPanel({ todos, collapsed, onToggle }: TodoPanelProps) {
                   {todo.content}
                 </span>
                 <span
-                  title={`${PRIORITY_LABELS[todo.priority]} priority`}
+                  title={`${t(PRIORITY_LABELS[todo.priority])} ${t("todo_priority")}`}
                   style={{
                     flexShrink: 0,
                     paddingTop: 1,
@@ -251,7 +253,7 @@ export function TodoPanel({ todos, collapsed, onToggle }: TodoPanelProps) {
                     textTransform: "uppercase",
                   }}
                 >
-                  {PRIORITY_LABELS[todo.priority]}
+                  {t(PRIORITY_LABELS[todo.priority])}
                 </span>
               </li>
             );

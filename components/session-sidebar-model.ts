@@ -156,21 +156,55 @@ export function buildSidebarTree(
   return projects;
 }
 
+// ── 项目关闭过滤（纯 UI 隐藏，不触碰任何会话数据） ─────────────────────────
+
+/**
+ * 从项目树中过滤已关闭项目。closedRoots 为空时原样返回（引用相等）。
+ * 只读过滤：返回新数组，项目节点本身复用引用，绝不变异输入。
+ */
+export function filterClosedProjects(
+  projects: SidebarProjectNode[],
+  closedRoots: ReadonlySet<string>,
+): SidebarProjectNode[] {
+  if (closedRoots.size === 0) return projects;
+  return projects.filter((project) => !closedRoots.has(project.root));
+}
+
+/**
+ * 关闭当前项目后的候选项目根：按树的展示顺序取第一个既非被关闭项目、
+ * 也不在已关闭集合中的项目；无剩余项目返回 null（调用方据此置空 cwd）。
+ */
+export function pickProjectRootAfterClose(
+  projects: SidebarProjectNode[],
+  closedRoot: string,
+  closedRoots: ReadonlySet<string>,
+): string | null {
+  for (const project of projects) {
+    if (project.root === closedRoot) continue;
+    if (closedRoots.has(project.root)) continue;
+    return project.root;
+  }
+  return null;
+}
+
 // ── 全项目搜索 ────────────────────────────────────────────────────────────
 
 /**
- * 搜索过滤项目树：命中 project 根路径时保留整个项目；命中 worktree
- * 分支/路径时保留整个分组；否则按会话字段逐组过滤，命中 child 时保留
- * 完整 project → worktree → session 祖先链。返回全新对象，绝不变异输入。
+ * 搜索过滤项目树：命中 project 根路径或项目 alias 时保留整个项目；命中
+ * worktree 分支/路径时保留整个分组；否则按会话字段逐组过滤，命中 child
+ * 时保留完整 project → worktree → session 祖先链。返回全新对象，绝不变异输入。
  */
 export function filterSidebarTree(
   projects: SidebarProjectNode[],
   normalizedQuery: string,
+  projectAliases?: Readonly<Record<string, string>>,
 ): SidebarProjectNode[] {
   if (!normalizedQuery) return projects;
   const result: SidebarProjectNode[] = [];
   for (const project of projects) {
-    if (project.root.toLowerCase().includes(normalizedQuery)) {
+    const alias = projectAliases?.[project.root];
+    if (project.root.toLowerCase().includes(normalizedQuery)
+      || (alias !== undefined && alias.toLowerCase().includes(normalizedQuery))) {
       result.push(project);
       continue;
     }

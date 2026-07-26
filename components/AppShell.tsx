@@ -27,6 +27,7 @@ import type { SessionInfo, SessionTreeNode } from "@/lib/types";
 import type { ChatInputHandle } from "./ChatInput";
 import type { SessionStatsInfo } from "@/lib/pi-types";
 import { ProjectProvider, useProjectActions, useProjectIdentity } from "./ProjectProvider";
+import { useI18n } from "@/lib/i18n";
 
 type SessionCopyField = "file" | "id";
 type AutoNameStatus =
@@ -40,6 +41,7 @@ export function AppShell() {
 }
 
 function AppShellInner() {
+  const { t } = useI18n();
   const router = useRouter();
   const searchParams = useSearchParams();
   const [initialNavigation] = useState(() => getInitialNavigation(searchParams));
@@ -228,12 +230,12 @@ function AppShellInner() {
           key,
           requestId,
           baseline: body.baseline,
-          message: body.error ?? "File changed externally",
+          message: body.error ?? t("viewer_externalChange"),
         });
         return false;
       }
       if (!response.ok || typeof body.size !== "number" || typeof body.mtimeMs !== "number") {
-        throw new Error(body.error ?? `Save failed (HTTP ${response.status})`);
+        throw new Error(body.error ?? t("app_saveFailed", { status: response.status }));
       }
       dispatchFileEditorAction({
         type: "saveSuccess",
@@ -256,7 +258,7 @@ function AppShellInner() {
       });
       return false;
     }
-  }, [dispatchFileEditorAction]);
+  }, [dispatchFileEditorAction, t]);
 
   // Same @mention format as the chat input's @ autocomplete, so the agent's
   // read tool resolves it the same way (it strips the @ prefix).
@@ -529,12 +531,12 @@ function AppShellInner() {
   }, [closeFileTabNow, dispatchFileEditorAction, fileTabs, pendingCloseTabId]);
 
   const centerTabs = useMemo<Tab[]>(() => [
-    { id: "chat", label: "Chat", filePath: "", kind: "chat" },
+    { id: "chat", label: t("app_chat"), filePath: "", kind: "chat" },
     ...fileTabs.map((tab) => {
       const buffer = tab.bufferKey ? getBuffer(fileEditorState, tab.bufferKey) : undefined;
       return { ...tab, dirty: buffer?.dirty, saving: buffer?.saveState === "saving" };
     }),
-  ], [fileEditorState, fileTabs]);
+  ], [fileEditorState, fileTabs, t]);
 
   const handleSelectCenterTab = useCallback((tabId: string) => {
     setPendingCloseTabId(null);
@@ -579,8 +581,8 @@ function AppShellInner() {
         <button
           type="button"
           onClick={() => setSettingsOpen(true)}
-          title="Settings"
-          aria-label="Settings"
+          title={t("app_settings")}
+          aria-label={t("app_settings")}
           className="sidebar-icon-btn"
         >
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -710,8 +712,8 @@ function AppShellInner() {
         <div ref={topBarRef} style={{ display: "flex", alignItems: "center", flexShrink: 0, borderBottom: "1px solid var(--border)", height: 36, background: "var(--bg-panel)" }}>
           <button
             onClick={handleSidebarToggle}
-            title={sidebarOpen ? "Hide sidebar" : "Show sidebar"}
-            aria-label={sidebarOpen ? "Hide sidebar" : "Show sidebar"}
+            title={sidebarOpen ? t("app_hideSidebar") : t("app_showSidebar")}
+            aria-label={sidebarOpen ? t("app_hideSidebar") : t("app_showSidebar")}
             style={{
               display: "flex", alignItems: "center", justifyContent: "center",
               width: 36, height: 36, padding: 0,
@@ -736,8 +738,8 @@ function AppShellInner() {
               const rect = e.currentTarget.getBoundingClientRect();
               toggleTheme({ x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 });
             }}
-            title={isDark ? "Switch to light mode" : "Switch to dark mode"}
-            aria-label={isDark ? "Switch to light mode" : "Switch to dark mode"}
+            title={isDark ? t("app_lightMode") : t("app_darkMode")}
+            aria-label={isDark ? t("app_lightMode") : t("app_darkMode")}
             aria-pressed={isDark}
             style={{
               display: "flex", alignItems: "center", justifyContent: "center",
@@ -774,21 +776,21 @@ function AppShellInner() {
                 const isSuccess = autoNameStatus.kind === "success";
                 const isError = autoNameStatus.kind === "error";
                 const label = autoNameStatus.kind === "naming"
-                  ? "Generating..."
+                  ? t("app_titleGenerating")
                   : isSuccess
-                    ? "Title updated"
+                    ? t("app_titleGenerated")
                     : isError
-                      ? "Generation failed"
-                      : "Generate title";
+                      ? t("app_titleGenerationFailed")
+                      : t("app_generateTitle");
                 const title = !selectedSession
-                  ? "Title generation is available after the session is saved"
+                  ? t("app_titleGenerationDisabledReason")
                   : isReadOnly
-                    ? "Read-only sessions cannot be renamed"
+                    ? t("app_titleGenerationDisabled")
                     : !hasMessages
-                      ? "Send a message before naming this session"
+                      ? t("app_titleGenerationDisabledReason")
                       : isError
                         ? autoNameStatus.message
-                        : "Generate a session title";
+                        : t("app_generateTitle");
 
                 return (
                   <button
@@ -853,8 +855,8 @@ function AppShellInner() {
               <button
                 ref={systemBtnRef}
                 onClick={() => toggleTopPanel("system")}
-                title="System prompt"
-                aria-label="System prompt"
+                title={t("app_systemPrompt")}
+                aria-label={t("app_systemPrompt")}
                 aria-pressed={activeTopPanel === "system"}
                 style={{
                   display: "flex", alignItems: "center", gap: 6,
@@ -876,13 +878,13 @@ function AppShellInner() {
                   <line x1="8" y1="13" x2="16" y2="13" />
                   <line x1="8" y1="17" x2="13" y2="17" />
                 </svg>
-                {!isMobile && <span>System</span>}
+                {!isMobile && <span>{t("app_system")}</span>}
               </button>
             </div>
           )}
           {/* Session stats — right-aligned in top bar */}
           {showChat && (sessionStats || contextUsage) && (() => {
-            const t = sessionStats?.tokens;
+            const tokenStats = sessionStats?.tokens;
             const c = sessionStats?.cost ?? 0;
             const fmt = (n: number) => n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1000 ? `${(n / 1000).toFixed(0)}k` : String(n);
             const costStr = c > 0 ? (c >= 0.01 ? `$${c.toFixed(2)}` : `<$0.01`) : null;
@@ -897,16 +899,16 @@ function AppShellInner() {
             }
 
             const tooltipParts: string[] = [];
-            if (t) {
-              tooltipParts.push(`in: ${t.input.toLocaleString()}`);
-              tooltipParts.push(`out: ${t.output.toLocaleString()}`);
-              tooltipParts.push(`cache read: ${t.cacheRead.toLocaleString()}`);
-              tooltipParts.push(`cache write: ${t.cacheWrite.toLocaleString()}`);
-              if (c > 0) tooltipParts.push(`cost: $${c.toFixed(4)}`);
+            if (tokenStats) {
+              tooltipParts.push(`${t("app_input")}: ${tokenStats.input.toLocaleString()}`);
+              tooltipParts.push(`${t("app_output")}: ${tokenStats.output.toLocaleString()}`);
+              tooltipParts.push(`${t("app_cacheRead")}: ${tokenStats.cacheRead.toLocaleString()}`);
+              tooltipParts.push(`${t("app_cacheWrite")}: ${tokenStats.cacheWrite.toLocaleString()}`);
+              if (c > 0) tooltipParts.push(`${t("app_cost")}: $${c.toFixed(4)}`);
             }
             if (contextUsage?.contextWindow) {
               const pct = contextUsage.percent;
-              tooltipParts.push(`context: ${pct !== null ? pct.toFixed(1) + "%" : "unknown"} of ${contextUsage.contextWindow.toLocaleString()} tokens`);
+              tooltipParts.push(t("app_contextTooltip", { pct: pct !== null ? pct.toFixed(1) + "%" : t("app_unknown"), total: contextUsage.contextWindow.toLocaleString() }));
             }
             const tooltip = tooltipParts.join("  |  ");
 
@@ -914,8 +916,8 @@ function AppShellInner() {
               <button
                 type="button"
                 onClick={() => toggleTopPanel("session")}
-                title={tooltip || "Session info"}
-                aria-label="Session info"
+                title={tooltip || t("app_sessionInfo")}
+                aria-label={t("app_sessionInfo")}
                 aria-pressed={activeTopPanel === "session"}
                 style={{
                   marginLeft: "auto",
@@ -939,28 +941,28 @@ function AppShellInner() {
                     <circle cx="12" cy="12" r="10" /><line x1="12" y1="16" x2="12" y2="12" /><line x1="12" y1="8" x2="12.01" y2="8" />
                   </svg>
                 )}
-                {!isMobile && t && t.input > 0 && (
+                {!isMobile && tokenStats && tokenStats.input > 0 && (
                   <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
                     <svg width="12" height="12" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
                       <line x1="5" y1="8.5" x2="5" y2="1.5" /><polyline points="2 4 5 1.5 8 4" />
                     </svg>
-                    {fmt(t.input)}
+                    {fmt(tokenStats.input)}
                   </span>
                 )}
-                {!isMobile && t && t.output > 0 && (
+                {!isMobile && tokenStats && tokenStats.output > 0 && (
                   <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
                     <svg width="12" height="12" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
                       <line x1="5" y1="1.5" x2="5" y2="8.5" /><polyline points="2 6 5 8.5 8 6" />
                     </svg>
-                    {fmt(t.output)}
+                    {fmt(tokenStats.output)}
                   </span>
                 )}
-                {!isMobile && t && t.cacheRead > 0 && (
+                {!isMobile && tokenStats && tokenStats.cacheRead > 0 && (
                   <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
                     <svg width="12" height="12" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
                       <path d="M8.5 5a3.5 3.5 0 1 1-1-2.45" /><polyline points="6.5 1.5 8.5 2.5 7.5 4.5" />
                     </svg>
-                    {fmt(t.cacheRead)}
+                    {fmt(tokenStats.cacheRead)}
                   </span>
                 )}
                 {!isMobile && costStr && (
@@ -983,8 +985,8 @@ function AppShellInner() {
           <button
             type="button"
             onClick={handleWorkspaceToggle}
-            title={workspaceOpen ? "Hide Files/Git workspace" : "Show Files/Git workspace"}
-            aria-label={workspaceOpen ? "Hide Files/Git workspace" : "Show Files/Git workspace"}
+            title={workspaceOpen ? t("app_hideFiles") : t("app_showFiles")}
+            aria-label={workspaceOpen ? t("app_hideFiles") : t("app_showFiles")}
             aria-pressed={workspaceOpen}
             style={{
               marginLeft: showChat && (sessionStats || contextUsage) ? 0 : "auto",
@@ -1020,7 +1022,7 @@ function AppShellInner() {
                 }}>
                   {selectedSession?.readOnly === true ? (
                     <div style={{ padding: "10px 16px", fontSize: 12, color: "var(--text-muted)", fontStyle: "italic" }}>
-                      System prompt is not available for read-only sessions
+                      {t("app_systemPromptReadOnlyHint")}
                     </div>
                   ) : systemPrompt ? (
                     <div style={{
@@ -1037,11 +1039,11 @@ function AppShellInner() {
                     </div>
                   ) : systemPrompt === "" ? (
                     <div style={{ padding: "10px 16px", fontSize: 12, color: "var(--text-muted)", fontStyle: "italic" }}>
-                      System prompt is empty (tools are disabled)
+                      {t("app_systemPromptEmptyHint")}
                     </div>
                   ) : (
                     <div style={{ padding: "10px 16px", fontSize: 12, color: "var(--text-muted)", fontStyle: "italic" }}>
-                      Send a message to load the system prompt
+                      {t("app_systemPromptAfterMessageHint")}
                     </div>
                   )}
                 </div>
@@ -1055,29 +1057,29 @@ function AppShellInner() {
                 }}>
                   {sessionStats ? (() => {
                     const sessionRows = [
-                      ...(sessionStats.sessionName ? [{ label: "Name", value: sessionStats.sessionName, copyField: null }] : []),
-                      { label: "File", value: sessionStats.sessionFile ?? "In-memory", copyField: "file" as const },
-                      { label: "ID", value: sessionStats.sessionId, copyField: "id" as const },
+                      ...(sessionStats.sessionName ? [{ label: t("app_name"), value: sessionStats.sessionName, copyField: null }] : []),
+                      { label: t("app_file"), value: sessionStats.sessionFile ?? t("app_inMemory"), copyField: "file" as const },
+                      { label: t("app_id"), value: sessionStats.sessionId, copyField: "id" as const },
                     ];
                     const messageRows = [
-                      ["User", sessionStats.userMessages.toLocaleString()],
-                      ["Assistant", sessionStats.assistantMessages.toLocaleString()],
-                      ["Tool Calls", sessionStats.toolCalls.toLocaleString()],
-                      ["Tool Results", sessionStats.toolResults.toLocaleString()],
-                      ["Total", sessionStats.totalMessages.toLocaleString()],
+                      [t("app_user"), sessionStats.userMessages.toLocaleString()],
+                      [t("app_assistant"), sessionStats.assistantMessages.toLocaleString()],
+                      [t("app_toolCalls"), sessionStats.toolCalls.toLocaleString()],
+                      [t("app_toolResults"), sessionStats.toolResults.toLocaleString()],
+                      [t("app_total"), sessionStats.totalMessages.toLocaleString()],
                     ];
                     const tokenRows = [
-                      ["Input", sessionStats.tokens.input.toLocaleString()],
-                      ["Output", sessionStats.tokens.output.toLocaleString()],
-                      ...(sessionStats.tokens.cacheRead > 0 ? [["Cache Read", sessionStats.tokens.cacheRead.toLocaleString()]] : []),
-                      ...(sessionStats.tokens.cacheWrite > 0 ? [["Cache Write", sessionStats.tokens.cacheWrite.toLocaleString()]] : []),
-                      ["Total", sessionStats.tokens.total.toLocaleString()],
+                      [t("app_input"), sessionStats.tokens.input.toLocaleString()],
+                      [t("app_output"), sessionStats.tokens.output.toLocaleString()],
+                      ...(sessionStats.tokens.cacheRead > 0 ? [[t("app_cacheRead"), sessionStats.tokens.cacheRead.toLocaleString()]] : []),
+                      ...(sessionStats.tokens.cacheWrite > 0 ? [[t("app_cacheWrite"), sessionStats.tokens.cacheWrite.toLocaleString()]] : []),
+                      [t("app_total"), sessionStats.tokens.total.toLocaleString()],
                     ];
                     const ctx = contextUsage ?? sessionStats.contextUsage;
                     const formatCompact = (n: number) => n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1000 ? `${(n / 1000).toFixed(0)}k` : String(n);
                     const extraTokenRows = [
-                      ...(sessionStats.cost > 0 ? [["Cost", `$${sessionStats.cost.toFixed(4)}`]] : []),
-                      ...(ctx?.contextWindow ? [["Context", `${ctx.percent !== null ? `${ctx.percent.toFixed(1)}%` : "?"} / ${formatCompact(ctx.contextWindow)}`]] : []),
+                      ...(sessionStats.cost > 0 ? [[t("app_cost"), `$${sessionStats.cost.toFixed(4)}`]] : []),
+                      ...(ctx?.contextWindow ? [[t("app_context"), `${ctx.percent !== null ? `${ctx.percent.toFixed(1)}%` : "?"} / ${formatCompact(ctx.contextWindow)}`]] : []),
                     ];
                     const section = (
                       title: string,
@@ -1114,7 +1116,7 @@ function AppShellInner() {
                       return (
                         <button
                           type="button"
-                          title={copied ? "Copied" : `Copy ${field === "file" ? "file path" : "session ID"}`}
+                          title={copied ? t("app_copied") : field === "file" ? t("app_copyFilePath") : t("app_copySessionId")}
                           onClick={() => handleCopySessionField(field, value)}
                           style={{
                             alignSelf: "start",
@@ -1158,7 +1160,7 @@ function AppShellInner() {
                     };
                     const sessionInfoSection = (
                       <div style={{ minWidth: 0 }}>
-                        <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text)", marginBottom: 6 }}>Session Info</div>
+                        <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text)", marginBottom: 6 }}>{t("app_sessionInfo")}</div>
                         <div style={{ display: "grid", gridTemplateColumns: "auto minmax(0, 1fr) auto", columnGap: 12, rowGap: 8, alignItems: "start" }}>
                           {sessionRows.map((row) => (
                             <div key={`session-info:${row.label}`} style={{ display: "contents" }}>
@@ -1189,13 +1191,13 @@ function AppShellInner() {
                         fontFamily: "var(--font-mono)",
                       }}>
                         {sessionInfoSection}
-                        {section("Messages", messageRows)}
-                        {section("Tokens", [...tokenRows, ...extraTokenRows], "right", true)}
+                        {section(t("app_messages"), messageRows)}
+                        {section(t("app_tokens"), [...tokenRows, ...extraTokenRows], "right", true)}
                       </div>
                     );
                   })() : (
                     <div style={{ fontSize: 12, color: "var(--text-muted)", fontStyle: "italic" }}>
-                      Send a message or run /session to load session info
+                      {t("app_sessionInfoAfterMessageHint")}
                     </div>
                   )}
                 </div>
@@ -1216,18 +1218,18 @@ function AppShellInner() {
             />
             {pendingCloseTabId && fileTabs.some((tab) => tab.id === pendingCloseTabId) && (
               <div className="file-close-confirm" role="alert">
-                <span className="file-close-confirm__message">Unsaved changes in {fileTabs.find((tab) => tab.id === pendingCloseTabId)?.label}</span>
-                <button type="button" className="file-close-confirm__button" onClick={() => void handleSaveAndClose()} title="Save and close" aria-label="Save and close">
+                <span className="file-close-confirm__message">{t("app_unsavedChangesIn", { name: fileTabs.find((tab) => tab.id === pendingCloseTabId)?.label ?? "" })}</span>
+                <button type="button" className="file-close-confirm__button" onClick={() => void handleSaveAndClose()} title={t("app_saveAndClose")} aria-label={t("app_saveAndClose")}>
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
-                  <span>Save &amp; close</span>
+                  <span>{t("app_saveAndClose")}</span>
                 </button>
-                <button type="button" className="file-close-confirm__button is-danger" onClick={handleDiscardAndClose} title="Discard changes" aria-label="Discard changes">
+                <button type="button" className="file-close-confirm__button is-danger" onClick={handleDiscardAndClose} title={t("app_discardChanges")} aria-label={t("app_discardChanges")}>
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="m19 6-1 14H6L5 6m3 0V4h8v2"/></svg>
-                  <span>Discard</span>
+                  <span>{t("app_discardChanges")}</span>
                 </button>
-                <button type="button" className="file-close-confirm__button" onClick={() => setPendingCloseTabId(null)} title="Cancel closing" aria-label="Cancel closing">
+                <button type="button" className="file-close-confirm__button" onClick={() => setPendingCloseTabId(null)} title={t("app_cancelClosing")} aria-label={t("app_cancelClosing")}>
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-                  <span>Cancel</span>
+                  <span>{t("common_cancel")}</span>
                 </button>
               </div>
             )}
@@ -1256,28 +1258,28 @@ function AppShellInner() {
               />
             ) : initialCwdStatus === "validating" ? (
               <div role="status" style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, padding: 24, color: "var(--text-muted)", textAlign: "center" }}>
-                <div style={{ fontSize: 14, color: "var(--text)" }}>Opening workspace...</div>
+                <div style={{ fontSize: 14, color: "var(--text)" }}>{t("app_openWorkspace")}</div>
                 <div style={{ maxWidth: "min(720px, 100%)", overflowWrap: "anywhere", fontFamily: "var(--font-mono)", fontSize: 12 }}>{initialNavigation.requestedCwd}</div>
               </div>
             ) : initialCwdStatus === "error" ? (
               <div role="alert" style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, padding: 24, color: "var(--text-muted)", textAlign: "center" }}>
-                <div style={{ fontSize: 14, color: "#dc2626" }}>Unable to open workspace</div>
+                <div style={{ fontSize: 14, color: "#dc2626" }}>{t("app_workspaceUnavailable")}</div>
                 <div style={{ maxWidth: "min(720px, 100%)", overflowWrap: "anywhere", fontFamily: "var(--font-mono)", fontSize: 12 }}>{initialNavigation.requestedCwd}</div>
                 <div style={{ maxWidth: 720, fontSize: 12 }}>{initialCwdError}</div>
               </div>
             ) : showPlaceholder ? (
               activeCwd ? (
-                <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-muted)", fontSize: 15 }}>Select a session from the sidebar</div>
+                <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-muted)", fontSize: 15 }}>{t("app_selectSessionFromSidebar")}</div>
               ) : (
                 <div style={{ position: "absolute", top: 12, left: 12, display: "flex", alignItems: "flex-start", gap: 8, userSelect: "none", pointerEvents: "none" }}>
                   <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.7, flexShrink: 0 }}>
                     <line x1="20" y1="12" x2="4" y2="12" /><polyline points="10 6 4 12 10 18" />
                   </svg>
                   <div>
-                    <div style={{ fontSize: 18, fontWeight: 600, color: "var(--text)", marginBottom: 8 }}>Get Started</div>
+                    <div style={{ fontSize: 18, fontWeight: 600, color: "var(--text)", marginBottom: 8 }}>{t("app_getStarted")}</div>
                     <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.8 }}>
-                      <span style={{ color: "var(--text-dim)", marginRight: 6 }}>1.</span>Select a project directory from the sidebar<br />
-                      <span style={{ color: "var(--text-dim)", marginRight: 6 }}>2.</span>Add models via the <strong style={{ color: "var(--text)" }}>Settings</strong> button at the bottom
+                      <span style={{ color: "var(--text-dim)", marginRight: 6 }}>1.</span>{t("app_setupSelectProject")}<br />
+                      <span style={{ color: "var(--text-dim)", marginRight: 6 }}>2.</span>{t("app_setupAddModel")}
                     </div>
                   </div>
                 </div>

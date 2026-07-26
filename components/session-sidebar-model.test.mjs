@@ -196,6 +196,62 @@ test("会话定位：返回项目根、非主 worktree 分组与会话级祖先�
   assert.equal(locateSessionInSidebarTree(tree, "missing"), null);
 });
 
+test("关闭项目过滤：从树中隐藏已关闭项目，空集合原样返回", async () => {
+  const { buildSidebarTree, filterClosedProjects } = await jiti.import("./session-sidebar-model.ts");
+  const a = session("a", { cwd: "/repo-a", projectRoot: "/repo-a" });
+  const b = session("b", { cwd: "/repo-b", projectRoot: "/repo-b" });
+  const tree = buildSidebarTree([a, b]);
+  // 空集合：引用相等，零开销。
+  assert.equal(filterClosedProjects(tree, new Set()), tree);
+  const filtered = filterClosedProjects(tree, new Set(["/repo-a"]));
+  assert.deepEqual(filtered.map((p) => p.root), ["/repo-b"]);
+  // 项目节点复用引用，输入树不被修改。
+  assert.equal(filtered[0], tree.find((p) => p.root === "/repo-b"));
+  assert.equal(tree.length, 2);
+  // 全部关闭 → 空数组。
+  assert.deepEqual(filterClosedProjects(tree, new Set(["/repo-a", "/repo-b"])), []);
+});
+
+test("关闭当前项目候选：按展示顺序取下一个未关闭项目，无剩余返回 null", async () => {
+  const { buildSidebarTree, pickProjectRootAfterClose } = await jiti.import("./session-sidebar-model.ts");
+  // modified 由 session() 序号派生：a1 最新在前。
+  const a = session("a1", { cwd: "/repo-a", projectRoot: "/repo-a", modified: "2026-07-09T00:00:00.000Z" });
+  const b = session("b1", { cwd: "/repo-b", projectRoot: "/repo-b", modified: "2026-07-08T00:00:00.000Z" });
+  const c = session("c1", { cwd: "/repo-c", projectRoot: "/repo-c", modified: "2026-07-07T00:00:00.000Z" });
+  const tree = buildSidebarTree([a, b, c]);
+  assert.deepEqual(tree.map((p) => p.root), ["/repo-a", "/repo-b", "/repo-c"]);
+  // 关闭最前的当前项目 → 取顺序上的下一个。
+  assert.equal(pickProjectRootAfterClose(tree, "/repo-a", new Set(["/repo-a"])), "/repo-b");
+  // 下一个也已关闭 → 继续向后跳过。
+  assert.equal(pickProjectRootAfterClose(tree, "/repo-a", new Set(["/repo-a", "/repo-b"])), "/repo-c");
+  // 关闭末尾项目 → 回退到最前的未关闭项目。
+  assert.equal(pickProjectRootAfterClose(tree, "/repo-c", new Set(["/repo-c"])), "/repo-a");
+  // 无剩余项目 → null（调用方置空 cwd 回到空工作区）。
+  assert.equal(pickProjectRootAfterClose(tree, "/repo-a", new Set(["/repo-a", "/repo-b", "/repo-c"])), null);
+  assert.equal(pickProjectRootAfterClose([], "/repo-a", new Set(["/repo-a"])), null);
+});
+
+test("alias 搜索：命中项目 alias 保留整个项目，与根路径命中语义一致", async () => {
+  const { buildSidebarTree, filterSidebarTree } = await jiti.import("./session-sidebar-model.ts");
+  const main = session("m", { cwd: "/repo", projectRoot: "/repo", name: "zzz" });
+  const wt = session("w", { cwd: "/repo-worktrees/feat", projectRoot: "/repo", worktreeBranch: "feat", name: "zzz" });
+  const other = session("o", { cwd: "/other", projectRoot: "/other", name: "zzz" });
+  const tree = buildSidebarTree([main, wt, other]);
+  const aliases = { "/repo": "支付中台" };
+  // 命中 alias：整棵树原样保留（引用相等），未命中项目被过滤。
+  const byAlias = filterSidebarTree(tree, "支付", aliases);
+  assert.equal(byAlias.length, 1);
+  assert.equal(byAlias[0], tree.find((p) => p.root === "/repo"));
+  // alias 大小写不敏感（查询已归一化为小写，alias 在模型内同步小写）。
+  const byAliasCase = filterSidebarTree(tree, "pay", { "/repo": "PayCore" });
+  assert.equal(byAliasCase.length, 1);
+  assert.equal(byAliasCase[0].root, "/repo");
+  // 不传 alias：行为与旧版一致（仅根路径/分支/会话字段可命中）。
+  assert.deepEqual(filterSidebarTree(tree, "支付").map((p) => p.root), []);
+  // alias 未命中但根路径命中：仍然保留整个项目。
+  assert.equal(filterSidebarTree(tree, "other", aliases)[0].root, "/other");
+});
+
 test("搜索与折叠偏好隔离：过滤不触碰折叠集合，搜索期强制展开只读不写", async () => {
   const { buildSidebarTree, filterSidebarTree } = await jiti.import("./session-sidebar-model.ts");
   const { isSessionNodeEffectivelyCollapsed } = await jiti.import("./session-tree.ts");

@@ -10,6 +10,7 @@ import {
   normalizeFilePathSlashes,
 } from "@/lib/file-paths";
 import type { GitFileStatus, GitFileStatusKind, GitStatusResponse } from "@/lib/git-types";
+import { useI18n } from "@/lib/i18n";
 
 interface FileEntry {
   name: string;
@@ -69,11 +70,11 @@ interface PendingConflict {
   nonReplaceable: string[];
 }
 
-async function fetchEntries(dirPath: string): Promise<FileNode[]> {
+async function fetchEntries(dirPath: string, t: ReturnType<typeof useI18n>["t"]): Promise<FileNode[]> {
   const encoded = encodeFilePathForApi(dirPath);
   const res = await fetch(`/api/files/${encoded}?type=list`);
   if (!res.ok) {
-    let message = `Failed to load files (HTTP ${res.status})`;
+    let message = t("files_loadFailed", { status: res.status });
     try {
       const data = await res.json() as { error?: string };
       if (data.error) message = data.error;
@@ -93,21 +94,26 @@ async function fetchEntries(dirPath: string): Promise<FileNode[]> {
   }));
 }
 
-async function fetchGitStatus(cwd: string): Promise<GitStatusResponse> {
+async function fetchGitStatus(cwd: string, t: ReturnType<typeof useI18n>["t"]): Promise<GitStatusResponse> {
   const params = new URLSearchParams({ cwd });
   const res = await fetch(`/api/git/status?${params.toString()}`);
-  if (!res.ok) throw new Error(`Failed to load Git status (HTTP ${res.status})`);
+  if (!res.ok) throw new Error(t("files_gitStatusLoadFailed", { status: res.status }));
   return res.json() as Promise<GitStatusResponse>;
 }
 
 export const GIT_STATUS_LABELS: Record<GitFileStatusKind, string> = {
-  modified: "Modified",
-  added: "Added",
-  deleted: "Deleted",
-  renamed: "Renamed",
-  untracked: "Untracked",
-  conflict: "Conflict",
+  modified: "files_modified",
+  added: "files_added",
+  deleted: "files_deleted",
+  renamed: "files_renamed",
+  untracked: "files_untracked",
+  conflict: "files_conflict",
 };
+
+const GIT_STATUS_KEYS = {
+  modified: "files_modified", added: "files_added", deleted: "files_deleted",
+  renamed: "files_renamed", untracked: "files_untracked", conflict: "files_conflict",
+} as const;
 
 export const GIT_STATUS_COLORS: Record<GitFileStatusKind, string> = {
   modified: "#d6a84b",
@@ -123,6 +129,7 @@ function uploadFiles(
   files: File[],
   strategy: UploadConflictStrategy,
   onProgress: (progress: number) => void,
+  t: ReturnType<typeof useI18n>["t"],
 ): Promise<{ status: number; data: UploadResponse }> {
   return new Promise((resolve, reject) => {
     const formData = new FormData();
@@ -138,8 +145,8 @@ function uploadFiles(
         onProgress(Math.round((event.loaded / event.total) * 100));
       }
     };
-    xhr.onerror = () => reject(new Error("Network error while uploading files"));
-    xhr.onabort = () => reject(new Error("Upload cancelled"));
+    xhr.onerror = () => reject(new Error(t("files_uploadNetworkError")));
+    xhr.onabort = () => reject(new Error(t("files_uploadCancelled")));
     xhr.onload = () => {
       let data: UploadResponse = {};
       try {
@@ -193,6 +200,7 @@ function TreeNode({
   highlightedPaths,
   gitStatusByPath,
   changedDirectoryPaths,
+  t,
 }: {
   node: FileNode;
   depth: number;
@@ -205,6 +213,7 @@ function TreeNode({
   highlightedPaths: Set<string>;
   gitStatusByPath: Map<string, GitFileStatus>;
   changedDirectoryPaths: Set<string>;
+  t: ReturnType<typeof useI18n>["t"];
 }) {
   const open = expandedPaths.has(node.fullPath);
   const highlighted = highlightedPaths.has(node.fullPath);
@@ -222,7 +231,7 @@ function TreeNode({
     if (loaded && !force) return;
     setLoading(true);
     try {
-      const entries = await fetchEntries(node.fullPath);
+      const entries = await fetchEntries(node.fullPath, t);
       setChildren(entries);
       setLoaded(true);
     } catch {
@@ -230,7 +239,7 @@ function TreeNode({
     } finally {
       setLoading(false);
     }
-  }, [loaded, node.fullPath]);
+  }, [loaded, node.fullPath, t]);
 
   // Re-fetch children when the tree refreshes and the directory is open.
   useEffect(() => {
@@ -300,16 +309,16 @@ function TreeNode({
         {highlighted && (
           <span
             className="file-row-badge"
-            title="Newly uploaded"
-            aria-label="Newly uploaded"
+            title={t("files_uploaded")}
+            aria-label={t("files_uploaded")}
             style={{ width: 6, height: 6, flexShrink: 0, borderRadius: "50%", background: "#3b82f6" }}
           />
         )}
         {!node.isDir && gitStatus && (
           <span
             className="file-row-badge"
-            title={GIT_STATUS_LABELS[gitStatus.status]}
-            aria-label={GIT_STATUS_LABELS[gitStatus.status]}
+            title={t(GIT_STATUS_KEYS[gitStatus.status])}
+            aria-label={t(GIT_STATUS_KEYS[gitStatus.status])}
             style={{
               width: 14,
               flexShrink: 0,
@@ -326,8 +335,8 @@ function TreeNode({
         {containsGitChanges && (
           <span
             className="file-row-badge"
-            title="Contains changed files"
-            aria-label="Contains changed files"
+            title={t("files_containsChanges")}
+            aria-label={t("files_containsChanges")}
             style={{
               width: 6,
               height: 6,
@@ -353,8 +362,8 @@ function TreeNode({
                 e.stopPropagation();
                 onAtMention(getRelativeFilePath(node.fullPath, cwd), node.isDir);
               }}
-              title="Insert path into chat"
-              aria-label={`Insert ${node.name} into chat`}
+              title={t("files_insertIntoChat", { name: node.name })}
+              aria-label={t("files_insertIntoChat", { name: node.name })}
               style={{ color: "var(--accent)" }}
             >
               <MentionIcon />
@@ -366,8 +375,8 @@ function TreeNode({
               href={`/api/files/${encodeFilePathForApi(node.fullPath)}?type=download`}
               download
               onClick={(e) => e.stopPropagation()}
-              title="Download file"
-              aria-label={`Download ${node.name}`}
+              title={t("viewer_download")}
+              aria-label={t("files_downloadFile", { name: node.name })}
             >
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                 <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
@@ -395,11 +404,12 @@ function TreeNode({
               highlightedPaths={highlightedPaths}
               gitStatusByPath={gitStatusByPath}
               changedDirectoryPaths={changedDirectoryPaths}
+              t={t}
             />
           ))}
           {children.length === 0 && loaded && (
             <div style={{ paddingLeft: 8 + (depth + 1) * 14, fontSize: 11, color: "var(--text-dim)", height: 22, display: "flex", alignItems: "center" }}>
-              empty
+              {t("files_noFiles")}
             </div>
           )}
         </div>
@@ -416,6 +426,7 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
   onAtMentions,
   onUploadBusyChange,
 }, ref) {
+  const { t } = useI18n();
   const [roots, setRoots] = useState<FileNode[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -483,7 +494,7 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
     setUploadPhase("uploading");
 
     try {
-      const { status, data } = await uploadFiles(cwd, files, strategy, setUploadProgress);
+      const { status, data } = await uploadFiles(cwd, files, strategy, setUploadProgress, t);
       if (status === 409 && data.conflicts?.length) {
         setPendingConflict({
           files,
@@ -493,7 +504,7 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
         return;
       }
       if (status < 200 || status >= 300) {
-        throw new Error(data.error ?? `Upload failed (HTTP ${status})`);
+        throw new Error(data.error ?? t("files_uploadFailed", { status }));
       }
       setUploadProgress(100);
       applyUploadResult(data);
@@ -502,7 +513,7 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
     } finally {
       setUploadPhase("idle");
     }
-  }, [applyUploadResult, cwd]);
+  }, [applyUploadResult, cwd, t]);
 
   const prepareUpload = useCallback(async (files: File[]) => {
     if (files.length === 0 || uploadBusy) return;
@@ -523,7 +534,7 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
         },
       );
       const data = await res.json().catch(() => ({})) as UploadResponse;
-      if (!res.ok) throw new Error(data.error ?? `Upload check failed (HTTP ${res.status})`);
+      if (!res.ok) throw new Error(data.error ?? t("files_uploadCheckFailed", { status: res.status }));
 
       if (data.conflicts?.length) {
         setPendingConflict({
@@ -540,7 +551,7 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
     } finally {
       setUploadPhase("idle");
     }
-  }, [cwd, performUpload, uploadBusy]);
+  }, [cwd, performUpload, t, uploadBusy]);
 
   const handleUploadInput = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files ?? []);
@@ -576,16 +587,16 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
     setLoading(cwdChanged);
     setError(null);
     let cancelled = false;
-    fetchEntries(cwd)
+    fetchEntries(cwd, t)
       .then((entries) => { if (!cancelled) setRoots(entries); })
       .catch((e) => { if (!cancelled) setError(e instanceof Error ? e.message : String(e)); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [cwd, refreshKey, treeRefreshKey]);
+  }, [cwd, refreshKey, t, treeRefreshKey]);
 
   useEffect(() => {
     let cancelled = false;
-    fetchGitStatus(cwd)
+    fetchGitStatus(cwd, t)
       .then((status) => {
         if (!cancelled) setGitFiles(status.isGitRepository ? status.files : []);
       })
@@ -593,7 +604,7 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
         if (!cancelled) setGitFiles([]);
       });
     return () => { cancelled = true; };
-  }, [cwd, refreshKey, treeRefreshKey]);
+  }, [cwd, refreshKey, t, treeRefreshKey]);
 
   const showUploadFeedback = uploadBusy || pendingConflict !== null || uploadError !== null || uploadSummary !== null;
 
@@ -610,7 +621,7 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
       {showUploadFeedback && (
         <div style={{ padding: "6px 8px", borderBottom: "1px solid var(--border)" }}>
         {uploadBusy && (
-          <div role="status" aria-live="polite" aria-label={uploadPhase === "checking" ? "Checking files" : `Uploading, ${uploadProgress}%`}>
+          <div role="status" aria-live="polite" aria-label={uploadPhase === "checking" ? t("files_loadingList") : `${t("files_uploading")} ${uploadProgress}%`}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, minHeight: 14, color: "var(--text-muted)" }}>
               {uploadPhase === "checking" ? (
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" style={{ animation: "spin 0.8s linear infinite" }} aria-hidden="true">
@@ -636,22 +647,22 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
         {pendingConflict && (
           <div role="alert" style={{ padding: 7, border: "1px solid color-mix(in srgb, #f59e0b 55%, var(--border))", borderRadius: 4, background: "color-mix(in srgb, #f59e0b 9%, var(--bg-panel))" }}>
             <div style={{ fontSize: 11, color: "var(--text)", lineHeight: 1.35, overflowWrap: "anywhere" }}>
-              {pendingConflict.conflicts.length} file{pendingConflict.conflicts.length === 1 ? "" : "s"} already exist: {pendingConflict.conflicts.join(", ")}
+              {t(pendingConflict.conflicts.length === 1 ? "files_existingFilesCount_one" : "files_existingFilesCount", { count: pendingConflict.conflicts.length })}: {pendingConflict.conflicts.join(", ")}
             </div>
             {pendingConflict.nonReplaceable.length > 0 && (
               <div style={{ marginTop: 3, fontSize: 10, color: "#f59e0b", lineHeight: 1.35, overflowWrap: "anywhere" }}>
-                Cannot replace: {pendingConflict.nonReplaceable.join(", ")}
+                {t("files_cannotReplace", { names: pendingConflict.nonReplaceable.join(", ") })}
               </div>
             )}
             <div style={{ display: "flex", gap: 5, marginTop: 7 }}>
               <button type="button" onClick={() => void performUpload(pendingConflict.files, "overwrite")} style={{ height: 22, padding: "0 7px", border: "1px solid #ef4444", borderRadius: 4, background: "transparent", color: "#ef4444", cursor: "pointer", fontSize: 10 }}>
-                Replace
+                {t("files_replace")}
               </button>
               <button type="button" onClick={() => void performUpload(pendingConflict.files, "skip")} style={{ height: 22, padding: "0 7px", border: "1px solid var(--border)", borderRadius: 4, background: "var(--bg-panel)", color: "var(--text)", cursor: "pointer", fontSize: 10 }}>
-                Skip existing
+                {t("files_skip")}
               </button>
               <button type="button" onClick={() => setPendingConflict(null)} style={{ height: 22, padding: "0 7px", border: "none", borderRadius: 4, background: "transparent", color: "var(--text-muted)", cursor: "pointer", fontSize: 10 }}>
-                Cancel
+                {t("files_cancel")}
               </button>
             </div>
           </div>
@@ -660,7 +671,7 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
         {uploadError && (
           <div role="alert" style={{ display: "flex", alignItems: "flex-start", gap: 6, fontSize: 11, lineHeight: 1.35, color: "#f87171" }}>
             <span style={{ minWidth: 0, flex: 1, overflowWrap: "anywhere" }}>{uploadError}</span>
-            <DismissButton onClick={() => setUploadError(null)} title="Dismiss error" />
+            <DismissButton onClick={() => setUploadError(null)} title={t("files_closeError")} />
           </div>
         )}
 
@@ -669,7 +680,7 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
             <div style={{ display: "flex", alignItems: "center", gap: 8, minHeight: 22, fontSize: 11 }}>
               <div style={{ minWidth: 0, flex: 1, display: "flex", alignItems: "center", gap: 8 }}>
                 {uploadSummary.uploaded.length > 0 && (
-                  <span title={`${uploadSummary.uploaded.length} uploaded`} aria-label={`${uploadSummary.uploaded.length} uploaded`} style={{ display: "flex", alignItems: "center", gap: 3, color: "#22c55e" }}>
+                  <span title={t("files_uploadedCount", { count: uploadSummary.uploaded.length })} aria-label={t("files_uploadedCount", { count: uploadSummary.uploaded.length })} style={{ display: "flex", alignItems: "center", gap: 3, color: "#22c55e" }}>
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                       <path d="m5 12 4 4L19 6" />
                     </svg>
@@ -677,7 +688,7 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
                   </span>
                 )}
                 {uploadSummary.skipped.length > 0 && (
-                  <span title={`${uploadSummary.skipped.length} skipped`} aria-label={`${uploadSummary.skipped.length} skipped`} style={{ display: "flex", alignItems: "center", gap: 3, color: "var(--text-dim)" }}>
+                  <span title={t("files_skippedCount", { count: uploadSummary.skipped.length })} aria-label={t("files_skippedCount", { count: uploadSummary.skipped.length })} style={{ display: "flex", alignItems: "center", gap: 3, color: "var(--text-dim)" }}>
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
                       <circle cx="12" cy="12" r="9" />
                       <path d="M8 12h8" />
@@ -686,7 +697,7 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
                   </span>
                 )}
                 {uploadSummary.errors.length > 0 && (
-                  <span title={`${uploadSummary.errors.length} failed`} aria-label={`${uploadSummary.errors.length} failed`} style={{ display: "flex", alignItems: "center", gap: 3, color: "#f87171" }}>
+                  <span title={t("files_failedCount", { count: uploadSummary.errors.length })} aria-label={t("files_failedCount", { count: uploadSummary.errors.length })} style={{ display: "flex", alignItems: "center", gap: 3, color: "#f87171" }}>
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                       <path d="M12 3 2.5 20h19L12 3Z" />
                       <path d="M12 9v4" />
@@ -700,15 +711,15 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
                 <button
                   type="button"
                   onClick={addUploadedFilesToChat}
-                  title={uploadSummary.uploaded.length === 1 ? "Add uploaded file to chat" : "Add all uploaded files to chat"}
-                  aria-label={uploadSummary.uploaded.length === 1 ? "Add uploaded file to chat" : "Add all uploaded files to chat"}
+                  title={uploadSummary.uploaded.length === 1 ? t("files_addFileToChat") : t("files_addAllFilesToChat")}
+                  aria-label={uploadSummary.uploaded.length === 1 ? t("files_addFileToChat") : t("files_addAllFilesToChat")}
                   className="file-row-action-btn"
                   style={{ color: "var(--accent)" }}
                 >
                   <MentionIcon />
                 </button>
               )}
-              <DismissButton onClick={() => setUploadSummary(null)} title="Dismiss upload results" />
+              <DismissButton onClick={() => setUploadSummary(null)} title={t("files_closeUploadResults")} />
             </div>
             {uploadSummary.errors.map((item) => (
               <div key={item.name} title={item.error} style={{ display: "flex", alignItems: "center", gap: 4, marginTop: 3, minWidth: 0, fontSize: 10, color: "#f87171" }}>
@@ -727,7 +738,7 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
 
       <div style={{ padding: "2px 4px" }}>
         {loading ? (
-          <div style={{ padding: "8px 12px", fontSize: 11, color: "var(--text-dim)" }}>Loading files...</div>
+          <div style={{ padding: "8px 12px", fontSize: 11, color: "var(--text-dim)" }}>{t("files_loading")}</div>
         ) : error ? (
           <div style={{ padding: "8px 12px", fontSize: 11, color: "#f87171" }}>{error}</div>
         ) : (
@@ -745,6 +756,7 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
               highlightedPaths={highlightedPaths}
               gitStatusByPath={gitStatusByPath}
               changedDirectoryPaths={changedDirectoryPaths}
+              t={t}
             />
           ))
         )}

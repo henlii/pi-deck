@@ -4,6 +4,8 @@ import { useMemo } from "react";
 import type { GitFileStatus, GitFileStatusKind, GitStatusResponse } from "@/lib/git-types";
 import { getFileName, getRelativeFilePath } from "@/lib/file-paths";
 import { getFileIcon } from "./FileIcons";
+import { useI18n } from "@/lib/i18n";
+import type { TranslationKey } from "@/lib/locales/en";
 import { GIT_STATUS_COLORS, GIT_STATUS_LABELS } from "./FileExplorer";
 
 interface Props {
@@ -29,6 +31,7 @@ const STATUS_RANK: Record<GitFileStatusKind, number> = {
  * 点击文件行打开现有文件预览（FileViewer 自带 Diff 模式），不提供 stage/commit。
  */
 export function GitPanel({ cwd, status, loading, error, onOpenFile }: Props) {
+  const { t } = useI18n();
   const sortedFiles = useMemo(() => {
     if (!status) return [];
     return [...status.files].sort((a, b) => {
@@ -38,13 +41,13 @@ export function GitPanel({ cwd, status, loading, error, onOpenFile }: Props) {
   }, [status]);
 
   if (loading && !status) {
-    return <PanelHint>Loading Git status…</PanelHint>;
+    return <PanelHint>{t("git_loading")}</PanelHint>;
   }
   if (error) {
     return <PanelHint tone="error">{error}</PanelHint>;
   }
   if (!status || !status.isGitRepository) {
-    return <PanelHint>Not a Git repository</PanelHint>;
+    return <PanelHint>{t("git_notRepo")}</PanelHint>;
   }
   if (sortedFiles.length === 0) {
     return (
@@ -52,7 +55,7 @@ export function GitPanel({ cwd, status, loading, error, onOpenFile }: Props) {
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#4ade80" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
           <polyline points="20 6 9 17 4 12" />
         </svg>
-        <span style={{ fontSize: 12 }}>Working tree clean</span>
+        <span style={{ fontSize: 12 }}>{t("git_clean")}</span>
       </div>
     );
   }
@@ -64,7 +67,7 @@ export function GitPanel({ cwd, status, loading, error, onOpenFile }: Props) {
         style={{ padding: "4px 10px 6px", fontSize: 10.5, color: "var(--text-dim)", lineHeight: 1.4 }}
         title={status.repositoryRoot ?? cwd}
       >
-        {sortedFiles.length} change{sortedFiles.length === 1 ? "" : "s"} · {status.repositoryRoot ?? cwd}
+        {t(sortedFiles.length === 1 ? "git_changesCount_one" : "git_changesCount", { count: sortedFiles.length })} · {status.repositoryRoot ?? cwd}
       </div>
       {sortedFiles.map((file) => (
         <GitFileRow key={file.filePath} file={file} cwd={cwd} onOpenFile={onOpenFile} />
@@ -78,15 +81,17 @@ function GitFileRow({ file, cwd, onOpenFile }: {
   cwd: string;
   onOpenFile: (filePath: string, fileName: string) => void;
 }) {
+  const { t } = useI18n();
   const name = getFileName(file.filePath) || file.filePath;
   const relative = getRelativeFilePath(file.filePath, cwd);
+  const statusLabel = t(GIT_STATUS_LABELS[file.status] as TranslationKey);
   return (
     <button
       type="button"
       className="git-file-row"
       onClick={() => onOpenFile(file.filePath, name)}
-      title={`${file.filePath} — ${GIT_STATUS_LABELS[file.status]}`}
-      aria-label={`Open ${relative} (${GIT_STATUS_LABELS[file.status]})`}
+      title={`${file.filePath} — ${statusLabel}`}
+      aria-label={t("git_openFile" as TranslationKey, { path: relative, status: statusLabel })}
     >
       <span
         aria-hidden="true"
@@ -109,7 +114,7 @@ function GitFileRow({ file, cwd, onOpenFile }: {
         {relative}
       </span>
       <span style={{ flexShrink: 0, fontSize: 10, color: "var(--text-dim)" }}>
-        {GIT_STATUS_LABELS[file.status]}
+        {statusLabel}
       </span>
     </button>
   );
