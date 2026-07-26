@@ -189,7 +189,7 @@ export function TodoPanel({ todos, collapsed, onToggle }: TodoPanelProps) {
               {activeCount > 1 ? `${activeCount} ${t("todo_active")}` : t("todo_active")}
             </span>
             <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              {activeTodo.content}
+              {activeTodo.activeForm ?? activeTodo.content}
             </span>
           </span>
         ) : (
@@ -229,32 +229,40 @@ export function TodoPanel({ todos, collapsed, onToggle }: TodoPanelProps) {
                   <TodoStatusIcon status={todo.status} />
                 </span>
                 <span className="sr-only">{t(STATUS_LABELS[todo.status])}: </span>
-                <span
-                  style={{
-                    minWidth: 0,
-                    flex: 1,
-                    overflowWrap: "anywhere",
-                    textDecoration: completed ? "line-through" : "none",
-                    textDecorationColor: "color-mix(in srgb, var(--text-dim) 60%, transparent)",
-                  }}
-                >
-                  {todo.content}
+                <span style={{ minWidth: 0, flex: 1 }}>
+                  <span
+                    style={{
+                      display: "block",
+                      overflowWrap: "anywhere",
+                      textDecoration: completed ? "line-through" : "none",
+                      textDecorationColor: "color-mix(in srgb, var(--text-dim) 60%, transparent)",
+                    }}
+                  >
+                    {todo.content}
+                  </span>
+                  {todo.blockedBy && todo.blockedBy.length > 0 ? (
+                    <span style={{ display: "block", marginTop: 1, color: "var(--text-dim)", fontSize: 10 }}>
+                      {t("todo_blockedBy", { list: todo.blockedBy.join(", ") })}
+                    </span>
+                  ) : null}
                 </span>
-                <span
-                  title={`${t(PRIORITY_LABELS[todo.priority])} ${t("todo_priority")}`}
-                  style={{
-                    flexShrink: 0,
-                    paddingTop: 1,
-                    color: PRIORITY_COLORS[todo.priority],
-                    fontFamily: "var(--font-mono)",
-                    fontSize: 9,
-                    fontWeight: todo.priority === "high" ? 700 : 550,
-                    letterSpacing: 0.35,
-                    textTransform: "uppercase",
-                  }}
-                >
-                  {t(PRIORITY_LABELS[todo.priority])}
-                </span>
+                {todo.priority ? (
+                  <span
+                    title={`${t(PRIORITY_LABELS[todo.priority])} ${t("todo_priority")}`}
+                    style={{
+                      flexShrink: 0,
+                      paddingTop: 1,
+                      color: PRIORITY_COLORS[todo.priority],
+                      fontFamily: "var(--font-mono)",
+                      fontSize: 9,
+                      fontWeight: todo.priority === "high" ? 700 : 550,
+                      letterSpacing: 0.35,
+                      textTransform: "uppercase",
+                    }}
+                  >
+                    {t(PRIORITY_LABELS[todo.priority])}
+                  </span>
+                ) : null}
               </li>
             );
           })}

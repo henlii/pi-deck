@@ -247,6 +247,7 @@ export const zhCN: Record<TranslationKey, string> = {
   todo_complete: '完成',
   todo_active: "进行中",
   todo_priority: '优先级',
+  todo_blockedBy: '被 {list} 阻塞',
   // extension
   extension_expired: '已过期',
   extension_waitingEnded: '等待结束',

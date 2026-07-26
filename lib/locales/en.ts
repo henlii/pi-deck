@@ -247,6 +247,7 @@ export const en = {
   todo_complete: 'complete',
   todo_active: "active",
   todo_priority: 'priority',
+  todo_blockedBy: 'blocked by {list}',
   // extension
   extension_expired: 'Expired',
   extension_waitingEnded: 'Waiting ended',
