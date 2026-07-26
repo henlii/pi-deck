@@ -8,7 +8,12 @@ Pi Deck 是基于 [Pi](https://github.com/badlogic/pi-mono) 的统一 Agent 工�
 
 ## 路线图
 
-当前路线图、实施进度和验收标准统一记录在 [第一阶段：架构 seam 与 OpenChamber 风格产品改造](https://github.com/henlii/pi-deck/issues/1)。
+路线图、实施进度和验收标准统一记录在各阶段 tracking Issue 中：
+
+- [第一阶段：架构 seam 与 OpenChamber 风格产品改造](https://github.com/henlii/pi-deck/issues/1)
+- [第二阶段：补齐 Pi 生态高价值盲区（待办镜像、会话全文搜索、subagent 结果卡片、项目信任）](https://github.com/henlii/pi-deck/issues/2)
+- [第三阶段：Pi 扩展生态可观测性与 Agent 默认值设置](https://github.com/henlii/pi-deck/issues/3)
+- [第四阶段：辅助信息面与低频能力（统计、结果浏览、克隆、模板、版本）](https://github.com/henlii/pi-deck/issues/4)
 
 ## Upstream / 上游来源
 

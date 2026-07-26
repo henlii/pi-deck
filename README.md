@@ -10,7 +10,12 @@ The image is an upstream Pi Web screenshot, retained temporarily as a representa
 
 ## Roadmap
 
-The current roadmap, implementation progress, and acceptance criteria are tracked in [Phase 1: architecture seams and OpenChamber-style product redesign](https://github.com/henlii/pi-deck/issues/1).
+The roadmap, implementation progress, and acceptance criteria are tracked in phase tracking issues:
+
+- [Phase 1: architecture seams and OpenChamber-style product redesign](https://github.com/henlii/pi-deck/issues/1)
+- [Phase 2: high-value Pi ecosystem blind spots (todo mirror, full-text session search, subagent result cards, project trust)](https://github.com/henlii/pi-deck/issues/2)
+- [Phase 3: Pi extension ecosystem observability and agent default settings](https://github.com/henlii/pi-deck/issues/3)
+- [Phase 4: auxiliary info surfaces and low-frequency capabilities](https://github.com/henlii/pi-deck/issues/4)
 
 ## Upstream / 上游来源
 
