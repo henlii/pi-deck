@@ -11,6 +11,7 @@ import { ChatInput, type ChatInputHandle } from "./ChatInput";
 import { ChatMinimap, useMessageRefs } from "./ChatMinimap";
 import { InlineExtensionCard } from "./InlineExtensionCard";
 import { TodoPanel } from "./TodoPanel";
+import { OmPanel } from "./OmPanel";
 import { useAgentSession, type AgentPhase, type NoticeItem } from "@/hooks/useAgentSession";
 import { useAudio } from "@/hooks/useAudio";
 import { useI18n } from "@/lib/i18n";
@@ -137,6 +138,7 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
     slashCommands, slashCommandsLoading, queuedMessages,
     notices, extensionDialog, extensionInlineRequest, extensionCustomUi, extensionStatuses, extensionWidgets, respondToExtensionUi, sendExtensionCustomInput,
     todos,
+    observationalMemory,
     isAutoModelSelection,
     agentPhase,
     isNew,
@@ -154,13 +156,15 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
   });
   const sessionBusy = agentRunning || bashRunning;
   const [todosCollapsed, setTodosCollapsed] = useState(true);
+  const [omCollapsed, setOmCollapsed] = useState(true);
   const [expiredInlineRequestId, setExpiredInlineRequestId] = useState<string | null>(null);
   const inlineExtensionCardRef = useRef<HTMLDivElement>(null);
   const todoCollapseScope = session?.id ?? (newSessionCwd ? `new:${newSessionCwd}` : "new-session");
 
-  // Todo 展开状态只属于当前聊天视图；切换会话后恢复默认折叠。
+  // Todo / om 展开状态只属于当前聊天视图；切换会话后恢复默认折叠。
   useEffect(() => {
     setTodosCollapsed(true);
+    setOmCollapsed(true);
   }, [todoCollapseScope]);
 
   // 这里只负责在 expiresAt 到达时刷新 UI 并禁用卡片，不发送任何协议响应。
@@ -371,6 +375,25 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
     </div>
   );
 
+  // 观察与反思：无有效 om 时不渲染；放在 Todo 下方。
+  const omPanelElement = !observationalMemory?.hasData ? null : (
+    <div
+      style={{
+        flexShrink: 0,
+        padding: `0 ${CHAT_COLUMN_PADDING}px`,
+        paddingRight: isMobile ? CHAT_COLUMN_PADDING : CHAT_INPUT_RIGHT_PADDING,
+      }}
+    >
+      <div style={{ maxWidth: 820, margin: "0 auto" }}>
+        <OmPanel
+          memory={observationalMemory}
+          collapsed={omCollapsed}
+          onToggle={() => setOmCollapsed((value) => !value)}
+        />
+      </div>
+    </div>
+  );
+
   const aboveEditorWidgets = extensionWidgets.filter((widget) => widget.placement !== "belowEditor");
   const belowEditorWidgets = extensionWidgets.filter((widget) => widget.placement === "belowEditor");
 
@@ -465,6 +488,7 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
             </div>
             <NoticeShelf notices={notices} align="right" />
             {todoPanelElement}
+            {omPanelElement}
             {chatInputElement}
           </div>
         </div>
@@ -680,6 +704,7 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
           </div>
         </div>
         {todoPanelElement}
+        {omPanelElement}
         {chatInputElement}
       </div>
       </>

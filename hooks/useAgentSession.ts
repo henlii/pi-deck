@@ -11,6 +11,7 @@ import type {
   AttachedImage,
   ChatInputHandle,
 } from "@/lib/types";
+import type { ObservationalMemoryView } from "@/lib/om-ledger";
 import { normalizeToolCalls } from "@/lib/normalize";
 import { sendAgentCommand } from "@/lib/agent-client";
 import {
@@ -52,6 +53,8 @@ export interface SessionData {
     thinkingLevel: string;
     model: { provider: string; modelId: string } | null;
   };
+  /** om 只读 ledger 投影；无有效 om entry 时为 null；旧响应可能缺省 */
+  observationalMemory?: ObservationalMemoryView | null;
 }
 
 interface StreamingState {
@@ -361,6 +364,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const [activeLeafId, setActiveLeafId] = useState<string | null>(null);
   const [messages, setMessages] = useState<AgentMessage[]>([]);
   const [entryIds, setEntryIds] = useState<string[]>([]);
+  const [observationalMemory, setObservationalMemory] = useState<ObservationalMemoryView | null>(null);
   const [streamState, dispatch] = useReducer(streamReducer, { isStreaming: false, streamingMessage: null });
   const [agentRunning, setAgentRunning] = useState(false);
   const [bashRunning, setBashRunning] = useState(false);
@@ -615,6 +619,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           setData(null);
           setActiveLeafId(null);
           setMessages([]);
+          setEntryIds([]);
+          setObservationalMemory(null);
           setError(null);
         }
         return null;
@@ -629,6 +635,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       setActiveLeafId(d.leafId);
       setMessages(d.context.messages);
       setEntryIds(d.context.entryIds ?? []);
+      setObservationalMemory(d.observationalMemory ?? null);
       setCurrentModelOverride(null);
       setError(null);
       if (d.context.thinkingLevel && d.context.thinkingLevel !== "off") {
@@ -677,11 +684,16 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       const url = `/api/sessions/${encodeURIComponent(sid)}/context?${params}`;
       const res = await fetch(url);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const d = await res.json() as { context: { messages: AgentMessage[]; entryIds: string[] } };
+      const d = await res.json() as {
+        context: { messages: AgentMessage[]; entryIds: string[] };
+        observationalMemory?: ObservationalMemoryView | null;
+      };
       // 仅在成功拿到新 context、即将写入 state 时重置跟随；fetch 失败不遗留 pending。
       notifyAutoFollowBranchReset();
       setMessages(d.context.messages);
       setEntryIds(d.context.entryIds ?? []);
+      // leaf 切换时同步 om 投影；字段缺省时清空，避免旧 leaf 数据残留
+      setObservationalMemory(d.observationalMemory ?? null);
     } catch (e) {
       console.error("Failed to load context:", e);
     }
@@ -1985,7 +1997,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
   return {
     // State
-    data, loading, error, activeLeafId, messages, entryIds, streamState,
+    data, loading, error, activeLeafId, messages, entryIds, observationalMemory, streamState,
     agentRunning, modelNames, modelList, modelThinkingLevels, modelThinkingLevelMaps, newSessionModel, toolPreset, thinkingLevel,
     retryInfo, contextUsage, systemPrompt, forkingEntryId,
     isCompacting, compactError, compactResult, currentModel, displayModel, sessionStats,

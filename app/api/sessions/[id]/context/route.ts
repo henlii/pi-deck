@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
-import { SessionManager } from "@earendil-works/pi-coding-agent";
-import { resolveSessionPath, buildSessionContext } from "@/lib/session-reader";
+import { resolveSessionPath, buildSessionContext, resolveSessionManagerForRead } from "@/lib/session-reader";
+import { projectObservationalMemory } from "@/lib/om-ledger";
+import { getRpcSession } from "@/lib/rpc-manager";
 
 export async function GET(
   req: Request,
@@ -18,13 +19,20 @@ export async function GET(
       return NextResponse.json({ error: "Session not found" }, { status: 404 });
     }
 
-    const sm = SessionManager.open(filePath);
-    const context = buildSessionContext(sm.getEntries() as never, leafId, {
+    // 与主会话 GET 一致：有存活 live wrapper 时用其 entries，避免 leaf 偏差。
+    // 投影本身以请求 leafId 为准（in-session branch 切换传 leafId）。
+    const sm = resolveSessionManagerForRead({
+      filePath,
+      liveSession: getRpcSession(id) ?? null,
+    });
+    const entries = sm.getEntries() as never;
+    const context = buildSessionContext(entries, leafId, {
       deferThinking,
       deferToolResultImages,
     });
+    const observationalMemory = projectObservationalMemory(entries, leafId ?? null);
 
-    return NextResponse.json({ context });
+    return NextResponse.json({ context, observationalMemory });
   } catch (error) {
     return NextResponse.json({ error: String(error) }, { status: 500 });
   }

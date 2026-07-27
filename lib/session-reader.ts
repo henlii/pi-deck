@@ -9,6 +9,7 @@ import { normalize as normalizePath } from "path";
 import type { AgentMessage, SessionEntry, SessionHeader, SessionInfo, SessionContext } from "./types";
 import type { SessionEntry as PiSessionEntry, SessionInfo as PiSessionInfo } from "@earendil-works/pi-coding-agent";
 import { normalizeToolCalls } from "./normalize";
+import { projectObservationalMemory, type ObservationalMemoryView } from "./om-ledger";
 import { resolveProject, type ProjectInfo } from "./worktree";
 import { discoverSubagentSessions } from "./subagent-sessions";
 
@@ -327,6 +328,7 @@ export function buildSessionNavigationSnapshot(
   context: SessionContext;
   header: SessionHeader | null | undefined;
   sessionName: string | undefined;
+  observationalMemory: ObservationalMemoryView | null;
 } {
   const entries = sm.getEntries() as SessionEntry[];
   const leafId = resolveNavigationLeafId(
@@ -337,6 +339,7 @@ export function buildSessionNavigationSnapshot(
     stripLabelMetadataNodes(sm.getTree() as Parameters<typeof stripLabelMetadataNodes>[0]),
   );
   const context = buildSessionContext(entries, leafId, options);
+  const observationalMemory = projectObservationalMemory(entries, leafId);
   return {
     entries,
     leafId,
@@ -344,6 +347,7 @@ export function buildSessionNavigationSnapshot(
     context,
     header: sm.getHeader(),
     sessionName: sm.getSessionName(),
+    observationalMemory,
   };
 }
 
