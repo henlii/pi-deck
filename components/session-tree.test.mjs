@@ -227,3 +227,22 @@ test("折叠与搜索展开分离：搜索强制展开但不写折叠集合", as
   assert.equal(isSessionNodeEffectivelyCollapsed(collapsed, "c", true), false);
   assert.deepEqual([...collapsed].sort(), ["a", "b"]);
 });
+
+test("collectSubagentParentIds 只收集有 subagent 直接子节点的父会话", async () => {
+  const { buildSessionDisplayTree, collectSubagentParentIds } = await jiti.import("./session-tree.ts");
+  const parent = session("p");
+  const sub = session("s", { subagent: { parentSessionId: "p", runId: "r1", runIndex: 0 }, readOnly: true });
+  const nestedParent = session("np");
+  const nestedSub = session("ns", { subagent: { parentSessionId: "np", runId: "r2", runIndex: 0 }, readOnly: true });
+  // nestedParent 作为 subagent 挂在 p 下时：p 与 nestedParent 都应收起
+  nestedParent.subagent = { parentSessionId: "p", runId: "r0", runIndex: 1 };
+  nestedParent.readOnly = true;
+  nestedSub.subagent = { parentSessionId: "np", runId: "r2", runIndex: 0 };
+  const forkOnly = session("fo");
+  const forkChild = session("fc", { parentSessionId: "fo" });
+  const tree = buildSessionDisplayTree([parent, sub, nestedParent, nestedSub, forkOnly, forkChild]);
+  const ids = collectSubagentParentIds(tree).sort();
+  assert.deepEqual(ids, ["np", "p"]);
+  // 仅 fork 子节点的父不进入默认收起集合
+  assert.equal(ids.includes("fo"), false);
+});

@@ -271,6 +271,42 @@ test("搜索与折叠偏好隔离：过滤不触碰折叠集合，搜索期强�
   assert.deepEqual([...collapsedProjects], ["/repo"]);
 });
 
+test("collectSubagentParentIdsFromSidebarTree 覆盖主仓与 worktree 组内树", async () => {
+  const {
+    buildSidebarTree,
+    collectSubagentParentIdsFromSidebarTree,
+  } = await jiti.import("./session-sidebar-model.ts");
+  const mainParent = session("mp", { cwd: "/repo", projectRoot: "/repo" });
+  const mainSub = session("ms", {
+    cwd: "/repo",
+    projectRoot: "/repo",
+    subagent: { parentSessionId: "mp", runId: "r1", runIndex: 0 },
+    readOnly: true,
+  });
+  const wtParent = session("wp", {
+    cwd: "/repo-worktrees/feat",
+    projectRoot: "/repo",
+  });
+  const wtSub = session("ws", {
+    cwd: "/repo-worktrees/feat",
+    projectRoot: "/repo",
+    subagent: { parentSessionId: "wp", runId: "r2", runIndex: 0 },
+    readOnly: true,
+  });
+  const forkOnly = session("fo", { cwd: "/repo", projectRoot: "/repo" });
+  const forkChild = session("fc", {
+    cwd: "/repo",
+    projectRoot: "/repo",
+    parentSessionId: "fo",
+  });
+  const tree = buildSidebarTree(
+    [mainParent, mainSub, wtParent, wtSub, forkOnly, forkChild],
+    [{ path: "/repo-worktrees/feat", branch: "feat" }],
+  );
+  const ids = collectSubagentParentIdsFromSidebarTree(tree).sort();
+  assert.deepEqual(ids, ["mp", "wp"]);
+});
+
 test("全文模式：按 session id 集合保留祖先链，不按 name/alias 整树匹配", async () => {
   const { buildSidebarTree, filterSidebarTree } = await jiti.import("./session-sidebar-model.ts");
   const parent = session("p", { cwd: "/repo", projectRoot: "/repo", name: "main work" });

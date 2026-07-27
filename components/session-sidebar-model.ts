@@ -12,6 +12,7 @@
 import type { SessionInfo } from "@/lib/types";
 import {
   buildSessionDisplayTree,
+  collectSubagentParentIds,
   filterSessionDisplayTree,
   getDisplayNodeAncestorIds,
   type SessionDisplayNode,
@@ -315,4 +316,21 @@ export function collectAllCollapseIds(projects: SidebarProjectNode[]): {
     for (const group of project.worktrees) worktreePaths.push(group.path);
   }
   return { projectRoots, worktreePaths };
+}
+
+/**
+ * 收集侧栏树中「默认应收起的 subagent 父会话」id。
+ * 覆盖主仓树与各 worktree 组内树；只读、不写偏好。
+ */
+export function collectSubagentParentIdsFromSidebarTree(
+  projects: SidebarProjectNode[],
+): string[] {
+  const ids: string[] = [];
+  for (const project of projects) {
+    ids.push(...collectSubagentParentIds(project.mainTree));
+    for (const group of project.worktrees) {
+      ids.push(...collectSubagentParentIds(group.tree));
+    }
+  }
+  return ids;
 }

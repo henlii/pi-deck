@@ -12,6 +12,7 @@ import {
 import {
   buildSidebarTree,
   collectAllCollapseIds,
+  collectSubagentParentIdsFromSidebarTree,
   filterClosedProjects,
   filterSidebarTree,
   locateSessionInSidebarTree,
@@ -531,6 +532,8 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   const [prefs, setPrefs] = useState<SidebarPreferences>(() => loadSidebarPreferences());
   // 会话级 child 折叠：保持瞬时（沿用原行为）
   const [collapsedSessionIds, setCollapsedSessionIds] = useState<Set<string>>(() => new Set());
+  // 用户已手动展开/折叠过的会话 id：默认 subagent 收起不得覆盖这些显式选择
+  const userTouchedSessionCollapseRef = useRef<Set<string>>(new Set());
   const sessionListRef = useRef<HTMLDivElement>(null);
   const initialSelectionScrollDoneRef = useRef(false);
   const previousRunningSessionIdsRef = useRef<Set<string>>(new Set());
@@ -1089,6 +1092,25 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     handleSelectSessionFromList(target);
   }, [allSessions, handleSelectSessionFromList]);
 
+  // 默认收起「有 subagent 子节点」的父会话；不写 localStorage。
+  // 用户手动展开/折叠过的 id 不覆盖；选中子会话时会展开祖先（见下）。
+  useEffect(() => {
+    const defaults = collectSubagentParentIdsFromSidebarTree(sidebarTree);
+    if (defaults.length === 0) return;
+    setCollapsedSessionIds((current) => {
+      let changed = false;
+      const next = new Set(current);
+      for (const id of defaults) {
+        if (userTouchedSessionCollapseRef.current.has(id)) continue;
+        if (!next.has(id)) {
+          next.add(id);
+          changed = true;
+        }
+      }
+      return changed ? next : current;
+    });
+  }, [sidebarTree]);
+
   // 选中或 URL 恢复会话时自动展开 project/worktree/session 三级祖先，
   // 避免「已选中但列表里不可见」；这是显式选中驱动，与搜索强制展开无关。
   useEffect(() => {
@@ -1106,6 +1128,9 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
       };
     });
     if (location.ancestors.length > 0) {
+      for (const id of location.ancestors) {
+        userTouchedSessionCollapseRef.current.add(id);
+      }
       setCollapsedSessionIds((current) => {
         if (!location.ancestors.some((id) => current.has(id))) return current;
         const next = new Set(current);
@@ -1134,6 +1159,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   }, [selectedSessionId, initialSessionId, visibleTree, collapsedProjectRoots, collapsedWorktreePaths, collapsedSessionIds]);
 
   const toggleSessionCollapse = useCallback((sessionId: string) => {
+    userTouchedSessionCollapseRef.current.add(sessionId);
     setCollapsedSessionIds((current) => {
       const next = new Set(current);
       if (next.has(sessionId)) next.delete(sessionId);
