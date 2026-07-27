@@ -10,21 +10,62 @@ interface AboutDialogProps {
   onClose: () => void;
 }
 
+/** next.config 构建期注入；客户端始终可读，不依赖 API。 */
+function envVersion(key: "NEXT_PUBLIC_APP_VERSION" | "NEXT_PUBLIC_PI_VERSION"): string | undefined {
+  const value = process.env[key];
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed && trimmed !== "unknown" ? trimmed : undefined;
+}
+
+type AboutViewState = {
+  name: string;
+  version?: string;
+  piSdkVersion?: string;
+  homepage?: string;
+  repository?: string;
+};
+
+function pickVersion(...candidates: Array<string | null | undefined>): string {
+  for (const c of candidates) {
+    if (typeof c === "string") {
+      const t = c.trim();
+      if (t) return t;
+    }
+  }
+  return "—";
+}
+
 export function AboutDialog({ open, onClose }: AboutDialogProps) {
   const { t } = useI18n();
-  const [info, setInfo] = useState<AboutInfo | null>(null);
+  // 立即用 env 占位，避免打开弹窗时版本空白；API 成功后再补仓库链接等字段。
+  const [info, setInfo] = useState<AboutViewState>(() => ({
+    name: "Pi Deck",
+    version: envVersion("NEXT_PUBLIC_APP_VERSION"),
+    piSdkVersion: envVersion("NEXT_PUBLIC_PI_VERSION"),
+    homepage: "https://github.com/henlii/pi-deck#readme",
+    repository: "https://github.com/henlii/pi-deck",
+  }));
 
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
     void (async () => {
       try {
-        const res = await fetch("/api/about");
+        const res = await fetch("/api/about", { cache: "no-store" });
         if (!res.ok) return;
         const data = (await res.json()) as AboutInfo;
-        if (!cancelled) setInfo(data);
+        if (cancelled) return;
+        setInfo((prev) => ({
+          name: data.name || prev.name || "Pi Deck",
+          // API 优先，env 回退
+          version: data.version || prev.version || envVersion("NEXT_PUBLIC_APP_VERSION"),
+          piSdkVersion: data.piSdkVersion || prev.piSdkVersion || envVersion("NEXT_PUBLIC_PI_VERSION"),
+          homepage: data.homepage || prev.homepage,
+          repository: data.repository || prev.repository,
+        }));
       } catch {
-        // 版本信息 best-effort：失败时保留上次或空态，不抛错。
+        // best-effort：保留 env 版本
       }
     })();
     return () => {
@@ -32,9 +73,9 @@ export function AboutDialog({ open, onClose }: AboutDialogProps) {
     };
   }, [open]);
 
-  const githubUrl = info?.repository ?? info?.homepage ?? "https://github.com/henlii/pi-deck";
-  const version = info?.version ?? null;
-  const piSdkVersion = info?.piSdkVersion ?? null;
+  const githubUrl = info.repository ?? info.homepage ?? "https://github.com/henlii/pi-deck";
+  const deckVersion = pickVersion(info.version, envVersion("NEXT_PUBLIC_APP_VERSION"));
+  const piVersion = pickVersion(info.piSdkVersion, envVersion("NEXT_PUBLIC_PI_VERSION"));
 
   return (
     <ViewportDialog
@@ -69,19 +110,21 @@ export function AboutDialog({ open, onClose }: AboutDialogProps) {
           }}
         />
 
-        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 6, width: "100%" }}>
           <div style={{ fontSize: 17, fontWeight: 650, color: "var(--text)", letterSpacing: "-0.01em" }}>
             Pi Deck
           </div>
-          <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.55 }}>
-            {version ? (
-              <div>{t("about_version", { version })}</div>
-            ) : (
-              <div>{t("about_version", { version: "—" })}</div>
-            )}
-            {piSdkVersion ? (
-              <div>{t("about_piSdkVersion", { version: piSdkVersion })}</div>
-            ) : null}
+          {/* 版本行固定两行：Deck + Pi，不因加载态隐藏 */}
+          <div
+            style={{
+              fontSize: 12,
+              color: "var(--text-muted)",
+              lineHeight: 1.65,
+              fontVariantNumeric: "tabular-nums",
+            }}
+          >
+            <div>{t("about_version", { version: deckVersion })}</div>
+            <div>{t("about_piSdkVersion", { version: piVersion })}</div>
           </div>
         </div>
 
