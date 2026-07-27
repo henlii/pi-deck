@@ -25,6 +25,11 @@ import {
 } from "@/lib/file-editor-state";
 import { buildAtMentionText, buildFileAtMentionsText } from "@/lib/file-fuzzy";
 import { getInitialNavigation } from "@/lib/initial-navigation";
+import {
+  buildSessionExportHtmlHref,
+  buildSessionExportJsonlHref,
+  canExportSession,
+} from "./session-export-links";
 import type { SessionInfo, SessionTreeNode } from "@/lib/types";
 import type { ChatInputHandle } from "./ChatInput";
 import type { SessionStatsInfo } from "@/lib/pi-types";
@@ -135,13 +140,13 @@ function AppShellInner() {
   }, []);
 
   // Single active panel — only one dropdown open at a time
-  const [activeTopPanel, setActiveTopPanel] = useState<"branches" | "system" | "session" | "runs" | null>(null);
+  const [activeTopPanel, setActiveTopPanel] = useState<"branches" | "system" | "session" | "runs" | "export" | null>(null);
   const [topPanelPos, setTopPanelPos] = useState<{ top: number; left: number; width: number } | null>(null);
   // D1 runs 入口 badge：活动（queued/running）数由 SubagentRunsPanel 成功拉取后上报；
   // 面板关闭期间保留最后已知值，不额外轮询（轮询只存在于面板打开时）。
   const [runsActiveCount, setRunsActiveCount] = useState(0);
 
-  const toggleTopPanel = useCallback((panel: "branches" | "system" | "session" | "runs") => {
+  const toggleTopPanel = useCallback((panel: "branches" | "system" | "session" | "runs" | "export") => {
     if (isMobile) {
       setSidebarOpen(false);
       setWorkspaceOpen(false);
@@ -917,6 +922,38 @@ function AppShellInner() {
                 </svg>
                 {!isMobile && <span>{t("app_system")}</span>}
               </button>
+              {/* D2 会话导出：仅已持久化会话（有真实 id）展示入口；
+                  新会话/未选择会话隐藏而非给出必然 404 的假动作。
+                  普通与 readOnly 会话都可导出，不套写能力门禁。 */}
+              {canExportSession(selectedSession) && (
+                <button
+                  type="button"
+                  onClick={() => toggleTopPanel("export")}
+                  title={t("export_toggle")}
+                  aria-label={t("export_toggle")}
+                  aria-pressed={activeTopPanel === "export"}
+                  style={{
+                    display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+                    height: "100%", padding: "0 12px",
+                    background: activeTopPanel === "export" ? "var(--bg-selected)" : "none",
+                    border: "none",
+                    borderTop: activeTopPanel === "export" ? "2px solid var(--accent)" : "2px solid transparent",
+                    borderRight: "1px solid var(--border)",
+                    cursor: "pointer",
+                    color: activeTopPanel === "export" ? "var(--text)" : "var(--text-muted)",
+                    fontSize: 11, whiteSpace: "nowrap", transition: "color 0.1s, background 0.1s",
+                  }}
+                  onMouseEnter={(e) => { e.currentTarget.style.color = "var(--text)"; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.color = activeTopPanel === "export" ? "var(--text)" : "var(--text-muted)"; }}
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ flexShrink: 0 }}>
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                    <polyline points="7 10 12 15 17 10" />
+                    <line x1="12" y1="15" x2="12" y2="3" />
+                  </svg>
+                  {!isMobile && <span>{t("export_toggle")}</span>}
+                </button>
+              )}
             </div>
           )}
           {/* Session stats — right-aligned in top bar */}
@@ -1289,6 +1326,85 @@ function AppShellInner() {
                       onOpenSubagentSession={handleRunsOpenSession}
                       onActiveCountChange={setRunsActiveCount}
                     />
+                  </div>
+                </div>
+              )}
+              {activeTopPanel === "export" && selectedSession && canExportSession(selectedSession) && (
+                <div style={{
+                  background: "var(--bg-panel)",
+                  borderBottom: "1px solid var(--border)",
+                  boxShadow: "0 10px 28px rgba(0,0,0,0.10)",
+                }}>
+                  {/* D2 导出菜单：两项原生 <a href download>，不 fetch/blob；
+                      href 在渲染期由 branchActiveLeafId 重建，切分支即实时更新（无 leaf 省略 leafId）。
+                      readOnly 子会话同样可导出——导出不写会话文件，不套写能力门禁。 */}
+                  <div style={{ maxWidth: 520, margin: "0 auto", padding: "12px 16px" }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text)", marginBottom: 8 }}>
+                      {t("export_title")}
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                      {([
+                        {
+                          key: "html",
+                          href: buildSessionExportHtmlHref(selectedSession.id),
+                          label: t("export_htmlLabel"),
+                          desc: t("export_htmlDesc"),
+                          icon: (
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                              <polyline points="16 18 22 12 16 6" />
+                              <polyline points="8 6 2 12 8 18" />
+                            </svg>
+                          ),
+                        },
+                        {
+                          key: "jsonl",
+                          href: buildSessionExportJsonlHref(selectedSession.id, branchActiveLeafId),
+                          label: t("export_jsonlLabel"),
+                          desc: t("export_jsonlDesc"),
+                          icon: (
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                              <path d="M8 3H7a2 2 0 0 0-2 2v4a2 2 0 0 1-2 2 2 2 0 0 1 2 2v4a2 2 0 0 0 2 2h1" />
+                              <path d="M16 21h1a2 2 0 0 0 2-2v-4a2 2 0 0 1 2-2 2 2 0 0 1-2-2V5a2 2 0 0 0-2-2h-1" />
+                            </svg>
+                          ),
+                        },
+                      ]).map((item) => (
+                        <a
+                          key={item.key}
+                          href={item.href}
+                          download
+                          title={item.desc}
+                          onClick={() => setActiveTopPanel(null)}
+                          style={{
+                            display: "flex", alignItems: "center", gap: 10,
+                            padding: "8px 10px", borderRadius: 6,
+                            border: "1px solid var(--border)",
+                            background: "none", textDecoration: "none",
+                            color: "var(--text)", cursor: "pointer",
+                            transition: "background 0.12s, border-color 0.12s",
+                          }}
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.background = "var(--bg-hover)";
+                            e.currentTarget.style.borderColor = "var(--accent)";
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.background = "none";
+                            e.currentTarget.style.borderColor = "var(--border)";
+                          }}
+                        >
+                          <span style={{ color: "var(--accent)", display: "flex", flexShrink: 0 }}>{item.icon}</span>
+                          <span style={{ flex: 1, minWidth: 0 }}>
+                            <span style={{ display: "block", fontSize: 12, fontWeight: 600, lineHeight: 1.4 }}>{item.label}</span>
+                            <span style={{ display: "block", fontSize: 11, color: "var(--text-muted)", lineHeight: 1.4, overflowWrap: "anywhere" }}>{item.desc}</span>
+                          </span>
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ color: "var(--text-dim)", flexShrink: 0 }}>
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                            <polyline points="7 10 12 15 17 10" />
+                            <line x1="12" y1="15" x2="12" y2="3" />
+                          </svg>
+                        </a>
+                      ))}
+                    </div>
                   </div>
                 </div>
               )}

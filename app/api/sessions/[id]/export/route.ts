@@ -6,6 +6,13 @@ import { basename, dirname, join } from "path";
 import { promisify } from "util";
 import { fileURLToPath, pathToFileURL } from "url";
 import { NextResponse } from "next/server";
+import {
+  exportSessionFileToJsonl,
+  getExportJsonlFileName,
+  JSONL_EXPORT_CONTENT_TYPE,
+  parseExportFormat,
+  SessionExportError,
+} from "@/lib/session-export";
 import { resolveSessionPath } from "@/lib/session-reader";
 
 const execFileAsync = promisify(execFile);
@@ -243,12 +250,40 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const inline = new URL(req.url).searchParams.get("inline") === "1";
+  const url = new URL(req.url);
+  const format = parseExportFormat(url.searchParams.get("format"));
+  if (format === null) {
+    return NextResponse.json({ error: "Unknown export format" }, { status: 400 });
+  }
+
+  const inline = url.searchParams.get("inline") === "1";
+  const leafId = url.searchParams.get("leafId");
 
   try {
     const filePath = await resolveSessionPath(id);
     if (!filePath) {
       return NextResponse.json({ error: "Session not found" }, { status: 404 });
+    }
+
+    if (format === "jsonl") {
+      try {
+        const body = exportSessionFileToJsonl(filePath, {
+          leafId: leafId && leafId.length > 0 ? leafId : undefined,
+        });
+        const fileName = getExportJsonlFileName(filePath);
+        return new Response(body, {
+          headers: {
+            "Content-Type": JSONL_EXPORT_CONTENT_TYPE,
+            "Content-Disposition": getContentDisposition(fileName, false),
+            "Cache-Control": "no-cache",
+          },
+        });
+      } catch (error) {
+        if (error instanceof SessionExportError) {
+          return NextResponse.json({ error: error.message }, { status: 400 });
+        }
+        throw error;
+      }
     }
 
     const tempDir = join(tmpdir(), "pi-web-export");

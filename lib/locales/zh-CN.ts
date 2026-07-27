@@ -481,4 +481,11 @@ export const zhCN: Record<TranslationKey, string> = {
   runs_truncated: "已截断",
   runs_expand: "展开运行详情",
   runs_collapse: "折叠运行详情",
+  // phase3 D2 会话导出
+  export_toggle: "导出",
+  export_title: "导出会话",
+  export_htmlLabel: "HTML",
+  export_htmlDesc: "完整会话，带样式的页面",
+  export_jsonlLabel: "当前分支 JSONL",
+  export_jsonlDesc: "截至当前分支末端的原始记录",
 };

@@ -482,6 +482,13 @@ export const en = {
   runs_truncated: "truncated",
   runs_expand: "Expand run details",
   runs_collapse: "Collapse run details",
+  // phase3 D2 session export
+  export_toggle: "Export",
+  export_title: "Export session",
+  export_htmlLabel: "HTML",
+  export_htmlDesc: "Full session as a styled page",
+  export_jsonlLabel: "JSONL · current branch",
+  export_jsonlDesc: "Raw entries up to the current leaf",
 } as const;
 
 export type TranslationKey = keyof typeof en;
