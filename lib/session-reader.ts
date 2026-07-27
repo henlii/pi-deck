@@ -274,6 +274,236 @@ export function getSessionEntries(filePath: string): SessionEntry[] {
   return entries as unknown as SessionEntry[];
 }
 
+/**
+ * 只读 GET 用的 SessionManager 视图（磁盘 open 或 live wrapper 的 inner.sessionManager）。
+ * 不创建 AgentSession，不写盘。
+ */
+export type SessionManagerReadView = {
+  getEntries(): unknown[];
+  getLeafId(): string | null;
+  getTree(): Array<{
+    entry: { id: string; type: string };
+    children: unknown[];
+    label?: string;
+  }>;
+  getHeader(): SessionHeader | null | undefined;
+  getSessionName(): string | undefined;
+};
+
+export type LiveSessionReadSource = {
+  isAlive(): boolean;
+  inner: { sessionManager: SessionManagerReadView };
+};
+
+/**
+ * 选择 sessions GET 的权威 SessionManager：
+ * - 有存活的 live RPC wrapper 时用其 inner.sessionManager（含 navigateTree 后的内存 leaf）
+ * - 否则 SessionManager.open(filePath)
+ * 不 start 新会话、不 mutate live 状态。
+ */
+export function resolveSessionManagerForRead(options: {
+  filePath: string;
+  liveSession?: LiveSessionReadSource | null;
+  openFromDisk?: (filePath: string) => SessionManagerReadView;
+}): SessionManagerReadView {
+  const live = options.liveSession;
+  if (live?.isAlive()) {
+    return live.inner.sessionManager;
+  }
+  const open = options.openFromDisk ?? ((path: string) => SessionManager.open(path) as unknown as SessionManagerReadView);
+  return open(options.filePath);
+}
+
+/**
+ * 从权威 SessionManager 构建导航投影（derived leaf + strip label + shallow tree + context）。
+ */
+export function buildSessionNavigationSnapshot(
+  sm: SessionManagerReadView,
+  options: { deferThinking?: boolean; deferToolResultImages?: boolean } = {},
+): {
+  entries: SessionEntry[];
+  leafId: string | null;
+  tree: ReturnType<typeof projectTreeForResponse>;
+  context: SessionContext;
+  header: SessionHeader | null | undefined;
+  sessionName: string | undefined;
+} {
+  const entries = sm.getEntries() as SessionEntry[];
+  const leafId = resolveNavigationLeafId(
+    entries as Array<{ id: string; type: string; parentId: string | null }>,
+    sm.getLeafId(),
+  );
+  const tree = projectTreeForResponse(
+    stripLabelMetadataNodes(sm.getTree() as Parameters<typeof stripLabelMetadataNodes>[0]),
+  );
+  const context = buildSessionContext(entries, leafId, options);
+  return {
+    entries,
+    leafId,
+    tree,
+    context,
+    header: sm.getHeader(),
+    sessionName: sm.getSessionName(),
+  };
+}
+
+// BranchNavigator still traverses recursively, so keep the response tree shallow.
+const MAX_PROJECTED_TREE_DEPTH = 200;
+
+/**
+ * SDK 的 label entry 会推进 leaf，且出现在 getTree 中。
+ * 导航 API 将尾部连续 label 元数据上溯到第一个非 label 祖先，
+ * 作为 BranchNavigator 的 active leaf（书签附着在 target 上，不是新分支）。
+ */
+export function resolveNavigationLeafId(
+  entries: ReadonlyArray<{ id: string; type: string; parentId: string | null }>,
+  leafId: string | null | undefined,
+): string | null {
+  if (leafId == null) return null;
+  const byId = new Map(entries.map((entry) => [entry.id, entry]));
+  let current = byId.get(leafId);
+  if (!current) return leafId;
+  while (current?.type === "label") {
+    if (!current.parentId) return null;
+    current = byId.get(current.parentId);
+  }
+  return current?.id ?? null;
+}
+
+/**
+ * 从导航树中移除 type=label 元数据节点，将其子节点提升到父级。
+ * 目标 entry 上的 node.label（由 SessionManager.getTree 解析）保持不变；
+ * JSONL 中的历史 label entry 不删除。
+ */
+export function stripLabelMetadataNodes<T extends {
+  entry: { id: string; type: string };
+  children: T[];
+}>(nodes: T[]): T[] {
+  const hoist = (children: T[]): T[] => {
+    const result: T[] = [];
+    for (const child of children) {
+      if (child.entry.type === "label") {
+        result.push(...hoist(child.children));
+      } else {
+        result.push({
+          ...child,
+          children: hoist(child.children),
+        });
+      }
+    }
+    return result;
+  };
+  return hoist(nodes);
+}
+
+/** 有书签 label 的节点不得在投影中被压缩掉。 */
+export function hasBookmarkLabel(node: { label?: string }): boolean {
+  return typeof node.label === "string" && node.label.length > 0;
+}
+
+/**
+ * 将会话树投影为发给客户端的浅导航树。
+ * 保留根、分支点、叶子与带 label 的书签目标；压缩无 label 的单子链。
+ * 被压缩的 entry id 挂到下一可见节点，便于 UI 识别链内活跃 leaf。
+ * 调用方应先 stripLabelMetadataNodes，避免 label 元数据成为可点击假分支。
+ */
+export function projectTreeForResponse<T extends {
+  entry: { id: string };
+  children: T[];
+  label?: string;
+  compressedEntryIds?: string[];
+}>(
+  nodes: T[]
+): T[] {
+  const keep = new Set<T>();
+  const roots = new Set(nodes);
+  const seen = new Set<T>();
+  const stack = [...nodes];
+
+  while (stack.length > 0) {
+    const node = stack.pop()!;
+    if (seen.has(node)) continue;
+    seen.add(node);
+
+    if (
+      roots.has(node) ||
+      node.children.length !== 1 ||
+      hasBookmarkLabel(node)
+    ) {
+      keep.add(node);
+    }
+
+    for (const child of node.children) {
+      stack.push(child);
+    }
+  }
+
+  const cloneNode = (node: T, compressedEntryIds?: string[]): T => ({
+    ...node,
+    children: [],
+    ...(compressedEntryIds?.length ? { compressedEntryIds } : {}),
+  });
+  const projectedRoots = nodes.map((node) => cloneNode(node));
+  const tasks = nodes.map((source, index) => ({
+    source,
+    projected: projectedRoots[index],
+    depth: 1,
+  }));
+
+  const appendFlattenedKeptDescendants = (source: T, projectedParent: T) => {
+    const pending = [{ node: source, compressedEntryIds: [] as string[] }];
+    const flattenedSeen = new Set<T>();
+
+    while (pending.length > 0) {
+      const { node, compressedEntryIds } = pending.pop()!;
+      if (flattenedSeen.has(node)) continue;
+      flattenedSeen.add(node);
+
+      if (keep.has(node)) {
+        projectedParent.children.push(cloneNode(node, compressedEntryIds));
+      }
+
+      for (let i = node.children.length - 1; i >= 0; i--) {
+        pending.push({
+          node: node.children[i],
+          compressedEntryIds: keep.has(node)
+            ? []
+            : [...compressedEntryIds, node.entry.id],
+        });
+      }
+    }
+  };
+
+  while (tasks.length > 0) {
+    const { source, projected, depth } = tasks.pop()!;
+
+    for (const sourceChild of source.children) {
+      let child = sourceChild;
+
+      if (depth >= MAX_PROJECTED_TREE_DEPTH) {
+        appendFlattenedKeptDescendants(child, projected);
+        continue;
+      }
+
+      const compressedEntryIds: string[] = [];
+      while (!keep.has(child) && child.children.length === 1) {
+        compressedEntryIds.push(child.entry.id);
+        child = child.children[0];
+      }
+
+      if (!keep.has(child)) {
+        continue;
+      }
+
+      const projectedChild = cloneNode(child, compressedEntryIds);
+      projected.children.push(projectedChild);
+      tasks.push({ source: child, projected: projectedChild, depth: depth + 1 });
+    }
+  }
+
+  return projectedRoots;
+}
+
 export function buildSessionContext(
   entries: SessionEntry[],
   leafId?: string | null,
@@ -403,9 +633,19 @@ function entryToUiMessage(
       };
     case "branch_summary":
       if (!entry.summary) return null;
+      // usage 存在于 Pi SDK 原生 entry，本地 BranchSummaryEntry 未声明；按需读取。
+      const branchUsage = (entry as SessionEntry & { usage?: unknown }).usage;
       return {
-        role: "user",
-        content: `*The conversation briefly explored another branch and returned with this summary:*\n\n${entry.summary}`,
+        role: "custom",
+        customType: "branch_summary",
+        content: entry.summary,
+        display: true,
+        details: {
+          fromId: entry.fromId,
+          details: entry.details,
+          usage: branchUsage,
+          fromHook: entry.fromHook,
+        },
         timestamp: parseEntryTimestamp(entry.timestamp),
       };
     case "custom_message":

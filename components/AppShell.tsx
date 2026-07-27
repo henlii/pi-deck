@@ -31,6 +31,7 @@ import {
   canExportSession,
 } from "./session-export-links";
 import type { SessionInfo, SessionTreeNode } from "@/lib/types";
+import type { BranchActions } from "@/lib/branch-bookmarks";
 import type { ChatInputHandle } from "./ChatInput";
 import type { SessionStatsInfo } from "@/lib/pi-types";
 import { ProjectProvider, useProjectActions, useProjectIdentity } from "./ProjectProvider";
@@ -89,11 +90,14 @@ function AppShellInner() {
   const [branchTree, setBranchTree] = useState<SessionTreeNode[]>([]);
   const [branchActiveLeafId, setBranchActiveLeafId] = useState<string | null>(null);
   const branchLeafChangeFnRef = useRef<((leafId: string | null) => void) | null>(null);
+  // D3 分支书签/摘要动作（可写门禁、带选项切换、set_label），由 useAgentSession 下发。
+  const [branchActions, setBranchActions] = useState<BranchActions | null>(null);
 
-  const handleBranchDataChange = useCallback((tree: SessionTreeNode[], activeLeafId: string | null, onLeafChange: (leafId: string | null) => void) => {
+  const handleBranchDataChange = useCallback((tree: SessionTreeNode[], activeLeafId: string | null, onLeafChange: (leafId: string | null) => void, actions: BranchActions) => {
     setBranchTree(tree);
     setBranchActiveLeafId(activeLeafId);
     branchLeafChangeFnRef.current = onLeafChange;
+    setBranchActions(actions);
   }, []);
 
   const handleBranchLeafChange = useCallback((leafId: string | null) => {
@@ -887,6 +891,7 @@ function AppShellInner() {
                 tree={branchTree}
                 activeLeafId={branchActiveLeafId}
                 onLeafChange={handleBranchLeafChange}
+                branchActions={branchActions}
                 inline
                 compact={isMobile}
                 containerRef={topBarRef}

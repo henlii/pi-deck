@@ -4,6 +4,7 @@ import { memo, useState, useRef, useEffect, useMemo } from "react";
 import { Check, ChevronDown, ChevronUp, Copy } from "lucide-react";
 import { MarkdownBody } from "./MarkdownBody";
 import { copyText } from "@/lib/clipboard";
+import { getBranchSummaryFileMetadata } from "@/lib/branch-bookmarks";
 import { parseCompactionSummary } from "@/lib/compaction-summary";
 import { isEmptyThinkingBlock } from "@/lib/message-display";
 import { parseUnifiedPatch, type SplitDiffCell } from "@/lib/patch";
@@ -116,6 +117,9 @@ export const MessageView = memo(function MessageView({ message, isStreaming, too
   if (message.role === "custom") {
     if ((message as CustomMessage).customType === "compaction") {
       return <CompactionMessageView message={message as CustomMessage} />;
+    }
+    if ((message as CustomMessage).customType === "branch_summary") {
+      return <BranchSummaryMessageView message={message as CustomMessage} />;
     }
     return <CustomMessageView message={message as CustomMessage} cwd={cwd} onOpenFile={onOpenFile} />;
   }
@@ -1292,14 +1296,74 @@ function CompactionMessageView({ message }: { message: CustomMessage }) {
           ) : (
             <span style={{ color: "var(--text-dim)", fontSize: 12 }}>({t("message_noSummary")})</span>
           )}
-          <CompactionFileMetadata readFiles={parsedSummary.readFiles} modifiedFiles={parsedSummary.modifiedFiles} />
+          <FileContextMetadata readFiles={parsedSummary.readFiles} modifiedFiles={parsedSummary.modifiedFiles} />
         </div>
       </div>
     </div>
   );
 }
 
-function CompactionFileMetadata({ readFiles, modifiedFiles }: { readFiles: string[]; modifiedFiles: string[] }) {
+function BranchSummaryMessageView({ message }: { message: CustomMessage }) {
+  const { t } = useI18n();
+  const summary = getMessageText(message.content);
+  const parsedSummary = useMemo(() => parseCompactionSummary(summary), [summary]);
+  const structuredFiles = useMemo(() => getBranchSummaryFileMetadata(message.details), [message.details]);
+  const readFiles = structuredFiles?.readFiles ?? parsedSummary.readFiles;
+  const modifiedFiles = structuredFiles?.modifiedFiles ?? parsedSummary.modifiedFiles;
+  const time = formatTime(message.timestamp);
+
+  return (
+    <div style={{ marginBottom: 16 }}>
+      <div
+        style={{
+          border: "1px solid var(--border)",
+          borderLeft: "2px solid var(--accent)",
+          borderRadius: 8,
+          overflow: "hidden",
+          background: "var(--bg)",
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            padding: "7px 10px",
+            borderBottom: "1px solid var(--border)",
+            background: "var(--bg-panel)",
+            color: "var(--text-muted)",
+          }}
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <line x1="6" y1="3" x2="6" y2="15" />
+            <circle cx="18" cy="6" r="3" />
+            <circle cx="6" cy="18" r="3" />
+            <path d="M18 9a9 9 0 0 1-9 9" />
+          </svg>
+          <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, fontWeight: 650 }}>
+            {t("message_branchSummary")}
+          </span>
+          {time && <span style={{ marginLeft: "auto", color: "var(--text-dim)", fontSize: 10 }}>{time}</span>}
+        </div>
+
+        <div style={{ padding: "11px 13px 12px" }}>
+          <div style={{ marginBottom: 10, color: "var(--text-muted)", fontSize: 13, lineHeight: 1.5 }}>
+            {t("message_branchSummaryDescription")}
+          </div>
+          {parsedSummary.body ? (
+            <MarkdownBody className="markdown-compaction-message">{parsedSummary.body}</MarkdownBody>
+          ) : (
+            <span style={{ color: "var(--text-dim)", fontSize: 12 }}>({t("message_noSummary")})</span>
+          )}
+          <FileContextMetadata readFiles={readFiles} modifiedFiles={modifiedFiles} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** compaction 与 branch_summary 共享同一套文件上下文展示。 */
+function FileContextMetadata({ readFiles, modifiedFiles }: { readFiles: string[]; modifiedFiles: string[] }) {
   const { t } = useI18n();
   const total = readFiles.length + modifiedFiles.length;
   if (total === 0) return null;
@@ -1311,13 +1375,13 @@ function CompactionFileMetadata({ readFiles, modifiedFiles }: { readFiles: strin
   return (
     <details className="compaction-file-details">
       <summary>{t("message_fileContext")}: {parts.join(", ")}</summary>
-      {modifiedFiles.length > 0 && <CompactionFileList title={t("message_modifiedFiles")} files={modifiedFiles} />}
-      {readFiles.length > 0 && <CompactionFileList title={t("message_readFiles")} files={readFiles} />}
+      {modifiedFiles.length > 0 && <FileContextList title={t("message_modifiedFiles")} files={modifiedFiles} />}
+      {readFiles.length > 0 && <FileContextList title={t("message_readFiles")} files={readFiles} />}
     </details>
   );
 }
 
-function CompactionFileList({ title, files }: { title: string; files: string[] }) {
+function FileContextList({ title, files }: { title: string; files: string[] }) {
   return (
     <div className="compaction-file-section">
       <div className="compaction-file-title">{title}</div>

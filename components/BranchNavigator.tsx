@@ -1,8 +1,18 @@
 "use client";
 
-import { useState, useCallback, useMemo, useRef, useEffect } from "react";
+import { useState, useCallback, useMemo, useRef, useEffect, type ReactNode } from "react";
 import type { SessionEntry, SessionTreeNode } from "@/lib/types";
 import { useI18n } from "@/lib/i18n";
+import {
+  BRANCH_LABEL_MAX_LENGTH,
+  canCompressChainNode,
+  findBranchLabelByEntryId,
+  getBranchNodeBookmark,
+  treeHasBookmarks,
+  type BranchActionResult,
+  type BranchActions,
+  type BranchSwitchChoice,
+} from "@/lib/branch-bookmarks";
 
 interface Props {
   tree: SessionTreeNode[];
@@ -20,6 +30,11 @@ interface Props {
   hasSession?: boolean;
   /** When inline, render icon-only (no text label) to save horizontal space */
   compact?: boolean;
+  /**
+   * D3 分支动作（带选项切换 + 书签读写）。缺省或 canWrite=false 时保持
+   * 只读直跳行为：不出现摘要选项与书签写入口，点击仍走纯 GET context。
+   */
+  branchActions?: BranchActions | null;
 }
 
 // Find the visible entry IDs on the path from root to activeLeafId.
@@ -42,10 +57,11 @@ function buildActivePath(nodes: SessionTreeNode[], targetId: string | null): Set
 
 // Compress a visible linear chain into the first branching/leaf node.
 // Server-side compressed IDs also count as skipped nodes.
+// 带书签 label 的节点保持可见，不被并入链尾（与服务端投影规则一致）。
 function compress(node: SessionTreeNode): { node: SessionTreeNode; skipped: number } {
   let current = node;
   let skipped = current.compressedEntryIds?.length ?? 0;
-  while (current.children.length === 1) {
+  while (current.children.length === 1 && canCompressChainNode(current)) {
     current = current.children[0];
     skipped += 1 + (current.compressedEntryIds?.length ?? 0);
   }
@@ -81,22 +97,54 @@ function hasBranch(nodes: SessionTreeNode[]): boolean {
   return false;
 }
 
+function BookmarkIcon({ size = 10 }: { size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      style={{ flexShrink: 0 }}
+    >
+      <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
+    </svg>
+  );
+}
+
+type I18nT = ReturnType<typeof useI18n>["t"];
+
 interface TreeNodeProps {
   node: SessionTreeNode;
   activePathIds: Set<string>;
+  activeLeafId: string | null;
   depth: number;
   isLast: boolean;
   parentLines: boolean[]; // whether ancestor at each depth has more siblings after
-  onSelect: (id: string) => void;
+  onActivate: (rep: SessionTreeNode) => void;
   assistantLabel: string;
+  bookmarkAria: string;
+  /** 可写会话的另一叶可打开切换选择器；只读会话为 false。 */
+  switchable: boolean;
+  switchTargetId: string | null;
+  chooserFor: (nodeId: string, indent: number) => ReactNode;
+  disabled: boolean;
 }
 
-function TreeNodeView({ node, activePathIds, depth, isLast, parentLines, onSelect, assistantLabel }: TreeNodeProps) {
+function TreeNodeView({ node, activePathIds, activeLeafId, depth, isLast, parentLines, onActivate, assistantLabel, bookmarkAria, switchable, switchTargetId, chooserFor, disabled }: TreeNodeProps) {
   const { node: rep, skipped } = compress(node);
   const isActive = activePathIds.has(rep.entry.id);
   const isOnPath = activePathIds.has(node.entry.id) || activePathIds.has(rep.entry.id);
+  const isCurrentLeaf = rep.entry.id === activeLeafId || !!rep.compressedEntryIds?.includes(activeLeafId ?? "");
+  const bookmark = getBranchNodeBookmark(rep.label);
   const rawLabel = getLabel(rep.entry);
-  const label = rawLabel === "[assistant]" ? assistantLabel : rawLabel;
+  const fallbackLabel = rawLabel === "[assistant]" ? assistantLabel : rawLabel;
+  // 书签 label 优先，消息摘要降级为兜底。
+  const label = bookmark ?? fallbackLabel;
   const role = rep.entry.type === "message" && "message" in rep.entry
     ? (rep.entry.message as { role: string }).role
     : null;
@@ -104,14 +152,26 @@ function TreeNodeView({ node, activePathIds, depth, isLast, parentLines, onSelec
   return (
     <div>
       {/* This node row */}
-      <div
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => onActivate(rep)}
+        aria-current={isCurrentLeaf ? "true" : undefined}
+        aria-expanded={switchable && !isCurrentLeaf ? switchTargetId === rep.entry.id : undefined}
+        aria-label={bookmark ? `${bookmark} — ${bookmarkAria}` : undefined}
+        title={bookmark ? `${bookmark} — ${fallbackLabel}` : fallbackLabel}
         style={{
           display: "flex",
           alignItems: "center",
+          width: "100%",
           height: 24,
-          cursor: "pointer",
+          padding: 0,
+          background: "none",
+          border: "none",
+          font: "inherit",
+          textAlign: "left",
+          cursor: disabled ? "default" : "pointer",
         }}
-        onClick={() => onSelect(rep.entry.id)}
       >
         {/* Indent guide lines */}
         {parentLines.map((hasLine, i) => (
@@ -163,8 +223,12 @@ function TreeNodeView({ node, activePathIds, depth, isLast, parentLines, onSelec
           transition: "background 0.12s",
         }} />
 
-        {/* Role badge */}
-        {role && (
+        {/* 书签节点显示书签图标（替代角色徽章），明显但克制 */}
+        {bookmark ? (
+          <span style={{ display: "flex", color: "var(--accent)", marginRight: 5, flexShrink: 0 }}>
+            <BookmarkIcon size={9} />
+          </span>
+        ) : role ? (
           <span style={{
             fontSize: 9,
             fontFamily: "var(--font-mono)",
@@ -179,7 +243,7 @@ function TreeNodeView({ node, activePathIds, depth, isLast, parentLines, onSelec
           }}>
             {role === "user" ? "U" : "A"}
           </span>
-        )}
+        ) : null}
 
         {/* Skipped indicator */}
         {skipped > 0 && (
@@ -191,7 +255,13 @@ function TreeNodeView({ node, activePathIds, depth, isLast, parentLines, onSelec
         {/* Label */}
         <span style={{
           fontSize: 11,
-          color: isActive ? "var(--text)" : isOnPath ? "var(--text-muted)" : "var(--text-dim)",
+          color: isActive
+            ? "var(--text)"
+            : bookmark
+              ? "var(--text)"
+              : isOnPath
+                ? "var(--text-muted)"
+                : "var(--text-dim)",
           fontWeight: isActive ? 500 : 400,
           overflow: "hidden",
           textOverflow: "ellipsis",
@@ -201,7 +271,10 @@ function TreeNodeView({ node, activePathIds, depth, isLast, parentLines, onSelec
         }}>
           {label}
         </span>
-      </div>
+      </button>
+
+      {/* 分支切换选择器（可写会话、另一叶）：手风琴内联展开，不新增浮层 */}
+      {chooserFor(rep.entry.id, (parentLines.length + 1) * 16 + 4)}
 
       {/* Children */}
       {rep.children.map((child, idx) => (
@@ -209,23 +282,407 @@ function TreeNodeView({ node, activePathIds, depth, isLast, parentLines, onSelec
           key={child.entry.id}
           node={child}
           activePathIds={activePathIds}
+          activeLeafId={activeLeafId}
           depth={depth + 1}
           isLast={idx === rep.children.length - 1}
           parentLines={[...parentLines, !isLast]}
-          onSelect={onSelect}
+          onActivate={onActivate}
           assistantLabel={assistantLabel}
+          bookmarkAria={bookmarkAria}
+          switchable={switchable}
+          switchTargetId={switchTargetId}
+          chooserFor={chooserFor}
+          disabled={disabled}
         />
       ))}
     </div>
   );
 }
 
-export function BranchNavigator({ tree, activeLeafId, onLeafChange, inline, containerRef, open: openProp, onToggle, hasSession, compact }: Props) {
+function ChooserOption({ title, desc, onClick }: { title: string; desc: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "flex-start",
+        gap: 1,
+        width: "100%",
+        minHeight: 34,
+        padding: "5px 8px",
+        background: "none",
+        border: "none",
+        borderRadius: 5,
+        cursor: "pointer",
+        textAlign: "left",
+        font: "inherit",
+      }}
+      onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-hover)"; }}
+      onMouseLeave={(e) => { e.currentTarget.style.background = "none"; }}
+    >
+      <span style={{ fontSize: 12, color: "var(--text)", lineHeight: 1.4 }}>{title}</span>
+      <span style={{ fontSize: 10, color: "var(--text-dim)", lineHeight: 1.3 }}>{desc}</span>
+    </button>
+  );
+}
+
+/** 切换选择器：直接 / 默认摘要 / 自定义焦点；busy 与错误反馈内联呈现。 */
+function BranchSwitchChooser({ indent, mode, busy, pendingLabel, error, customFocus, onModeChange, onFocusChange, onChoose, onCancel, t }: {
+  indent: number;
+  mode: "options" | "custom";
+  busy: boolean;
+  pendingLabel: string;
+  error: string | null;
+  customFocus: string;
+  onModeChange: (mode: "options" | "custom") => void;
+  onFocusChange: (value: string) => void;
+  onChoose: (choice: BranchSwitchChoice) => void;
+  onCancel: () => void;
+  t: I18nT;
+}) {
+  return (
+    <div
+      role="group"
+      aria-label={t("branches_switchPrompt")}
+      onKeyDown={(e) => {
+        if (e.key === "Escape" && !busy) {
+          e.stopPropagation();
+          onCancel();
+        }
+      }}
+      style={{
+        margin: "1px 0 4px",
+        // 深层树仍把选择器约束在面板内；树线保留深度信息，操作区不随深度无限右移。
+        marginLeft: Math.min(indent, 64),
+        border: "1px solid var(--border)",
+        borderRadius: 6,
+        background: "var(--bg-panel)",
+        padding: 4,
+      }}
+    >
+      {busy ? (
+        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", fontSize: 12, color: "var(--text-muted)" }}>
+          <svg className="animate-spin" width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2" opacity="0.25" />
+            <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+          </svg>
+          {pendingLabel}
+        </div>
+      ) : mode === "options" ? (
+        <div>
+          <ChooserOption
+            title={t("branches_switchDirect")}
+            desc={t("branches_switchDirectHint")}
+            onClick={() => onChoose({ mode: "direct" })}
+          />
+          <ChooserOption
+            title={t("branches_switchSummary")}
+            desc={t("branches_switchSummaryHint")}
+            onClick={() => onChoose({ mode: "summary" })}
+          />
+          <ChooserOption
+            title={t("branches_switchCustom")}
+            desc={t("branches_switchCustomHint")}
+            onClick={() => onModeChange("custom")}
+          />
+        </div>
+      ) : (
+        <div style={{ padding: 4 }}>
+          <input
+            autoFocus
+            value={customFocus}
+            onChange={(e) => onFocusChange(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && customFocus.trim()) onChoose({ mode: "custom", focus: customFocus });
+              if (e.key === "Escape") {
+                e.stopPropagation();
+                onModeChange("options");
+              }
+            }}
+            placeholder={t("branches_switchCustomPlaceholder")}
+            aria-label={t("branches_switchCustom")}
+            style={{
+              width: "100%",
+              height: 28,
+              padding: "0 8px",
+              fontSize: 12,
+              color: "var(--text)",
+              background: "var(--bg)",
+              border: "1px solid var(--border)",
+              borderRadius: 5,
+              boxSizing: "border-box",
+            }}
+          />
+          <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
+            <button
+              type="button"
+              disabled={!customFocus.trim()}
+              onClick={() => onChoose({ mode: "custom", focus: customFocus })}
+              style={{
+                minHeight: 28,
+                padding: "0 10px",
+                fontSize: 11,
+                borderRadius: 5,
+                border: "1px solid var(--accent)",
+                background: customFocus.trim() ? "var(--accent)" : "transparent",
+                color: customFocus.trim() ? "#fff" : "var(--text-dim)",
+                cursor: customFocus.trim() ? "pointer" : "not-allowed",
+              }}
+            >
+              {t("branches_switchCustomSubmit")}
+            </button>
+            <button
+              type="button"
+              onClick={() => onModeChange("options")}
+              style={{
+                minHeight: 28,
+                padding: "0 10px",
+                fontSize: 11,
+                borderRadius: 5,
+                border: "1px solid var(--border)",
+                background: "none",
+                color: "var(--text-muted)",
+                cursor: "pointer",
+              }}
+            >
+              {t("branches_switchBack")}
+            </button>
+          </div>
+        </div>
+      )}
+      {error && (
+        <div role="alert" style={{ padding: "4px 8px 2px", fontSize: 11, color: "#dc2626", lineHeight: 1.4 }}>
+          {error}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** 当前叶书签：设置 / 修改 / 清除；失败内联反馈，成功由 tree 刷新呈现。 */
+function BranchBookmarkFooter({ currentLabel, disabled, onSubmit, t }: {
+  currentLabel: string | null;
+  disabled: boolean;
+  onSubmit: (raw: string) => Promise<BranchActionResult>;
+  t: I18nT;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (editing) inputRef.current?.focus();
+  }, [editing]);
+
+  const busy = disabled || saving;
+  const trimmed = draft.trim();
+  const unchanged = trimmed === (currentLabel ?? "");
+
+  const submit = async (raw: string) => {
+    if (busy) return;
+    const value = raw.trim();
+    if (value.length > BRANCH_LABEL_MAX_LENGTH) {
+      setError(t("branches_bookmarkTooLong", { max: BRANCH_LABEL_MAX_LENGTH }));
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    const result = await onSubmit(value);
+    setSaving(false);
+    if (result.kind === "ok") {
+      setEditing(false);
+      return;
+    }
+    if (result.kind === "busy") {
+      setError(t("branches_waitForRun"));
+      return;
+    }
+    setError(result.kind === "error" && result.message
+      ? `${t("branches_bookmarkFailed")}: ${result.message}`
+      : t("branches_bookmarkFailed"));
+  };
+
+  const startEdit = (initial: string) => {
+    setDraft(initial);
+    setError(null);
+    setEditing(true);
+  };
+
+  const textButtonStyle: React.CSSProperties = {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 4,
+    minHeight: 28,
+    padding: "0 8px",
+    fontSize: 11,
+    borderRadius: 5,
+    border: "1px solid var(--border)",
+    background: "none",
+    color: "var(--text-muted)",
+    cursor: busy ? "not-allowed" : "pointer",
+    flexShrink: 0,
+    opacity: busy ? 0.55 : 1,
+  };
+
+  return (
+    <div style={{ borderTop: "1px solid var(--border)", padding: "6px 12px 8px", flexShrink: 0 }}>
+      {editing ? (
+        <div>
+          <div style={{ display: "flex", gap: 6 }}>
+            <input
+              ref={inputRef}
+              value={draft}
+              maxLength={BRANCH_LABEL_MAX_LENGTH}
+              disabled={saving}
+              onChange={(e) => { setDraft(e.target.value); setError(null); }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && trimmed && !unchanged) void submit(trimmed);
+                if (e.key === "Escape") { setEditing(false); setError(null); }
+              }}
+              placeholder={t("branches_bookmarkPlaceholder")}
+              aria-label={t("branches_bookmarkPlaceholder")}
+              style={{
+                flex: 1,
+                minWidth: 0,
+                height: 28,
+                padding: "0 8px",
+                fontSize: 12,
+                color: "var(--text)",
+                background: "var(--bg)",
+                border: "1px solid var(--border)",
+                borderRadius: 5,
+              }}
+            />
+            <button
+              type="button"
+              disabled={busy || !trimmed || unchanged}
+              onClick={() => void submit(trimmed)}
+              style={{
+                ...textButtonStyle,
+                border: "1px solid var(--accent)",
+                background: !trimmed || unchanged ? "transparent" : "var(--accent)",
+                color: !trimmed || unchanged ? "var(--text-dim)" : "#fff",
+                cursor: busy || !trimmed || unchanged ? "not-allowed" : "pointer",
+                opacity: 1,
+              }}
+            >
+              {t("branches_bookmarkSave")}
+            </button>
+            <button
+              type="button"
+              disabled={saving}
+              onClick={() => { setEditing(false); setError(null); }}
+              style={textButtonStyle}
+            >
+              {t("branches_bookmarkCancel")}
+            </button>
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 4, minHeight: 14 }}>
+            {error ? (
+              <span role="alert" style={{ fontSize: 10, color: "#dc2626", lineHeight: 1.4 }}>{error}</span>
+            ) : (
+              <span />
+            )}
+            <span style={{ fontSize: 10, color: "var(--text-dim)", flexShrink: 0 }}>
+              {draft.length}/{BRANCH_LABEL_MAX_LENGTH}
+            </span>
+          </div>
+        </div>
+      ) : (
+        <div>
+          <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, minHeight: 28 }}>
+            <span style={{
+              fontSize: 10,
+              color: "var(--text-dim)",
+              letterSpacing: "0.04em",
+              textTransform: "uppercase",
+              flexShrink: 0,
+            }}>
+              {t("branches_currentPoint")}
+            </span>
+            {currentLabel ? (
+              <>
+                <span
+                  title={currentLabel}
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 4,
+                    minWidth: 0,
+                    flex: 1,
+                    fontSize: 11,
+                    color: "var(--text)",
+                  }}
+                >
+                  <span style={{ color: "var(--accent)", display: "flex", flexShrink: 0 }}>
+                    <BookmarkIcon size={10} />
+                  </span>
+                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {currentLabel}
+                  </span>
+                </span>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => startEdit(currentLabel)}
+                  title={t("branches_editBookmark")}
+                  style={textButtonStyle}
+                >
+                  {t("branches_editBookmark")}
+                </button>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void submit("")}
+                  title={t("branches_removeBookmark")}
+                  style={textButtonStyle}
+                >
+                  {t("branches_removeBookmark")}
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => startEdit("")}
+                style={{ ...textButtonStyle, gap: 5 }}
+              >
+                <BookmarkIcon size={10} />
+                {t("branches_addBookmark")}
+              </button>
+            )}
+          </div>
+          {error && (
+            <div role="alert" style={{ marginTop: 4, fontSize: 10, color: "#dc2626", lineHeight: 1.4 }}>
+              {error}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function BranchNavigator({ tree, activeLeafId, onLeafChange, inline, containerRef, open: openProp, onToggle, hasSession, compact, branchActions }: Props) {
   const { t } = useI18n();
   const [openInternal, setOpenInternal] = useState(false);
   const open = openProp !== undefined ? openProp : openInternal;
   const btnRef = useRef<HTMLButtonElement>(null);
   const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number; width: number } | null>(null);
+
+  // 切换选择器状态：targetId 之外的模式/焦点/错误/进行中全部局部化。
+  const [switchTargetId, setSwitchTargetId] = useState<string | null>(null);
+  const [chooserMode, setChooserMode] = useState<"options" | "custom">("options");
+  const [customFocus, setCustomFocus] = useState("");
+  const [switchError, setSwitchError] = useState<string | null>(null);
+  const [pendingMode, setPendingMode] = useState<BranchSwitchChoice["mode"] | null>(null);
+
+  const canWrite = branchActions?.canWrite === true;
+  const actionsBusy = branchActions?.busy === true;
 
   useEffect(() => {
     if (!open || !inline) return;
@@ -241,28 +698,166 @@ export function BranchNavigator({ tree, activeLeafId, onLeafChange, inline, cont
     return () => ro.disconnect();
   }, [open, inline, containerRef]);
 
+  // 面板关闭后复位选择器；树刷新（保存书签、agent 结束等）后目标可能已过期。
+  useEffect(() => {
+    if (open) return;
+    setSwitchTargetId(null);
+    setSwitchError(null);
+    setChooserMode("options");
+    setCustomFocus("");
+    setPendingMode(null);
+  }, [open]);
+  useEffect(() => {
+    setSwitchTargetId(null);
+    setSwitchError(null);
+  }, [tree]);
+
   const activePathIds = useMemo(
     () => buildActivePath(tree, activeLeafId),
     [tree, activeLeafId]
   );
 
-  const handleSelect = useCallback((id: string) => {
-    onLeafChange(id);
-  }, [onLeafChange]);
+  const bookmarksExist = useMemo(() => treeHasBookmarks(tree), [tree]);
+  const currentLeafLabel = useMemo(
+    () => findBranchLabelByEntryId(tree, activeLeafId),
+    [tree, activeLeafId],
+  );
+
+  const closeDropdown = useCallback(() => {
+    if (openProp !== undefined) {
+      // 受控模式：仅在确实打开时交给外部切换，避免反向打开。
+      if (openProp) onToggle?.();
+      return;
+    }
+    setOpenInternal(false);
+  }, [openProp, onToggle]);
+
+  const handleNodeActivate = useCallback((rep: SessionTreeNode) => {
+    if (actionsBusy) return;
+    const targetId = rep.entry.id;
+    const isCurrentLeaf = targetId === activeLeafId || !!rep.compressedEntryIds?.includes(activeLeafId ?? "");
+    if (isCurrentLeaf) {
+      // 点击当前叶不触发切换；若选择器开着则收起。
+      setSwitchTargetId(null);
+      return;
+    }
+    if (canWrite) {
+      // 可写会话：先给轻量选择（直接 / 默认摘要 / 自定义焦点），不立即跳转。
+      setSwitchError(null);
+      setChooserMode("options");
+      setCustomFocus("");
+      setSwitchTargetId((cur) => (cur === targetId ? null : targetId));
+      return;
+    }
+    // 只读会话：保持既有纯 GET context 的直跳行为。
+    onLeafChange(targetId);
+  }, [actionsBusy, activeLeafId, canWrite, onLeafChange]);
+
+  const runSwitch = useCallback(async (choice: BranchSwitchChoice) => {
+    if (!branchActions || !switchTargetId || branchActions.busy) return;
+    setSwitchError(null);
+    setPendingMode(choice.mode);
+    const result = await branchActions.navigate(switchTargetId, choice);
+    setPendingMode(null);
+    if (result.kind === "ok") {
+      setSwitchTargetId(null);
+      // 切换成功：收起面板，让用户直接看到新分支上下文。
+      closeDropdown();
+      return;
+    }
+    // 取消/中止：保留当前 context，静默收起选择器。
+    if (result.kind === "cancelled") {
+      setSwitchTargetId(null);
+      return;
+    }
+    if (result.kind === "busy") {
+      setSwitchError(t("branches_waitForRun"));
+      return;
+    }
+    setSwitchError(result.message ? `${t("branches_switchFailed")}: ${result.message}` : t("branches_switchFailed"));
+  }, [branchActions, switchTargetId, closeDropdown, t]);
+
+  const chooserFor = useCallback((nodeId: string, indent: number): ReactNode => {
+    if (switchTargetId !== nodeId || !canWrite) return null;
+    return (
+      <BranchSwitchChooser
+        indent={indent}
+        mode={chooserMode}
+        busy={pendingMode !== null || actionsBusy}
+        pendingLabel={pendingMode === "direct" ? t("branches_switching") : t("branches_summarizing")}
+        error={switchError}
+        customFocus={customFocus}
+        onModeChange={(mode) => { setChooserMode(mode); setSwitchError(null); }}
+        onFocusChange={setCustomFocus}
+        onChoose={(choice) => void runSwitch(choice)}
+        onCancel={() => setSwitchTargetId(null)}
+        t={t}
+      />
+    );
+  }, [switchTargetId, canWrite, chooserMode, pendingMode, actionsBusy, switchError, customFocus, runSwitch, t]);
 
   const noBranchReason = !hasSession
     ? t("branches_noSession")
-    : !hasBranch(tree)
+    : !hasBranch(tree) && !bookmarksExist
       ? t("branches_empty")
       : null;
 
   // Find first meaningful node (skip pure linear prefix)
   const compressed = tree.length > 0 ? compress(tree[0]) : null;
   const firstNode = compressed?.node ?? null;
-  const hasContent = !noBranchReason && firstNode && firstNode.children.length > 1;
+  // 带书签的根代表节点自身也要成行；否则沿用「分支点的子节点」语义。
+  const rows = firstNode
+    ? getBranchNodeBookmark(firstNode.label) !== null
+      ? [firstNode]
+      : firstNode.children
+    : [];
+  const hasContent = !noBranchReason && rows.length > 0;
   const assistantLabel = t("branches_assistant");
+  const bookmarkAria = t("branches_bookmarkAria");
 
-  const branchIcon = (
+  const panelContent = hasContent ? (
+    <div style={{ padding: "4px 12px 8px 12px", maxHeight: 260, overflowY: "auto" }}>
+      {rows.map((row, idx) => (
+        <TreeNodeView
+          key={row.entry.id}
+          node={row}
+          activePathIds={activePathIds}
+          activeLeafId={activeLeafId}
+          depth={0}
+          isLast={idx === rows.length - 1}
+          parentLines={[]}
+          onActivate={handleNodeActivate}
+          assistantLabel={assistantLabel}
+          bookmarkAria={bookmarkAria}
+          switchable={canWrite}
+          switchTargetId={switchTargetId}
+          chooserFor={chooserFor}
+          disabled={actionsBusy}
+        />
+      ))}
+    </div>
+  ) : (
+    <div style={{ padding: "10px 16px", fontSize: 12, color: "var(--text-muted)", fontStyle: "italic" }}>
+      {noBranchReason}
+    </div>
+  );
+
+  const bookmarkFooter = canWrite && activeLeafId ? (
+    <BranchBookmarkFooter
+      key={activeLeafId}
+      currentLabel={currentLeafLabel}
+      disabled={actionsBusy}
+      onSubmit={(raw) => branchActions!.setLabel(activeLeafId, raw)}
+      t={t}
+    />
+  ) : null;
+
+  const branchIcon = actionsBusy ? (
+    <svg className="animate-spin" width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true" style={{ color: "var(--accent)", flexShrink: 0 }}>
+      <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2" opacity="0.25" />
+      <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+    </svg>
+  ) : (
     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: hasContent ? "var(--accent)" : "var(--text-dim)", flexShrink: 0 }}>
       <line x1="6" y1="3" x2="6" y2="15" />
       <circle cx="18" cy="6" r="3" />
@@ -276,7 +871,6 @@ export function BranchNavigator({ tree, activeLeafId, onLeafChange, inline, cont
       <polyline points="2 3.5 5 6.5 8 3.5" />
     </svg>
   );
-
 
   if (inline) {
     return (
@@ -319,26 +913,8 @@ export function BranchNavigator({ tree, activeLeafId, onLeafChange, inline, cont
             borderBottom: "1px solid var(--border)",
             zIndex: 500,
           }}>
-            {hasContent && firstNode ? (
-              <div style={{ padding: "4px 12px 8px 12px", maxHeight: 260, overflowY: "auto" }}>
-                {firstNode.children.map((child, idx) => (
-                  <TreeNodeView
-                    key={child.entry.id}
-                    node={child}
-                    activePathIds={activePathIds}
-                    depth={0}
-                    isLast={idx === firstNode.children.length - 1}
-                    parentLines={[]}
-                    onSelect={handleSelect}
-          assistantLabel={assistantLabel}
-                  />
-                ))}
-              </div>
-            ) : (
-              <div style={{ padding: "10px 16px", fontSize: 12, color: "var(--text-muted)", fontStyle: "italic" }}>
-                {noBranchReason}
-              </div>
-            )}
+            {panelContent}
+            {bookmarkFooter}
           </div>
         )}
       </div>
@@ -381,26 +957,8 @@ export function BranchNavigator({ tree, activeLeafId, onLeafChange, inline, cont
           boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
           zIndex: 100,
         }}>
-          {hasContent && firstNode ? (
-            <div style={{ padding: "4px 12px 8px 12px", maxHeight: 260, overflowY: "auto" }}>
-              {firstNode.children.map((child, idx) => (
-                <TreeNodeView
-                  key={child.entry.id}
-                  node={child}
-                  activePathIds={activePathIds}
-                  depth={0}
-                  isLast={idx === firstNode.children.length - 1}
-                  parentLines={[]}
-                  onSelect={handleSelect}
-          assistantLabel={assistantLabel}
-                />
-              ))}
-            </div>
-          ) : (
-            <div style={{ padding: "10px 16px", fontSize: 12, color: "var(--text-muted)", fontStyle: "italic" }}>
-              {noBranchReason ?? t("branches_empty")}
-            </div>
-          )}
+          {panelContent}
+          {bookmarkFooter}
         </div>
       )}
     </div>

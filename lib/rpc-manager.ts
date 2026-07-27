@@ -50,10 +50,87 @@ type ExtensionCommandContextActionsLike = {
   waitForIdle: () => Promise<void>;
   newSession: () => Promise<{ cancelled: boolean }>;
   fork: () => Promise<{ cancelled: boolean }>;
-  navigateTree: (targetId: string, options?: { summarize?: boolean }) => Promise<{ cancelled: boolean }>;
+  navigateTree: (
+    targetId: string,
+    options?: { summarize?: boolean; customInstructions?: string },
+  ) => Promise<{ cancelled: boolean }>;
   switchSession: () => Promise<{ cancelled: boolean }>;
   reload: () => Promise<void>;
 };
+
+/** 分支书签 label 最大长度；超限拒绝，不静默截断。 */
+export const BRANCH_LABEL_MAX_LENGTH = 120;
+
+/**
+ * 校验并规范化 navigate_tree 命令参数。
+ * customInstructions 仅 trim 后透传（追加默认 prompt）；禁止客户端 replaceInstructions=true。
+ */
+export function parseNavigateTreeCommand(command: Record<string, unknown>): {
+  targetId: string;
+  summarize?: boolean;
+  customInstructions?: string;
+} {
+  const rawTargetId = command.targetId;
+  if (typeof rawTargetId !== "string" || rawTargetId.trim() === "") {
+    throw new Error("targetId is required");
+  }
+  const targetId = rawTargetId.trim();
+  if (command.replaceInstructions === true) {
+    throw new Error("replaceInstructions is not allowed from client");
+  }
+  const result: {
+    targetId: string;
+    summarize?: boolean;
+    customInstructions?: string;
+  } = { targetId };
+
+  if (command.summarize !== undefined) {
+    if (typeof command.summarize !== "boolean") {
+      throw new Error("summarize must be a boolean");
+    }
+    result.summarize = command.summarize;
+  }
+
+  if (command.customInstructions !== undefined) {
+    if (typeof command.customInstructions !== "string") {
+      throw new Error("customInstructions must be a string");
+    }
+    const trimmed = command.customInstructions.trim();
+    if (trimmed) result.customInstructions = trimmed;
+  }
+
+  return result;
+}
+
+/**
+ * 校验并规范化 set_branch_label 命令参数。
+ * trim 后空字符串表示清除 label；超长拒绝。
+ */
+export function parseSetBranchLabelCommand(command: Record<string, unknown>): {
+  targetId: string;
+  label: string | undefined;
+} {
+  const rawTargetId = command.targetId;
+  if (typeof rawTargetId !== "string" || rawTargetId.trim() === "") {
+    throw new Error("targetId is required");
+  }
+  const targetId = rawTargetId.trim();
+  if (!("label" in command)) {
+    throw new Error("label is required");
+  }
+  if (command.label !== undefined && typeof command.label !== "string") {
+    throw new Error("label must be a string or undefined");
+  }
+  const raw = command.label as string | undefined;
+  if (raw === undefined) {
+    return { targetId, label: undefined };
+  }
+  const trimmed = raw.trim();
+  if (trimmed.length > BRANCH_LABEL_MAX_LENGTH) {
+    throw new Error(`label exceeds maximum length of ${BRANCH_LABEL_MAX_LENGTH}`);
+  }
+  return { targetId, label: trimmed === "" ? undefined : trimmed };
+}
 
 type ExtensionBindingOptions = {
   forceEmptySystemPrompt?: boolean;
@@ -422,8 +499,28 @@ export class AgentSessionWrapper {
         if (this.inner.isBashRunning) {
           throw new Error("Cannot navigate while a shell command is running");
         }
-        const result = await this.inner.navigateTree(command.targetId as string, {});
-        return { cancelled: result.cancelled };
+        const { targetId, summarize, customInstructions } = parseNavigateTreeCommand(command);
+        try {
+          const result = await this.inner.navigateTree(targetId, {
+            ...(summarize !== undefined ? { summarize } : {}),
+            ...(customInstructions !== undefined ? { customInstructions } : {}),
+            // 客户端自定义焦点只能追加默认 prompt，禁止替换
+          });
+          return result;
+        } finally {
+          invalidateSessionListCache();
+        }
+      }
+
+      case "set_branch_label": {
+        const { targetId, label } = parseSetBranchLabelCommand(command);
+        const entryId = this.inner.sessionManager.appendLabelChange(targetId, label);
+        invalidateSessionListCache();
+        return {
+          targetId,
+          label: label ?? null,
+          entryId,
+        };
       }
 
       case "set_thinking_level": {
@@ -929,7 +1026,12 @@ export class AgentSessionWrapper {
       newSession: async () => ({ cancelled: true }),
       fork: async () => ({ cancelled: true }),
       navigateTree: async (targetId, options) => {
-        const result = await this.inner.navigateTree(targetId, { summarize: options?.summarize });
+        const result = await this.inner.navigateTree(targetId, {
+          summarize: options?.summarize,
+          ...(options?.customInstructions !== undefined
+            ? { customInstructions: options.customInstructions }
+            : {}),
+        });
         return { cancelled: result.cancelled };
       },
       switchSession: async () => ({ cancelled: true }),

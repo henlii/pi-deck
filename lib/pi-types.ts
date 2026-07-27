@@ -22,10 +22,19 @@ export interface ToolInfo {
   description: string;
 }
 
+export interface NavigateTreeOptions {
+  summarize?: boolean;
+  customInstructions?: string;
+  /** 仅 SDK/扩展内部使用；客户端命令禁止 replaceInstructions=true。 */
+  replaceInstructions?: boolean;
+  label?: string;
+}
+
 export interface NavigateTreeResult {
   editorText?: string;
   cancelled: boolean;
   aborted?: boolean;
+  summaryEntry?: unknown;
 }
 
 export interface SessionStatsInfo {
@@ -142,7 +151,7 @@ export interface AgentSessionLike {
   abortBash(): void;
   readonly isBashRunning: boolean;
   setModel(model: ModelLike): Promise<void>;
-  navigateTree(targetId: string, options?: { summarize?: boolean }): Promise<NavigateTreeResult>;
+  navigateTree(targetId: string, options?: NavigateTreeOptions): Promise<NavigateTreeResult>;
   setThinkingLevel(level: string): void;
   compact(customInstructions?: string): Promise<unknown>;
   setSessionName(name: string): void;
