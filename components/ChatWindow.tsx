@@ -152,6 +152,7 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
     handleBuiltinSlashCommand,
     handleToolPresetChange, handleThinkingLevelChange, loadSlashCommands,
     handleWorkspaceUndo, handleWorkspaceRedo, handleWorkspaceCheckpoint,
+    branchBusy,
   } = useAgentSession({
     session, newSessionCwd, onAgentEnd: wrappedOnAgentEnd, onSessionCreated, onSessionForked,
     modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSessionStatsPanelOpen,
@@ -402,7 +403,8 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
   );
 
   // 工作区历史：无 snapshot 不渲染；放在 om 下方。只读 child 可看时间线，无写按钮。
-  const whCanAct = !isReadOnly && !sessionBusy && !whActing;
+  // 与 handleSend 门禁一致：branchBusy（分支切换/书签写入窗口）期间禁止派发。
+  const whCanAct = !isReadOnly && !sessionBusy && !branchBusy && !whActing;
   const runWhAction = useCallback(async (action: () => void | Promise<void>) => {
     if (!whCanAct) return;
     setWhActing(true);
@@ -412,7 +414,6 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
       setWhActing(false);
     }
   }, [whCanAct]);
-
   const whPanelElement = !workspaceHistory?.hasData ? null : (
     <div
       style={{

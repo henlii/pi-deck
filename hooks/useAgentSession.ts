@@ -1736,11 +1736,11 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   /**
    * Workspace History 命令：仅通过 type:prompt 派发 slash 到扩展，
    * 禁止本地 git checkout/reset 或 { command: "undo" } 形态。
-   * isReadOnly / agentRunning / bashRunning 时直接 return。
+   * isReadOnly / agentRunning / bashRunning / branchBusy 时直接 return（与 handleSend 门禁对齐）。
    */
   const dispatchWorkspaceHistoryPrompt = useCallback(async (message: string) => {
     if (isReadOnly) return;
-    if (agentRunningRef.current || bashRunningRef.current) return;
+    if (agentRunningRef.current || bashRunningRef.current || branchBusyRef.current) return;
     const sid = sessionIdRef.current;
     if (!sid) return;
     try {
