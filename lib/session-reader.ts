@@ -10,6 +10,7 @@ import type { AgentMessage, SessionEntry, SessionHeader, SessionInfo, SessionCon
 import type { SessionEntry as PiSessionEntry, SessionInfo as PiSessionInfo } from "@earendil-works/pi-coding-agent";
 import { normalizeToolCalls } from "./normalize";
 import { projectObservationalMemory, type ObservationalMemoryView } from "./om-ledger";
+import { projectWorkspaceHistory, type WorkspaceHistoryView } from "./workspace-history";
 import { resolveProject, type ProjectInfo } from "./worktree";
 import { discoverSubagentSessions } from "./subagent-sessions";
 
@@ -329,6 +330,7 @@ export function buildSessionNavigationSnapshot(
   header: SessionHeader | null | undefined;
   sessionName: string | undefined;
   observationalMemory: ObservationalMemoryView | null;
+  workspaceHistory: WorkspaceHistoryView | null;
 } {
   const entries = sm.getEntries() as SessionEntry[];
   const leafId = resolveNavigationLeafId(
@@ -340,6 +342,7 @@ export function buildSessionNavigationSnapshot(
   );
   const context = buildSessionContext(entries, leafId, options);
   const observationalMemory = projectObservationalMemory(entries, leafId);
+  const workspaceHistory = projectWorkspaceHistory(entries, leafId);
   return {
     entries,
     leafId,
@@ -348,6 +351,7 @@ export function buildSessionNavigationSnapshot(
     header: sm.getHeader(),
     sessionName: sm.getSessionName(),
     observationalMemory,
+    workspaceHistory,
   };
 }
 

@@ -12,6 +12,7 @@ import type {
   ChatInputHandle,
 } from "@/lib/types";
 import type { ObservationalMemoryView } from "@/lib/om-ledger";
+import type { WorkspaceHistoryView } from "@/lib/workspace-history";
 import { normalizeToolCalls } from "@/lib/normalize";
 import { sendAgentCommand } from "@/lib/agent-client";
 import {
@@ -55,6 +56,8 @@ export interface SessionData {
   };
   /** om 只读 ledger 投影；无有效 om entry 时为 null；旧响应可能缺省 */
   observationalMemory?: ObservationalMemoryView | null;
+  /** workspace-history 只读 snapshot 时间线；无有效 entry 时为 null；旧响应可能缺省 */
+  workspaceHistory?: WorkspaceHistoryView | null;
 }
 
 interface StreamingState {
@@ -365,6 +368,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const [messages, setMessages] = useState<AgentMessage[]>([]);
   const [entryIds, setEntryIds] = useState<string[]>([]);
   const [observationalMemory, setObservationalMemory] = useState<ObservationalMemoryView | null>(null);
+  const [workspaceHistory, setWorkspaceHistory] = useState<WorkspaceHistoryView | null>(null);
   const [streamState, dispatch] = useReducer(streamReducer, { isStreaming: false, streamingMessage: null });
   const [agentRunning, setAgentRunning] = useState(false);
   const [bashRunning, setBashRunning] = useState(false);
@@ -621,6 +625,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           setMessages([]);
           setEntryIds([]);
           setObservationalMemory(null);
+          setWorkspaceHistory(null);
           setError(null);
         }
         return null;
@@ -636,6 +641,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       setMessages(d.context.messages);
       setEntryIds(d.context.entryIds ?? []);
       setObservationalMemory(d.observationalMemory ?? null);
+      setWorkspaceHistory(d.workspaceHistory ?? null);
       setCurrentModelOverride(null);
       setError(null);
       if (d.context.thinkingLevel && d.context.thinkingLevel !== "off") {
@@ -687,13 +693,15 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       const d = await res.json() as {
         context: { messages: AgentMessage[]; entryIds: string[] };
         observationalMemory?: ObservationalMemoryView | null;
+        workspaceHistory?: WorkspaceHistoryView | null;
       };
       // 仅在成功拿到新 context、即将写入 state 时重置跟随；fetch 失败不遗留 pending。
       notifyAutoFollowBranchReset();
       setMessages(d.context.messages);
       setEntryIds(d.context.entryIds ?? []);
-      // leaf 切换时同步 om 投影；字段缺省时清空，避免旧 leaf 数据残留
+      // leaf 切换时同步 om / workspace-history 投影；字段缺省时清空，避免旧 leaf 数据残留
       setObservationalMemory(d.observationalMemory ?? null);
+      setWorkspaceHistory(d.workspaceHistory ?? null);
     } catch (e) {
       console.error("Failed to load context:", e);
     }
@@ -1725,6 +1733,39 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     }
   }, [isReadOnly, setToolPresetState]);
 
+  /**
+   * Workspace History 命令：仅通过 type:prompt 派发 slash 到扩展，
+   * 禁止本地 git checkout/reset 或 { command: "undo" } 形态。
+   * isReadOnly / agentRunning / bashRunning 时直接 return。
+   */
+  const dispatchWorkspaceHistoryPrompt = useCallback(async (message: string) => {
+    if (isReadOnly) return;
+    if (agentRunningRef.current || bashRunningRef.current) return;
+    const sid = sessionIdRef.current;
+    if (!sid) return;
+    try {
+      await sendAgentCommand(sid, { type: "prompt", message });
+      await loadSession(sid, false, true);
+    } catch (e) {
+      console.error("Workspace history prompt failed:", e);
+      addNotice({ type: "error", message: String(e) });
+    }
+  }, [addNotice, isReadOnly, loadSession]);
+
+  const handleWorkspaceUndo = useCallback(async () => {
+    await dispatchWorkspaceHistoryPrompt("/undo");
+  }, [dispatchWorkspaceHistoryPrompt]);
+
+  const handleWorkspaceRedo = useCallback(async () => {
+    await dispatchWorkspaceHistoryPrompt("/redo");
+  }, [dispatchWorkspaceHistoryPrompt]);
+
+  const handleWorkspaceCheckpoint = useCallback(async (label?: string) => {
+    const trimmed = typeof label === "string" ? label.trim() : "";
+    const message = trimmed ? `/checkpoint ${trimmed}` : "/checkpoint";
+    await dispatchWorkspaceHistoryPrompt(message);
+  }, [dispatchWorkspaceHistoryPrompt]);
+
   // Load session on mount
   useEffect(() => {
     commitExtensionUiState({
@@ -1997,7 +2038,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
   return {
     // State
-    data, loading, error, activeLeafId, messages, entryIds, observationalMemory, streamState,
+    data, loading, error, activeLeafId, messages, entryIds, observationalMemory, workspaceHistory, streamState,
     agentRunning, modelNames, modelList, modelThinkingLevels, modelThinkingLevelMaps, newSessionModel, toolPreset, thinkingLevel,
     retryInfo, contextUsage, systemPrompt, forkingEntryId,
     isCompacting, compactError, compactResult, currentModel, displayModel, sessionStats,
@@ -2019,6 +2060,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     handleToolPresetChange, handleThinkingLevelChange, loadTools, loadSlashCommands, setActiveLeafId, setData, setMessages,
     dispatch, setAgentRunning, setForkingEntryId,
     bashRunning, pendingBash,
+    // Workspace History（仅 type:prompt 派发到扩展）
+    handleWorkspaceUndo, handleWorkspaceRedo, handleWorkspaceCheckpoint,
     // 分支书签与带选项切换（D3）
     branchBusy, branchActions, navigateBranch, setBranchLabel,
     // Subscriptions

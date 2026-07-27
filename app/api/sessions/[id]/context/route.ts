@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { resolveSessionPath, buildSessionContext, resolveSessionManagerForRead } from "@/lib/session-reader";
 import { projectObservationalMemory } from "@/lib/om-ledger";
+import { projectWorkspaceHistory } from "@/lib/workspace-history";
 import { getRpcSession } from "@/lib/rpc-manager";
 
 export async function GET(
@@ -31,8 +32,9 @@ export async function GET(
       deferToolResultImages,
     });
     const observationalMemory = projectObservationalMemory(entries, leafId ?? null);
+    const workspaceHistory = projectWorkspaceHistory(entries, leafId ?? null);
 
-    return NextResponse.json({ context, observationalMemory });
+    return NextResponse.json({ context, observationalMemory, workspaceHistory });
   } catch (error) {
     return NextResponse.json({ error: String(error) }, { status: 500 });
   }
