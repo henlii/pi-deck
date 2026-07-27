@@ -4,12 +4,14 @@ import { createJiti } from "jiti";
 
 const jiti = createJiti(import.meta.url);
 
-test("页面清单：appearance/models 无 cwd 可用，skills/plugins 保留导航项并给出提示", async () => {
+test("页面清单：appearance/models/trust 无 cwd 可用，skills/plugins 保留导航项并给出提示", async () => {
   const { getSettingsPages } = await jiti.import("./settings-nav.ts");
   const withoutCwd = getSettingsPages(false);
-  assert.deepEqual(withoutCwd.map((p) => p.id), ["appearance", "models", "skills", "plugins"]);
+  assert.deepEqual(withoutCwd.map((p) => p.id), ["appearance", "models", "skills", "plugins", "trust"]);
   assert.equal(withoutCwd.find((p) => p.id === "appearance").available, true);
   assert.equal(withoutCwd.find((p) => p.id === "models").available, true);
+  // trust 是全局 trust.json 的只读视图，不依赖活动项目。
+  assert.equal(withoutCwd.find((p) => p.id === "trust").available, true);
   const skills = withoutCwd.find((p) => p.id === "skills");
   const plugins = withoutCwd.find((p) => p.id === "plugins");
   // 不静默隐藏：导航项仍在，只是不可用且带具体提示。
@@ -17,7 +19,7 @@ test("页面清单：appearance/models 无 cwd 可用，skills/plugins 保留导
   assert.equal(skills.unavailableHint, "skills");
   assert.equal(plugins.available, false);
   assert.equal(plugins.unavailableHint, "plugins");
-   assert.deepEqual(withoutCwd.map((p) => p.label), ["appearance", "models", "skills", "plugins"]);
+   assert.deepEqual(withoutCwd.map((p) => p.label), ["appearance", "models", "skills", "plugins", "trust"]);
 
   const withCwd = getSettingsPages(true);
   assert.ok(withCwd.every((p) => p.available));

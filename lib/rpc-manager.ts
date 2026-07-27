@@ -1,4 +1,5 @@
-import { createAgentSessionFromServices, createAgentSessionServices, getAgentDir, initTheme, SessionManager, Theme } from "@earendil-works/pi-coding-agent";
+import { createAgentSessionFromServices, createAgentSessionServices, getAgentDir, initTheme, SessionManager, SettingsManager, Theme } from "@earendil-works/pi-coding-agent";
+import { resolveProjectTrustedForSession } from "./project-trust";
 import { KeybindingsManager as TuiKeybindingsManager, TUI_KEYBINDINGS } from "@earendil-works/pi-tui";
 import { randomUUID } from "crypto";
 import { existsSync, writeFileSync } from "fs";
@@ -1064,9 +1065,18 @@ export async function startRpcSession(
       toolsOption = toolNames.length === 0 ? [] : undefined;
     }
 
+    // Project trust: pi gates project-local `.pi` settings/resources, project
+    // package installs, and project extensions behind `projectTrusted`. Passing no
+    // SettingsManager left the SDK default (`projectTrusted: true`), so every project
+    // was loaded as trusted and `trust.json`/`defaultProjectTrust` never applied.
+    // Resolve against the same cwd the services are built for, so settings and trust
+    // can never disagree about which project they describe.
+    const projectTrusted = resolveProjectTrustedForSession(cwd, agentDir);
+    const settingsManager = SettingsManager.create(cwd, agentDir, { projectTrusted });
+
     // Build services first so extension-registered providers are available
     // before the SDK restores the saved model from the session file.
-    const services = await createAgentSessionServices({ cwd, agentDir });
+    const services = await createAgentSessionServices({ cwd, agentDir, settingsManager });
     const { session: inner } = await createAgentSessionFromServices({
       services,
       sessionManager,

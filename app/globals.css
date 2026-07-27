@@ -29,6 +29,8 @@
   --text-dim: #9ca3af;
   --accent: #2563eb;
   --accent-hover: #1d4ed8;
+  /* 亮主题 warning：与白底约 4.5:1 对比度（项目信任「待决定」等） */
+  --warning: #b45309;
   --user-bg: #eff6ff;
   --assistant-bg: #ffffff;
   --tool-bg: #f9fafb;
@@ -46,6 +48,7 @@ html.dark {
   --text-dim: #6b7280;
   --accent: #60a5fa;
   --accent-hover: #93c5fd;
+  --warning: #d97706;
   --user-bg: #1e293b;
   --assistant-bg: #1a1a1a;
   --tool-bg: #1f2937;

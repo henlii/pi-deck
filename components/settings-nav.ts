@@ -4,7 +4,7 @@
  * 全部为纯函数，方便 node:test 定向覆盖。
  */
 
-export type SettingsPageId = "appearance" | "models" | "skills" | "plugins";
+export type SettingsPageId = "appearance" | "models" | "skills" | "plugins" | "trust";
 
 export interface SettingsPageInfo {
   id: SettingsPageId;
@@ -17,7 +17,8 @@ export interface SettingsPageInfo {
   unavailableHint?: "skills" | "plugins";
 }
 
-const PAGE_ORDER: SettingsPageId[] = ["appearance", "models", "skills", "plugins"];
+// trust 排在最后：它是只读的信任决策视图，无 cwd 也能查看全局 trust.json。
+const PAGE_ORDER: SettingsPageId[] = ["appearance", "models", "skills", "plugins", "trust"];
 
 /** 无 cwd 提示：保留导航项，内容区显示具体指引，不静默隐藏。 */
 const PAGE_NO_CWD_HINT: Partial<Record<SettingsPageId, "skills" | "plugins">> = { skills: "skills", plugins: "plugins" };
