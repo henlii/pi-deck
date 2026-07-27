@@ -139,8 +139,8 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
     isAutoModelSelection,
     agentPhase,
     isNew,
-    sessionIdRef, messagesEndRef, scrollContainerRef,
-    lastUserMsgRef,
+    sessionIdRef, scrollContainerRef,
+    jumpButtonVisible, jumpToBottom, markExternalScrollWrite, notifyProgrammaticSmooth,
     handleSend, handleAbort, handleFork, handleNavigate, handleModelChange,
     handleCompact, handleSteer, handleFollowUp, handlePromptWithStreamingBehavior, handleAbortCompaction,
     handleRecallQueue,
@@ -149,6 +149,7 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
   } = useAgentSession({
     session, newSessionCwd, onAgentEnd: wrappedOnAgentEnd, onSessionCreated, onSessionForked,
     modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSessionStatsPanelOpen,
+    isMobile,
   });
   const sessionBusy = agentRunning || bashRunning;
   const [todosCollapsed, setTodosCollapsed] = useState(true);
@@ -198,11 +199,13 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
       const distanceBelowViewport = cardRect.top - containerRect.bottom;
       const nearbyThreshold = Math.min(180, container.clientHeight * 0.3);
       if (distanceBelowViewport <= nearbyThreshold) {
+        // 标记程序化 smooth 窗口：这次滚动不覆盖用户的 released 状态。
+        notifyProgrammaticSmooth();
         card.scrollIntoView({ behavior: "smooth", block: "nearest" });
       }
     });
     return () => cancelAnimationFrame(frame);
-  }, [extensionInlineRequest?.id, scrollContainerRef]);
+  }, [extensionInlineRequest?.id, scrollContainerRef, notifyProgrammaticSmooth]);
 
   // Register the abort handler for the global Esc shortcut
   useEffect(() => {
@@ -242,9 +245,12 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
     if (prevScrollDistanceRef.current == null) return;
     const container = scrollContainerRef.current;
     if (!container) return;
+    // prepend 补偿是 auto-follow 之外的 scrollTop 写入：先标记，让随后的
+    // scroll 事件不参与状态判定（用户在顶部阅读，绝不能被钉底逻辑拉走）。
+    markExternalScrollWrite();
     container.scrollTop = restoreScrollTop(container.scrollHeight, prevScrollDistanceRef.current);
     prevScrollDistanceRef.current = null;
-  }, [visibleCount, scrollContainerRef]);
+  }, [visibleCount, scrollContainerRef, markExternalScrollWrite]);
   // Push session stats up to AppShell for the top bar.
   // Compare scalar fields to avoid loops from new object identity each render.
   const statsKey = sessionStats
@@ -488,7 +494,13 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
             <NoticeShelf notices={notices} floating align="right" />
           </div>
         </div>
-        <div ref={scrollContainerRef} className="flex-1 overflow-y-auto pt-4 [scrollbar-width:none]">
+        <div
+          ref={scrollContainerRef}
+          className="flex-1 overflow-y-auto pt-4 [scrollbar-width:none]"
+          // overflow-anchor:none：钉底由自动跟随显式负责，浏览器不再自行锚定；
+          // overscroll-behavior:contain：滚到底/顶不连锁滚动外层。
+          style={{ overflowAnchor: "none", overscrollBehavior: "contain" }}
+        >
           <div style={{ padding: `0 ${CHAT_COLUMN_PADDING}px` }}>
             <div style={{ maxWidth: 820, margin: "0 auto" }}>
               <ExtensionStatusBar statuses={extensionStatuses} />
@@ -503,7 +515,6 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
               }
 
               const visibleRefIndexByMessage = new Map<number, number>();
-              const lastUserIdx = messages.findLastIndex((message) => message.role === "user");
               let refIdx = 0;
               messages.forEach((msg, idx) => {
                 if (msg.role === "user" || msg.role === "assistant") {
@@ -513,7 +524,6 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
 
               const attachVisibleRef = (idx: number, refIndex: number) => (el: HTMLDivElement | null) => {
                 messageRefs.current[refIndex] = el;
-                if (idx === lastUserIdx) { (lastUserMsgRef as { current: HTMLDivElement | null }).current = el; }
               };
 
               const renderMessage = (item: ChatRenderItem): ReactNode => {
@@ -636,14 +646,26 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
               </div>
             )}
 
-            {agentRunning && (
-              <div style={{ height: scrollContainerRef.current ? scrollContainerRef.current.clientHeight : "80vh" }} />
-            )}
-
-            <div ref={messagesEndRef} />
+            {/* OpenChamber 风格底部常驻 spacer（桌面 10vh / 移动 40px）：给末端留呼吸感，
+                取代旧的 agentRunning 整视口占位——跟随钉底由 useAgentSession 的自动跟随负责。 */}
+            <div aria-hidden="true" style={{ height: isMobile ? 40 : "10vh" }} />
             </div>
           </div>
         </div>
+        {/* 回到底部：仅 released 且不在末端区域时可见（样式与动效在 globals.css，
+            150ms 淡入/位移/缩放，prefers-reduced-motion 时禁用位移）。 */}
+        <button
+          type="button"
+          className={`chat-jump-bottom${jumpButtonVisible ? " is-visible" : ""}`}
+          aria-label={t("chat_backToBottom")}
+          aria-hidden={!jumpButtonVisible}
+          tabIndex={jumpButtonVisible ? 0 : -1}
+          onClick={jumpToBottom}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <polyline points="6 9 12 15 18 9" />
+          </svg>
+        </button>
         {isMobile ? null : (
           <ChatMinimap
             messages={messages}

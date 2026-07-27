@@ -131,6 +131,7 @@ export const zhCN: Record<TranslationKey, string> = {
   chat_hideProcess: '折叠过程',
   chat_loadingSession: '正在加载会话…',
   chat_loadEarlier: '加载较早的 {count} 条消息',
+  chat_backToBottom: '回到底部',
   chat_readOnlySession: '只读会话',
   chat_readOnlySessionDescription: "仅可浏览：发送、引导、追问、压缩、分叉与设置修改均已禁用；消息、文件与会话统计仍可查看。",
   chat_extensionRequest: '扩展请求',

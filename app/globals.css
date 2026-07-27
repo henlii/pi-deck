@@ -655,6 +655,49 @@ span.linenumber {
   }
 }
 
+/* 回到底部悬浮按钮：输入区上方水平居中，150ms 淡入/位移/缩放。
+   可见性由 .is-visible 切换；不可见时保留在 DOM 中以完成淡出，且不拦截指针与焦点。 */
+.chat-jump-bottom {
+  position: absolute;
+  left: 50%;
+  bottom: 14px;
+  z-index: 45;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--bg-panel);
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(-50%) translateY(6px) scale(0.92);
+  transition: opacity 150ms ease, transform 150ms ease, background-color 150ms ease, color 150ms ease;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06), 0 8px 24px -12px rgba(15, 23, 42, 0.18);
+}
+.chat-jump-bottom.is-visible {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateX(-50%) translateY(0) scale(1);
+}
+.chat-jump-bottom:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-jump-bottom,
+  .chat-jump-bottom.is-visible {
+    /* 只保留极短的淡入淡出，去掉位移与缩放 */
+    transform: translateX(-50%);
+    transition: opacity 0.001ms;
+  }
+}
+
 @keyframes saved-pop {
   0%   { transform: scale(1); box-shadow: 0 0 0 0 rgba(74, 222, 128, 0.55); }
   40%  { transform: scale(1.08); box-shadow: 0 0 0 6px rgba(74, 222, 128, 0.25); }

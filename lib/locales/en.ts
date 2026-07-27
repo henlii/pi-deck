@@ -131,6 +131,7 @@ export const en = {
   chat_hideProcess: 'Hide process',
   chat_loadingSession: 'Loading session…',
   chat_loadEarlier: 'Load {count} earlier messages',
+  chat_backToBottom: 'Back to bottom',
   chat_readOnlySession: 'Read-only session',
   chat_readOnlySessionDescription: "Browsing only: sending, steering, follow-ups, compaction, forking, and setting changes are disabled. Messages, files and session stats remain viewable.",
   chat_extensionRequest: 'Extension request',
