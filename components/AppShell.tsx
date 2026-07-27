@@ -11,6 +11,7 @@ import { RightWorkspace } from "./RightWorkspace";
 import { SettingsView } from "./SettingsView";
 import { AboutDialog } from "./AboutDialog";
 import { BranchNavigator } from "./BranchNavigator";
+import { SubagentRunsPanel } from "./SubagentRunsPanel";
 import { useTheme } from "@/hooks/useTheme";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { copyText } from "@/lib/clipboard";
@@ -134,10 +135,13 @@ function AppShellInner() {
   }, []);
 
   // Single active panel — only one dropdown open at a time
-  const [activeTopPanel, setActiveTopPanel] = useState<"branches" | "system" | "session" | null>(null);
+  const [activeTopPanel, setActiveTopPanel] = useState<"branches" | "system" | "session" | "runs" | null>(null);
   const [topPanelPos, setTopPanelPos] = useState<{ top: number; left: number; width: number } | null>(null);
+  // D1 runs 入口 badge：活动（queued/running）数由 SubagentRunsPanel 成功拉取后上报；
+  // 面板关闭期间保留最后已知值，不额外轮询（轮询只存在于面板打开时）。
+  const [runsActiveCount, setRunsActiveCount] = useState(0);
 
-  const toggleTopPanel = useCallback((panel: "branches" | "system" | "session") => {
+  const toggleTopPanel = useCallback((panel: "branches" | "system" | "session" | "runs") => {
     if (isMobile) {
       setSidebarOpen(false);
       setWorkspaceOpen(false);
@@ -404,6 +408,12 @@ function AppShellInner() {
       })
       .catch(() => {});
   }, [handleSelectSession]);
+
+  // runs 面板中打开子会话：跳转后顺手关闭浮层，露出聊天区。
+  const handleRunsOpenSession = useCallback((sessionFile: string) => {
+    setActiveTopPanel(null);
+    handleOpenSubagentSession(sessionFile);
+  }, [handleOpenSubagentSession]);
 
   // Called by ChatWindow when a new session gets its real id from pi
   const handleSessionCreated = useCallback((session: SessionInfo) => {    setSelectedSession(session);
@@ -1008,6 +1018,44 @@ function AppShellInner() {
               </button>
             );
           })()}
+          {/* D1 子代理运行观测入口：活动数 badge，只读浮层，与 workspace 开关同规格 */}
+          <button
+            type="button"
+            onClick={() => toggleTopPanel("runs")}
+            title={t("runs_toggle")}
+            aria-label={runsActiveCount > 0 ? t("runs_toggleWithActive", { count: runsActiveCount }) : t("runs_toggle")}
+            aria-pressed={activeTopPanel === "runs"}
+            style={{
+              marginLeft: showChat && (sessionStats || contextUsage) ? 0 : "auto",
+              position: "relative",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              width: 36, height: 36, padding: 0,
+              background: activeTopPanel === "runs" ? "var(--bg-selected)" : "none",
+              border: "none",
+              borderTop: activeTopPanel === "runs" ? "2px solid var(--accent)" : "2px solid transparent",
+              borderLeft: "1px solid var(--border)",
+              color: activeTopPanel === "runs" ? "var(--text)" : "var(--text-muted)",
+              cursor: "pointer", flexShrink: 0,
+              transition: "background 0.12s, color 0.12s",
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.color = "var(--text)"; }}
+            onMouseLeave={(e) => { e.currentTarget.style.color = activeTopPanel === "runs" ? "var(--text)" : "var(--text-muted)"; }}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
+            </svg>
+            {runsActiveCount > 0 && (
+              <span aria-hidden="true" style={{
+                position: "absolute", top: 2, right: 2,
+                minWidth: 14, height: 14, padding: "0 3px",
+                borderRadius: 999, background: "var(--accent)", color: "#fff",
+                fontSize: 9, lineHeight: "14px", textAlign: "center",
+                fontVariantNumeric: "tabular-nums", pointerEvents: "none",
+              }}>
+                {runsActiveCount > 99 ? "99+" : runsActiveCount}
+              </span>
+            )}
+          </button>
           {/* 最右侧 Files/Git 工作区开关：在顶栏内占位，不再固定覆盖内容 */}
           <button
             type="button"
@@ -1016,7 +1064,7 @@ function AppShellInner() {
             aria-label={workspaceOpen ? t("app_hideFiles") : t("app_showFiles")}
             aria-pressed={workspaceOpen}
             style={{
-              marginLeft: showChat && (sessionStats || contextUsage) ? 0 : "auto",
+              marginLeft: 0,
               display: "flex", alignItems: "center", justifyContent: "center",
               width: 36, height: 36, padding: 0,
               background: workspaceOpen ? "var(--bg-selected)" : "none",
@@ -1227,6 +1275,21 @@ function AppShellInner() {
                       {t("app_sessionInfoAfterMessageHint")}
                     </div>
                   )}
+                </div>
+              )}
+              {activeTopPanel === "runs" && (
+                <div style={{
+                  background: "var(--bg-panel)",
+                  borderBottom: "1px solid var(--border)",
+                  boxShadow: "0 10px 28px rgba(0,0,0,0.10)",
+                }}>
+                  {/* 内容限宽居中：比 session info 的内容更聚焦，仍在 top panel/视口约束内 */}
+                  <div style={{ maxWidth: 760, margin: "0 auto" }}>
+                    <SubagentRunsPanel
+                      onOpenSubagentSession={handleRunsOpenSession}
+                      onActiveCountChange={setRunsActiveCount}
+                    />
+                  </div>
                 </div>
               )}
             </div>
