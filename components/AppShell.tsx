@@ -9,6 +9,7 @@ import { FileViewer } from "./FileViewer";
 import { TabBar, type Tab } from "./TabBar";
 import { RightWorkspace } from "./RightWorkspace";
 import { SettingsView } from "./SettingsView";
+import { AboutDialog } from "./AboutDialog";
 import { BranchNavigator } from "./BranchNavigator";
 import { useTheme } from "@/hooks/useTheme";
 import { useIsMobile } from "@/hooks/useIsMobile";
@@ -56,6 +57,7 @@ function AppShellInner() {
   const [sessionKey, setSessionKey] = useState(0);
   const [explorerRefreshKey, setExplorerRefreshKey] = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [aboutOpen, setAboutOpen] = useState(false);
   const [modelsRefreshKey, setModelsRefreshKey] = useState(0);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [mobileSidebarReady, setMobileSidebarReady] = useState(false);
@@ -372,7 +374,7 @@ function AppShellInner() {
   useGlobalKeyboardShortcuts({
     onNewSession: () => handleNewSession(),
     activeCwd,
-    disabled: settingsOpen,
+    disabled: settingsOpen || aboutOpen,
   });
 
   // Client-built transient SessionInfo (new session / fork) lacks the
@@ -588,8 +590,8 @@ function AppShellInner() {
         refreshKey={refreshKey}
         onSessionDeleted={handleSessionDeleted}
       />
-      {/* 底部 Settings：同规格图标按钮（24×24），不显示永久文字标签 */}
-      <div style={{ padding: "6px 8px", flexShrink: 0, display: "flex", alignItems: "center" }}>
+      {/* 底部 Settings / About：同规格图标按钮（24×24），不显示永久文字标签 */}
+      <div style={{ padding: "6px 8px", flexShrink: 0, display: "flex", alignItems: "center", gap: 4 }}>
         <button
           type="button"
           onClick={() => setSettingsOpen(true)}
@@ -600,6 +602,19 @@ function AppShellInner() {
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
             <circle cx="12" cy="12" r="3" />
             <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.03 1.56V21h-4v-.08A1.7 1.7 0 0 0 8.95 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.56-1.03H3v-4h.08A1.7 1.7 0 0 0 4.6 8.95a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 8.95 4.6 1.7 1.7 0 0 0 9.97 3.04V3h4v.08A1.7 1.7 0 0 0 15 4.6a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.4 9c.12.42.52.98 1.56 1.03H21v4h-.08A1.7 1.7 0 0 0 19.4 15Z" />
+          </svg>
+        </button>
+        <button
+          type="button"
+          onClick={() => setAboutOpen(true)}
+          title={t("app_about")}
+          aria-label={t("app_about")}
+          className={`sidebar-icon-btn${aboutOpen ? " sidebar-icon-btn--active" : ""}`}
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="10" />
+            <path d="M12 16v-4" />
+            <path d="M12 8h.01" />
           </svg>
         </button>
       </div>
@@ -1361,6 +1376,7 @@ function AppShellInner() {
         onPluginsReloaded={() => setSessionKey((key) => key + 1)}
       />
     )}
+    <AboutDialog open={aboutOpen} onClose={() => setAboutOpen(false)} />
     </>
   );
 }

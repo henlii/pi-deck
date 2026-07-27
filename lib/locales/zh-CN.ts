@@ -15,6 +15,12 @@ export const zhCN: Record<TranslationKey, string> = {
   // app
   app_chat: '聊天',
   app_settings: '设置',
+  app_about: '关于',
+  about_title: '关于 Pi Deck',
+  about_version: 'Pi Deck 版本 {version}',
+  about_piSdkVersion: 'Pi SDK 版本 {version}',
+  about_github: 'GitHub',
+  about_footerNote: '基于 Pi，面向社区',
   app_showSidebar: '显示侧栏',
   app_hideSidebar: '隐藏侧栏',
   app_lightMode: '切换到浅色模式',

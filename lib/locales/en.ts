@@ -15,6 +15,12 @@ export const en = {
   // app
   app_chat: 'Chat',
   app_settings: 'Settings',
+  app_about: 'About',
+  about_title: 'About Pi Deck',
+  about_version: 'Pi Deck version {version}',
+  about_piSdkVersion: 'Pi SDK version {version}',
+  about_github: 'GitHub',
+  about_footerNote: 'Built on Pi for the community',
   app_showSidebar: 'Show sidebar',
   app_hideSidebar: 'Hide sidebar',
   app_lightMode: 'Switch to light mode',
