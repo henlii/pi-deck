@@ -11,6 +11,8 @@ import { RightWorkspace } from "./RightWorkspace";
 import { SettingsView } from "./SettingsView";
 import { AboutDialog } from "./AboutDialog";
 import { BranchNavigator } from "./BranchNavigator";
+import { SubagentRunsPanel } from "./SubagentRunsPanel";
+import { LensDiagnosticsPanel } from "./LensDiagnosticsPanel";
 import { useTheme } from "@/hooks/useTheme";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { copyText } from "@/lib/clipboard";
@@ -24,7 +26,13 @@ import {
 } from "@/lib/file-editor-state";
 import { buildAtMentionText, buildFileAtMentionsText } from "@/lib/file-fuzzy";
 import { getInitialNavigation } from "@/lib/initial-navigation";
+import {
+  buildSessionExportHtmlHref,
+  buildSessionExportJsonlHref,
+  canExportSession,
+} from "./session-export-links";
 import type { SessionInfo, SessionTreeNode } from "@/lib/types";
+import type { BranchActions } from "@/lib/branch-bookmarks";
 import type { ChatInputHandle } from "./ChatInput";
 import type { SessionStatsInfo } from "@/lib/pi-types";
 import { ProjectProvider, useProjectActions, useProjectIdentity } from "./ProjectProvider";
@@ -83,11 +91,14 @@ function AppShellInner() {
   const [branchTree, setBranchTree] = useState<SessionTreeNode[]>([]);
   const [branchActiveLeafId, setBranchActiveLeafId] = useState<string | null>(null);
   const branchLeafChangeFnRef = useRef<((leafId: string | null) => void) | null>(null);
+  // D3 分支书签/摘要动作（可写门禁、带选项切换、set_label），由 useAgentSession 下发。
+  const [branchActions, setBranchActions] = useState<BranchActions | null>(null);
 
-  const handleBranchDataChange = useCallback((tree: SessionTreeNode[], activeLeafId: string | null, onLeafChange: (leafId: string | null) => void) => {
+  const handleBranchDataChange = useCallback((tree: SessionTreeNode[], activeLeafId: string | null, onLeafChange: (leafId: string | null) => void, actions: BranchActions) => {
     setBranchTree(tree);
     setBranchActiveLeafId(activeLeafId);
     branchLeafChangeFnRef.current = onLeafChange;
+    setBranchActions(actions);
   }, []);
 
   const handleBranchLeafChange = useCallback((leafId: string | null) => {
@@ -134,10 +145,16 @@ function AppShellInner() {
   }, []);
 
   // Single active panel — only one dropdown open at a time
-  const [activeTopPanel, setActiveTopPanel] = useState<"branches" | "system" | "session" | null>(null);
+  const [activeTopPanel, setActiveTopPanel] = useState<"branches" | "system" | "session" | "runs" | "export" | "diagnostics" | null>(null);
   const [topPanelPos, setTopPanelPos] = useState<{ top: number; left: number; width: number } | null>(null);
+  // D1 runs 入口 badge：活动（queued/running）数由 SubagentRunsPanel 成功拉取后上报；
+  // 面板关闭期间保留最后已知值，不额外轮询（轮询只存在于面板打开时）。
+  const [runsActiveCount, setRunsActiveCount] = useState(0);
+  // D10 诊断入口 badge：问题总数由 LensDiagnosticsPanel 成功拉取后上报；
+  // 面板关闭期间保留最后已知值，不额外轮询。
+  const [diagIssueCount, setDiagIssueCount] = useState(0);
 
-  const toggleTopPanel = useCallback((panel: "branches" | "system" | "session") => {
+  const toggleTopPanel = useCallback((panel: "branches" | "system" | "session" | "runs" | "export" | "diagnostics") => {
     if (isMobile) {
       setSidebarOpen(false);
       setWorkspaceOpen(false);
@@ -404,6 +421,12 @@ function AppShellInner() {
       })
       .catch(() => {});
   }, [handleSelectSession]);
+
+  // runs 面板中打开子会话：跳转后顺手关闭浮层，露出聊天区。
+  const handleRunsOpenSession = useCallback((sessionFile: string) => {
+    setActiveTopPanel(null);
+    handleOpenSubagentSession(sessionFile);
+  }, [handleOpenSubagentSession]);
 
   // Called by ChatWindow when a new session gets its real id from pi
   const handleSessionCreated = useCallback((session: SessionInfo) => {    setSelectedSession(session);
@@ -872,6 +895,7 @@ function AppShellInner() {
                 tree={branchTree}
                 activeLeafId={branchActiveLeafId}
                 onLeafChange={handleBranchLeafChange}
+                branchActions={branchActions}
                 inline
                 compact={isMobile}
                 containerRef={topBarRef}
@@ -907,6 +931,38 @@ function AppShellInner() {
                 </svg>
                 {!isMobile && <span>{t("app_system")}</span>}
               </button>
+              {/* D2 会话导出：仅已持久化会话（有真实 id）展示入口；
+                  新会话/未选择会话隐藏而非给出必然 404 的假动作。
+                  普通与 readOnly 会话都可导出，不套写能力门禁。 */}
+              {canExportSession(selectedSession) && (
+                <button
+                  type="button"
+                  onClick={() => toggleTopPanel("export")}
+                  title={t("export_toggle")}
+                  aria-label={t("export_toggle")}
+                  aria-pressed={activeTopPanel === "export"}
+                  style={{
+                    display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+                    height: "100%", padding: "0 12px",
+                    background: activeTopPanel === "export" ? "var(--bg-selected)" : "none",
+                    border: "none",
+                    borderTop: activeTopPanel === "export" ? "2px solid var(--accent)" : "2px solid transparent",
+                    borderRight: "1px solid var(--border)",
+                    cursor: "pointer",
+                    color: activeTopPanel === "export" ? "var(--text)" : "var(--text-muted)",
+                    fontSize: 11, whiteSpace: "nowrap", transition: "color 0.1s, background 0.1s",
+                  }}
+                  onMouseEnter={(e) => { e.currentTarget.style.color = "var(--text)"; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.color = activeTopPanel === "export" ? "var(--text)" : "var(--text-muted)"; }}
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ flexShrink: 0 }}>
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                    <polyline points="7 10 12 15 17 10" />
+                    <line x1="12" y1="15" x2="12" y2="3" />
+                  </svg>
+                  {!isMobile && <span>{t("export_toggle")}</span>}
+                </button>
+              )}
             </div>
           )}
           {/* Session stats — right-aligned in top bar */}
@@ -1008,6 +1064,83 @@ function AppShellInner() {
               </button>
             );
           })()}
+          {/* D1 子代理运行观测入口：活动数 badge，只读浮层，与 workspace 开关同规格 */}
+          <button
+            type="button"
+            onClick={() => toggleTopPanel("runs")}
+            title={t("runs_toggle")}
+            aria-label={runsActiveCount > 0 ? t("runs_toggleWithActive", { count: runsActiveCount }) : t("runs_toggle")}
+            aria-pressed={activeTopPanel === "runs"}
+            style={{
+              marginLeft: showChat && (sessionStats || contextUsage) ? 0 : "auto",
+              position: "relative",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              width: 36, height: 36, padding: 0,
+              background: activeTopPanel === "runs" ? "var(--bg-selected)" : "none",
+              border: "none",
+              borderTop: activeTopPanel === "runs" ? "2px solid var(--accent)" : "2px solid transparent",
+              borderLeft: "1px solid var(--border)",
+              color: activeTopPanel === "runs" ? "var(--text)" : "var(--text-muted)",
+              cursor: "pointer", flexShrink: 0,
+              transition: "background 0.12s, color 0.12s",
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.color = "var(--text)"; }}
+            onMouseLeave={(e) => { e.currentTarget.style.color = activeTopPanel === "runs" ? "var(--text)" : "var(--text-muted)"; }}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
+            </svg>
+            {runsActiveCount > 0 && (
+              <span aria-hidden="true" style={{
+                position: "absolute", top: 2, right: 2,
+                minWidth: 14, height: 14, padding: "0 3px",
+                borderRadius: 999, background: "var(--accent)", color: "#fff",
+                fontSize: 9, lineHeight: "14px", textAlign: "center",
+                fontVariantNumeric: "tabular-nums", pointerEvents: "none",
+              }}>
+                {runsActiveCount > 99 ? "99+" : runsActiveCount}
+              </span>
+            )}
+          </button>
+          {/* D10 pi-lens 诊断入口：问题数 badge，只读浮层，轮询仅在面板打开时 */}
+          <button
+            type="button"
+            onClick={() => toggleTopPanel("diagnostics")}
+            title={t("lens_toggle")}
+            aria-label={diagIssueCount > 0 ? t("lens_toggleWithIssues", { count: diagIssueCount }) : t("lens_toggle")}
+            aria-pressed={activeTopPanel === "diagnostics"}
+            style={{
+              position: "relative",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              width: 36, height: 36, padding: 0,
+              background: activeTopPanel === "diagnostics" ? "var(--bg-selected)" : "none",
+              border: "none",
+              borderTop: activeTopPanel === "diagnostics" ? "2px solid var(--accent)" : "2px solid transparent",
+              borderLeft: "1px solid var(--border)",
+              color: activeTopPanel === "diagnostics" ? "var(--text)" : "var(--text-muted)",
+              cursor: "pointer", flexShrink: 0,
+              transition: "background 0.12s, color 0.12s",
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.color = "var(--text)"; }}
+            onMouseLeave={(e) => { e.currentTarget.style.color = activeTopPanel === "diagnostics" ? "var(--text)" : "var(--text-muted)"; }}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+              <line x1="12" y1="9" x2="12" y2="13" />
+              <line x1="12" y1="17" x2="12.01" y2="17" />
+            </svg>
+            {diagIssueCount > 0 && (
+              <span aria-hidden="true" style={{
+                position: "absolute", top: 2, right: 2,
+                minWidth: 14, height: 14, padding: "0 3px",
+                borderRadius: 999, background: "var(--accent)", color: "#fff",
+                fontSize: 9, lineHeight: "14px", textAlign: "center",
+                fontVariantNumeric: "tabular-nums", pointerEvents: "none",
+              }}>
+                {diagIssueCount > 99 ? "99+" : diagIssueCount}
+              </span>
+            )}
+          </button>
           {/* 最右侧 Files/Git 工作区开关：在顶栏内占位，不再固定覆盖内容 */}
           <button
             type="button"
@@ -1016,7 +1149,7 @@ function AppShellInner() {
             aria-label={workspaceOpen ? t("app_hideFiles") : t("app_showFiles")}
             aria-pressed={workspaceOpen}
             style={{
-              marginLeft: showChat && (sessionStats || contextUsage) ? 0 : "auto",
+              marginLeft: 0,
               display: "flex", alignItems: "center", justifyContent: "center",
               width: 36, height: 36, padding: 0,
               background: workspaceOpen ? "var(--bg-selected)" : "none",
@@ -1227,6 +1360,114 @@ function AppShellInner() {
                       {t("app_sessionInfoAfterMessageHint")}
                     </div>
                   )}
+                </div>
+              )}
+              {activeTopPanel === "runs" && (
+                <div style={{
+                  background: "var(--bg-panel)",
+                  borderBottom: "1px solid var(--border)",
+                  boxShadow: "0 10px 28px rgba(0,0,0,0.10)",
+                }}>
+                  {/* 内容限宽居中：比 session info 的内容更聚焦，仍在 top panel/视口约束内 */}
+                  <div style={{ maxWidth: 760, margin: "0 auto" }}>
+                    <SubagentRunsPanel
+                      onOpenSubagentSession={handleRunsOpenSession}
+                      onActiveCountChange={setRunsActiveCount}
+                    />
+                  </div>
+                </div>
+              )}
+              {activeTopPanel === "diagnostics" && (
+                <div style={{
+                  background: "var(--bg-panel)",
+                  borderBottom: "1px solid var(--border)",
+                  boxShadow: "0 10px 28px rgba(0,0,0,0.10)",
+                }}>
+                  <div style={{ maxWidth: 760, margin: "0 auto" }}>
+                    <LensDiagnosticsPanel
+                      cwd={activeCwd}
+                      onIssueCountChange={setDiagIssueCount}
+                    />
+                  </div>
+                </div>
+              )}
+              {activeTopPanel === "export" && selectedSession && canExportSession(selectedSession) && (
+                <div style={{
+                  background: "var(--bg-panel)",
+                  borderBottom: "1px solid var(--border)",
+                  boxShadow: "0 10px 28px rgba(0,0,0,0.10)",
+                }}>
+                  {/* D2 导出菜单：两项原生 <a href download>，不 fetch/blob；
+                      href 在渲染期由 branchActiveLeafId 重建，切分支即实时更新（无 leaf 省略 leafId）。
+                      readOnly 子会话同样可导出——导出不写会话文件，不套写能力门禁。 */}
+                  <div style={{ maxWidth: 520, margin: "0 auto", padding: "12px 16px" }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text)", marginBottom: 8 }}>
+                      {t("export_title")}
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                      {([
+                        {
+                          key: "html",
+                          href: buildSessionExportHtmlHref(selectedSession.id),
+                          label: t("export_htmlLabel"),
+                          desc: t("export_htmlDesc"),
+                          icon: (
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                              <polyline points="16 18 22 12 16 6" />
+                              <polyline points="8 6 2 12 8 18" />
+                            </svg>
+                          ),
+                        },
+                        {
+                          key: "jsonl",
+                          href: buildSessionExportJsonlHref(selectedSession.id, branchActiveLeafId),
+                          label: t("export_jsonlLabel"),
+                          desc: t("export_jsonlDesc"),
+                          icon: (
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                              <path d="M8 3H7a2 2 0 0 0-2 2v4a2 2 0 0 1-2 2 2 2 0 0 1 2 2v4a2 2 0 0 0 2 2h1" />
+                              <path d="M16 21h1a2 2 0 0 0 2-2v-4a2 2 0 0 1 2-2 2 2 0 0 1-2-2V5a2 2 0 0 0-2-2h-1" />
+                            </svg>
+                          ),
+                        },
+                      ]).map((item) => (
+                        <a
+                          key={item.key}
+                          href={item.href}
+                          download
+                          title={item.desc}
+                          onClick={() => setActiveTopPanel(null)}
+                          style={{
+                            display: "flex", alignItems: "center", gap: 10,
+                            padding: "8px 10px", borderRadius: 6,
+                            border: "1px solid var(--border)",
+                            background: "none", textDecoration: "none",
+                            color: "var(--text)", cursor: "pointer",
+                            transition: "background 0.12s, border-color 0.12s",
+                          }}
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.background = "var(--bg-hover)";
+                            e.currentTarget.style.borderColor = "var(--accent)";
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.background = "none";
+                            e.currentTarget.style.borderColor = "var(--border)";
+                          }}
+                        >
+                          <span style={{ color: "var(--accent)", display: "flex", flexShrink: 0 }}>{item.icon}</span>
+                          <span style={{ flex: 1, minWidth: 0 }}>
+                            <span style={{ display: "block", fontSize: 12, fontWeight: 600, lineHeight: 1.4 }}>{item.label}</span>
+                            <span style={{ display: "block", fontSize: 11, color: "var(--text-muted)", lineHeight: 1.4, overflowWrap: "anywhere" }}>{item.desc}</span>
+                          </span>
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ color: "var(--text-dim)", flexShrink: 0 }}>
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                            <polyline points="7 10 12 15 17 10" />
+                            <line x1="12" y1="15" x2="12" y2="3" />
+                          </svg>
+                        </a>
+                      ))}
+                    </div>
+                  </div>
                 </div>
               )}
             </div>

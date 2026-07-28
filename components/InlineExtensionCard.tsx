@@ -3,6 +3,7 @@
 import { useRef, useState } from "react";
 import type { ExtensionUiInlineRequest } from "@/lib/extension-ui-bridge";
 import { useI18n } from "@/lib/i18n";
+import { MarkdownBody } from "./MarkdownBody";
 
 export type ExtensionUiInlineResponse =
   | { value: string }
@@ -104,7 +105,7 @@ export function InlineExtensionCard({ request, disabled = false, onRespond }: In
             background: inert ? "var(--text-dim)" : "var(--accent)",
           }}
         />
-        <span
+        <div
           title={request.title}
           style={{
             minWidth: 0,
@@ -113,12 +114,10 @@ export function InlineExtensionCard({ request, disabled = false, onRespond }: In
             color: "var(--text)",
             fontSize: 12,
             fontWeight: 650,
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
           }}
         >
-          {request.title}
-        </span>
+          <MarkdownBody className="markdown-body--extension">{request.title}</MarkdownBody>
+        </div>
         <span
           style={{
             flexShrink: 0,
@@ -156,10 +155,9 @@ export function InlineExtensionCard({ request, disabled = false, onRespond }: In
                 fontSize: 12,
                 lineHeight: 1.5,
                 overflowWrap: "anywhere",
-                whiteSpace: "pre-wrap",
               }}
             >
-              {request.message}
+              <MarkdownBody className="markdown-body--extension">{request.message}</MarkdownBody>
             </div>
             <div style={{ display: "flex", flexShrink: 0, alignItems: "center", gap: 5 }}>
               <button

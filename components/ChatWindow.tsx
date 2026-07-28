@@ -2,6 +2,7 @@
 import { registerAbortHandler } from "@/hooks/useKeyboardShortcuts";
 import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import type { AgentMessage, BashExecutionMessage, ExtensionUiRequest, SessionInfo, SessionTreeNode, ToolResultMessage } from "@/lib/types";
+import type { BranchActions } from "@/lib/branch-bookmarks";
 import { normalizeCustomPanelLines, parseAnsiLine } from "@/lib/ansi";
 import { asBracketedPaste, toTerminalKeyData } from "@/lib/terminal-input";
 import { composeChatPlan, type ChatRenderItem } from "@/lib/chat-compositor";
@@ -9,7 +10,10 @@ import { MessageView } from "./MessageView";
 import { ChatInput, type ChatInputHandle } from "./ChatInput";
 import { ChatMinimap, useMessageRefs } from "./ChatMinimap";
 import { InlineExtensionCard } from "./InlineExtensionCard";
+import { MarkdownBody } from "./MarkdownBody";
 import { TodoPanel } from "./TodoPanel";
+import { OmPanel } from "./OmPanel";
+import { WorkspaceHistoryPanel } from "./WorkspaceHistoryPanel";
 import { useAgentSession, type AgentPhase, type NoticeItem } from "@/hooks/useAgentSession";
 import { useAudio } from "@/hooks/useAudio";
 import { useI18n } from "@/lib/i18n";
@@ -32,7 +36,7 @@ interface Props {
   onSessionForked?: (newSessionId: string) => void;
   modelsRefreshKey?: number;
   chatInputRef?: React.RefObject<ChatInputHandle | null>;
-  onBranchDataChange?: (tree: SessionTreeNode[], activeLeafId: string | null, onLeafChange: (leafId: string | null) => void) => void;
+  onBranchDataChange?: (tree: SessionTreeNode[], activeLeafId: string | null, onLeafChange: (leafId: string | null) => void, actions: BranchActions) => void;
   onSystemPromptChange?: (prompt: string | null) => void;
   onSessionStatsChange?: (stats: SessionStatsInfo | null) => void;
   onSessionStatsPanelOpen?: () => void;
@@ -136,6 +140,8 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
     slashCommands, slashCommandsLoading, queuedMessages,
     notices, extensionDialog, extensionInlineRequest, extensionCustomUi, extensionStatuses, extensionWidgets, respondToExtensionUi, sendExtensionCustomInput,
     todos,
+    observationalMemory,
+    workspaceHistory,
     isAutoModelSelection,
     agentPhase,
     isNew,
@@ -146,6 +152,8 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
     handleRecallQueue,
     handleBuiltinSlashCommand,
     handleToolPresetChange, handleThinkingLevelChange, loadSlashCommands,
+    handleWorkspaceUndo, handleWorkspaceRedo, handleWorkspaceCheckpoint,
+    branchBusy,
   } = useAgentSession({
     session, newSessionCwd, onAgentEnd: wrappedOnAgentEnd, onSessionCreated, onSessionForked,
     modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSessionStatsPanelOpen,
@@ -153,13 +161,19 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
   });
   const sessionBusy = agentRunning || bashRunning;
   const [todosCollapsed, setTodosCollapsed] = useState(true);
+  const [omCollapsed, setOmCollapsed] = useState(true);
+  const [whCollapsed, setWhCollapsed] = useState(true);
+  const [whActing, setWhActing] = useState(false);
   const [expiredInlineRequestId, setExpiredInlineRequestId] = useState<string | null>(null);
   const inlineExtensionCardRef = useRef<HTMLDivElement>(null);
   const todoCollapseScope = session?.id ?? (newSessionCwd ? `new:${newSessionCwd}` : "new-session");
 
-  // Todo 展开状态只属于当前聊天视图；切换会话后恢复默认折叠。
+  // Todo / om / wh 展开状态只属于当前聊天视图；切换会话后恢复默认折叠。
   useEffect(() => {
     setTodosCollapsed(true);
+    setOmCollapsed(true);
+    setWhCollapsed(true);
+    setWhActing(false);
   }, [todoCollapseScope]);
 
   // 这里只负责在 expiresAt 到达时刷新 UI 并禁用卡片，不发送任何协议响应。
@@ -370,6 +384,62 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
     </div>
   );
 
+  // 观察与反思：无有效 om 时不渲染；放在 Todo 下方。
+  const omPanelElement = !observationalMemory?.hasData ? null : (
+    <div
+      style={{
+        flexShrink: 0,
+        padding: `0 ${CHAT_COLUMN_PADDING}px`,
+        paddingRight: isMobile ? CHAT_COLUMN_PADDING : CHAT_INPUT_RIGHT_PADDING,
+      }}
+    >
+      <div style={{ maxWidth: 820, margin: "0 auto" }}>
+        <OmPanel
+          memory={observationalMemory}
+          collapsed={omCollapsed}
+          onToggle={() => setOmCollapsed((value) => !value)}
+        />
+      </div>
+    </div>
+  );
+
+  // 工作区历史：无 snapshot 不渲染；放在 om 下方。只读 child 可看时间线，无写按钮。
+  // 与 handleSend 门禁一致：branchBusy（分支切换/书签写入窗口）期间禁止派发。
+  const whCanAct = !isReadOnly && !sessionBusy && !branchBusy && !whActing;
+  const runWhAction = useCallback(async (action: () => void | Promise<void>) => {
+    if (!whCanAct) return;
+    setWhActing(true);
+    try {
+      await action();
+    } finally {
+      setWhActing(false);
+    }
+  }, [whCanAct]);
+  const whPanelElement = !workspaceHistory?.hasData ? null : (
+    <div
+      style={{
+        flexShrink: 0,
+        padding: `0 ${CHAT_COLUMN_PADDING}px`,
+        paddingRight: isMobile ? CHAT_COLUMN_PADDING : CHAT_INPUT_RIGHT_PADDING,
+      }}
+    >
+      <div style={{ maxWidth: 820, margin: "0 auto" }}>
+        <WorkspaceHistoryPanel
+          history={workspaceHistory}
+          collapsed={whCollapsed}
+          onToggle={() => setWhCollapsed((value) => !value)}
+          canAct={whCanAct}
+          acting={whActing}
+          onUndo={isReadOnly ? undefined : () => runWhAction(handleWorkspaceUndo)}
+          onRedo={isReadOnly ? undefined : () => runWhAction(handleWorkspaceRedo)}
+          onCheckpoint={isReadOnly ? undefined : (label) => runWhAction(() => handleWorkspaceCheckpoint(label))}
+          cwd={session?.cwd ?? newSessionCwd}
+          sessionId={session?.id ?? sessionIdRef.current}
+        />
+      </div>
+    </div>
+  );
+
   const aboveEditorWidgets = extensionWidgets.filter((widget) => widget.placement !== "belowEditor");
   const belowEditorWidgets = extensionWidgets.filter((widget) => widget.placement === "belowEditor");
 
@@ -464,6 +534,8 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
             </div>
             <NoticeShelf notices={notices} align="right" />
             {todoPanelElement}
+            {omPanelElement}
+            {whPanelElement}
             {chatInputElement}
           </div>
         </div>
@@ -679,6 +751,8 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
           </div>
         </div>
         {todoPanelElement}
+        {omPanelElement}
+        {whPanelElement}
         {chatInputElement}
       </div>
       </>
@@ -905,13 +979,17 @@ function ExtensionDialog({
         }}
       >
         <div style={{ padding: "12px 14px", borderBottom: "1px solid var(--border)" }}>
-          <div style={{ color: "var(--text)", fontSize: 14, fontWeight: 650 }}>{request.title}</div>
+          <div style={{ color: "var(--text)", fontSize: 14, fontWeight: 650 }}>
+            <MarkdownBody className="markdown-body--extension">{request.title}</MarkdownBody>
+          </div>
           <div style={{ marginTop: 3, color: "var(--text-dim)", fontSize: 11, fontFamily: "var(--font-mono)" }}>{t("chat_extensionRequest")}</div>
         </div>
 
         <div style={{ padding: 14 }}>
           {request.method === "confirm" && (
-            <div style={{ color: "var(--text-muted)", fontSize: 13, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{request.message}</div>
+            <div style={{ color: "var(--text-muted)", fontSize: 13, lineHeight: 1.6 }}>
+              <MarkdownBody className="markdown-body--extension">{request.message}</MarkdownBody>
+            </div>
           )}
           {request.method === "select" && (
             <div style={{ display: "grid", gap: 8 }}>

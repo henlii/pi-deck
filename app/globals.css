@@ -119,6 +119,29 @@ pre, code {
   color: var(--text);
   word-break: break-word;
 }
+/* Extension UI 标题/消息：压缩默认段落与标题间距，适配 dialog/card 紧凑布局 */
+.markdown-body.markdown-body--extension {
+  font-size: inherit;
+  line-height: 1.5;
+  color: inherit;
+}
+.markdown-body.markdown-body--extension p { margin: 0 0 4px; }
+.markdown-body.markdown-body--extension p:last-child { margin-bottom: 0; }
+.markdown-body.markdown-body--extension h1,
+.markdown-body.markdown-body--extension h2,
+.markdown-body.markdown-body--extension h3,
+.markdown-body.markdown-body--extension h4,
+.markdown-body.markdown-body--extension h5,
+.markdown-body.markdown-body--extension h6 {
+  margin: 0 0 4px;
+  font-size: 1em;
+  font-weight: 650;
+  line-height: 1.35;
+}
+.markdown-body.markdown-body--extension ul,
+.markdown-body.markdown-body--extension ol {
+  margin: 2px 0 4px;
+}
 .markdown-body p { margin: 0 0 8px; }
 .markdown-body p:last-child { margin-bottom: 0; }
 .markdown-body h1, .markdown-body h2, .markdown-body h3,

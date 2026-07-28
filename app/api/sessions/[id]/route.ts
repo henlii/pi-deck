@@ -7,113 +7,14 @@ import {
   resolveSessionIdByPath,
   invalidateSessionPathCache,
   invalidateSessionListCache,
-  buildSessionContext,
   readSessionHeader,
   listAllSessions,
+  resolveSessionManagerForRead,
+  buildSessionNavigationSnapshot,
 } from "@/lib/session-reader";
 import { getRpcSession } from "@/lib/rpc-manager";
 import { sessionService, READ_ONLY_SUBAGENT_ERROR, requireWritableSession } from "@/lib/session-service";
 import { collectSubagentTree, deleteValidatedSubagents } from "@/lib/subagent-sessions";
-
-// BranchNavigator still traverses recursively, so keep the response tree shallow.
-const MAX_PROJECTED_TREE_DEPTH = 200;
-
-/**
- * Project the session tree into the shallow navigation tree sent to the client.
- * Keeps roots, branch points, and leaves while contracting single-child chains
- * without recursive traversal. Contracted entry IDs are attached to the next
- * visible node so the UI can still recognize an active leaf inside the chain.
- */
-function projectTreeForResponse<T extends { entry: { id: string }; children: T[]; compressedEntryIds?: string[] }>(
-  nodes: T[]
-): T[] {
-  const keep = new Set<T>();
-  const roots = new Set(nodes);
-  const seen = new Set<T>();
-  const stack = [...nodes];
-
-  while (stack.length > 0) {
-    const node = stack.pop()!;
-    if (seen.has(node)) continue;
-    seen.add(node);
-
-    if (
-      roots.has(node) ||
-      node.children.length !== 1
-    ) {
-      keep.add(node);
-    }
-
-    for (const child of node.children) {
-      stack.push(child);
-    }
-  }
-
-  const cloneNode = (node: T, compressedEntryIds?: string[]): T => ({
-    ...node,
-    children: [],
-    ...(compressedEntryIds?.length ? { compressedEntryIds } : {}),
-  });
-  const projectedRoots = nodes.map((node) => cloneNode(node));
-  const tasks = nodes.map((source, index) => ({
-    source,
-    projected: projectedRoots[index],
-    depth: 1,
-  }));
-
-  const appendFlattenedKeptDescendants = (source: T, projectedParent: T) => {
-    const pending = [{ node: source, compressedEntryIds: [] as string[] }];
-    const flattenedSeen = new Set<T>();
-
-    while (pending.length > 0) {
-      const { node, compressedEntryIds } = pending.pop()!;
-      if (flattenedSeen.has(node)) continue;
-      flattenedSeen.add(node);
-
-      if (keep.has(node)) {
-        projectedParent.children.push(cloneNode(node, compressedEntryIds));
-      }
-
-      for (let i = node.children.length - 1; i >= 0; i--) {
-        pending.push({
-          node: node.children[i],
-          compressedEntryIds: keep.has(node)
-            ? []
-            : [...compressedEntryIds, node.entry.id],
-        });
-      }
-    }
-  };
-
-  while (tasks.length > 0) {
-    const { source, projected, depth } = tasks.pop()!;
-
-    for (const sourceChild of source.children) {
-      let child = sourceChild;
-
-      if (depth >= MAX_PROJECTED_TREE_DEPTH) {
-        appendFlattenedKeptDescendants(child, projected);
-        continue;
-      }
-
-      const compressedEntryIds: string[] = [];
-      while (!keep.has(child) && child.children.length === 1) {
-        compressedEntryIds.push(child.entry.id);
-        child = child.children[0];
-      }
-
-      if (!keep.has(child)) {
-        continue;
-      }
-
-      const projectedChild = cloneNode(child, compressedEntryIds);
-      projected.children.push(projectedChild);
-      tasks.push({ source: child, projected: projectedChild, depth: depth + 1 });
-    }
-  }
-
-  return projectedRoots;
-}
 
 export async function GET(
   req: Request,
@@ -126,16 +27,18 @@ export async function GET(
       return NextResponse.json({ error: "Session not found" }, { status: 404 });
     }
 
-    const sm = SessionManager.open(filePath);
-    const entries = sm.getEntries() as never;
-    const leafId = sm.getLeafId();
-    const tree = projectTreeForResponse(sm.getTree());
+    // navigateTree 只改 live sessionManager leaf，不改磁盘末 entry；
+    // 有存活 wrapper 时以 live 为权威，避免 loadSession 整刷跳回旧 leaf。
+    const sm = resolveSessionManagerForRead({
+      filePath,
+      liveSession: getRpcSession(id) ?? null,
+    });
     const searchParams = new URL(req.url).searchParams;
-    const deferThinking = searchParams.has("deferThinking");
-    const deferToolResultImages = searchParams.has("deferMedia");
-    const context = buildSessionContext(entries, leafId, { deferThinking, deferToolResultImages });
+    const { leafId, tree, context, header, sessionName, observationalMemory, workspaceHistory } = buildSessionNavigationSnapshot(sm, {
+      deferThinking: searchParams.has("deferThinking"),
+      deferToolResultImages: searchParams.has("deferMedia"),
+    });
 
-    const header = sm.getHeader();
     let modified = header?.timestamp ?? new Date().toISOString();
     try { modified = statSync(filePath).mtime.toISOString(); } catch { /* use header timestamp */ }
     const parentSessionId = header?.parentSession
@@ -146,7 +49,7 @@ export async function GET(
       path: filePath,
       id: header.id,
       cwd: header.cwd ?? "",
-      name: sm.getSessionName(),
+      name: sessionName,
       created: header.timestamp,
       modified,
       messageCount: context.messages.length,
@@ -168,6 +71,8 @@ export async function GET(
       leafId,
       tree,
       context,
+      observationalMemory,
+      workspaceHistory,
     });
   } catch (error) {
     if (String(error) === READ_ONLY_SUBAGENT_ERROR) {

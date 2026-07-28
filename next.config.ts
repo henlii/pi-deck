@@ -17,6 +17,14 @@ const nextConfig: NextConfig = {
     "@earendil-works/pi-ai",
     "@earendil-works/pi-tui",
   ],
+  webpack(config, { isServer }) {
+    if (isServer) {
+      // instrumentation.ts 也必须复用 Node 侧的 undici；否则 webpack 会尝试
+      // 打包其 node:console 等内建模块并触发 UnhandledSchemeError。
+      config.externals.push({ undici: "commonjs undici" });
+    }
+    return config;
+  },
   allowedDevOrigins: ["192.168.*.*", "100.99.31.21", "deck.namixinxi.cn"],
   async headers() {
     return [

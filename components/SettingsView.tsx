@@ -5,6 +5,9 @@ import { ViewportDialog } from "./ui/ViewportDialog";
 import { ModelsConfig } from "./ModelsConfig";
 import { SkillsConfig } from "./SkillsConfig";
 import { PluginsConfig } from "./PluginsConfig";
+import { MemoryConfig } from "./MemoryConfig";
+import { AgentsConfig } from "./AgentsConfig";
+import { AgentDefaultsConfig } from "./AgentDefaultsConfig";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useTheme } from "@/hooks/useTheme";
 import { useI18n, type Locale } from "@/lib/i18n";
@@ -31,15 +34,24 @@ interface SettingsViewProps {
 
 /** 设置页 id → 本地化标签 key：nav 按钮、对话框标题与 section aria-label 共用同一映射。 */
 function settingsPageLabelKey(id: SettingsPageId) {
-  return id === "appearance"
-    ? "common_appearance"
-    : id === "models"
-      ? "common_models"
-      : id === "skills"
-        ? "common_skills"
-        : id === "plugins"
-          ? "common_plugins"
-          : "common_trust";
+  switch (id) {
+    case "appearance":
+      return "common_appearance";
+    case "models":
+      return "common_models";
+    case "memory":
+      return "common_memory";
+    case "agents":
+      return "common_agents";
+    case "defaults":
+      return "common_defaults";
+    case "skills":
+      return "common_skills";
+    case "plugins":
+      return "common_plugins";
+    case "trust":
+      return "common_trust";
+  }
 }
 
 function readInitialPage(): SettingsPageId {
@@ -343,6 +355,12 @@ export function SettingsView({ cwd, sessionId, onClose, onModelsChanged, onPlugi
         return <AppearancePage />;
       case "models":
         return <ModelsConfig embedded onClose={onModelsChanged ?? onClose} />;
+      case "memory":
+        return <MemoryConfig cwd={cwd} />;
+      case "agents":
+        return <AgentsConfig cwd={cwd} />;
+      case "defaults":
+        return <AgentDefaultsConfig cwd={cwd} />;
       case "skills":
         return <SkillsConfig embedded cwd={cwd!} onClose={onClose} />;
       case "plugins":
@@ -381,7 +399,7 @@ export function SettingsView({ cwd, sessionId, onClose, onModelsChanged, onPlugi
             }}
           >
             <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              {t(page.label === "appearance" ? "common_appearance" : page.label === "models" ? "common_models" : page.label === "skills" ? "common_skills" : "common_plugins")}
+              {t(settingsPageLabelKey(page.id))}
             </span>
             {!page.available && (
               <span style={{ fontSize: 10, color: "var(--text-dim)", flexShrink: 0 }}>{t("common_needsProject")}</span>
@@ -430,7 +448,7 @@ export function SettingsView({ cwd, sessionId, onClose, onModelsChanged, onPlugi
       open
       onClose={onClose}
       closeLabel={t("dialog_close")}
-      title={isMobile && mobileView.page !== null ? t(activePageInfo.label === "appearance" ? "common_appearance" : activePageInfo.label === "models" ? "common_models" : activePageInfo.label === "skills" ? "common_skills" : "common_plugins") : t("common_settings")}
+      title={isMobile && mobileView.page !== null ? t(settingsPageLabelKey(activePageInfo.id)) : t("common_settings")}
       width={920}
       zIndex={1000}
       headerActions={mobileBackAction}
