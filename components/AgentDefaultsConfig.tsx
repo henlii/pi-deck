@@ -131,10 +131,13 @@ export function AgentDefaultsConfig({ cwd }: AgentDefaultsConfigProps) {
 
       const base = viewToDraft(data);
       if (draft.defaultProvider !== base.defaultProvider) {
-        payload.defaultProvider = draft.defaultProvider.trim() || null;
+        // 不发送清空：SDK 无 delete API，发 null 会被服务端拒绝
+        const trimmed = draft.defaultProvider.trim();
+        if (trimmed) payload.defaultProvider = trimmed;
       }
       if (draft.defaultModel !== base.defaultModel) {
-        payload.defaultModel = draft.defaultModel.trim() || null;
+        const trimmed = draft.defaultModel.trim();
+        if (trimmed) payload.defaultModel = trimmed;
       }
       if (draft.defaultThinkingLevel !== base.defaultThinkingLevel) {
         payload.defaultThinkingLevel = draft.defaultThinkingLevel || null;

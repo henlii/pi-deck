@@ -9,6 +9,8 @@ import {
   listAgentRoster,
   parseHistoryLimit,
 } from "@/lib/agent-roster";
+import { getAllowedFileRoots, isFilePathAllowed } from "@/lib/file-access";
+import { normalize as normalizePath } from "node:path";
 
 export type {
   AgentRosterEntry,
@@ -28,8 +30,19 @@ export async function GET(req: NextRequest) {
 
   // 只认 cwd；忽略 root/path 等
   const cwdParam = req.nextUrl.searchParams.get("cwd");
-  const cwd =
-    cwdParam != null && cwdParam.trim() !== "" ? cwdParam : null;
+  let cwd: string | null = null;
+  if (cwdParam != null && cwdParam.trim() !== "") {
+    // 受控：只接受 allow-list 内的项目目录，越权 cwd 一律降级为 null（只看 builtin/user/package）
+    try {
+      const resolved = normalizePath(cwdParam);
+      const allowed = await getAllowedFileRoots();
+      if (isFilePathAllowed(resolved, allowed)) {
+        cwd = resolved;
+      }
+    } catch {
+      cwd = null;
+    }
+  }
 
   const body = listAgentRoster({ cwd, historyLimit });
   return NextResponse.json(body);

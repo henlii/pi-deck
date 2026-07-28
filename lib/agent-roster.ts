@@ -306,6 +306,44 @@ function readTextBounded(
 }
 
 /**
+ * 从文件**尾部**读取最多 maxBytes 字节，并丢弃首行（可能被 UTF-8 截断）。
+ * 用于 append-only 的 run-history.jsonl：保证读到的是最新记录。
+ */
+function readTextTailBounded(
+  io: AgentRosterFs,
+  filePath: string,
+  maxBytes: number,
+): string | null {
+  try {
+    const lst = io.lstatSync(filePath);
+    if (lst.isSymbolicLink() || !lst.isFile()) return null;
+    const noFollow =
+      typeof io.constants.O_NOFOLLOW === "number" ? io.constants.O_NOFOLLOW : 0;
+    if (lst.size <= maxBytes) {
+      return io.readFileSync(filePath, "utf8");
+    }
+    const fd = io.openSync(filePath, io.constants.O_RDONLY | noFollow);
+    try {
+      const start = lst.size - maxBytes;
+      const buf = Buffer.alloc(maxBytes);
+      const n = io.readSync(fd, buf, 0, maxBytes, start);
+      const text = buf.subarray(0, n).toString("utf8");
+      // 首行可能不完整（半截 UTF-8 / 半截 JSON），丢弃到第一个换行
+      const firstNewline = text.indexOf("\n");
+      return firstNewline === -1 ? text : text.slice(firstNewline + 1);
+    } finally {
+      try {
+        io.closeSync(fd);
+      } catch {
+        // ignore
+      }
+    }
+  } catch {
+    return null;
+  }
+}
+
+/**
  * 从单个 agent .md 投影为花名册条目；缺 name/description 则跳过。
  */
 export function parseAgentMarkdown(
@@ -406,10 +444,11 @@ function findNearestProjectRoot(
   const home = path.resolve(homedir());
   const stop = path.parse(current).root;
   while (true) {
+    // 项目根仅认 .git/.pi；.agents 不单独作为 projectRoot 判定标志，
+    // 否则 cwd 不在 git 仓内、home 有 .agents 时会误命中并重复列入 project。
     if (
       isDirectory(io, path.join(current, ".git")) ||
-      isDirectory(io, path.join(current, ".pi")) ||
-      isDirectory(io, path.join(current, ".agents"))
+      isDirectory(io, path.join(current, ".pi"))
     ) {
       return current;
     }
@@ -578,10 +617,10 @@ export function readRunHistory(
     return { entries: [], available: false };
   }
 
-  const raw = readTextBounded(io, historyPath, MAX_HISTORY_FILE_BYTES);
+  const raw = readTextTailBounded(io, historyPath, MAX_HISTORY_FILE_BYTES);
   if (raw === null) return { entries: [], available: false };
 
-  // 超大文件只读了头部时，优先从可见文本的末尾行解析
+  // 从尾部读取后，末尾即最新记录
   const lines = raw
     .split("\n")
     .map((line) => line.trim())

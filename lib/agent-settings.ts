@@ -47,8 +47,8 @@ export interface AgentSettingsView {
 
 /** PUT 白名单：仅这些键可写 */
 export interface AgentSettingsPatch {
-  defaultProvider?: string | null;
-  defaultModel?: string | null;
+  defaultProvider?: string;
+  defaultModel?: string;
   defaultThinkingLevel?: AgentThinkingLevel | null;
   steeringMode?: QueueMode;
   followUpMode?: QueueMode;
@@ -109,7 +109,11 @@ export function parseAgentSettingsPatch(
   if ("defaultProvider" in body) {
     const v = body.defaultProvider;
     if (v === null) {
-      patch.defaultProvider = null;
+      // SDK SettingsManager 无 delete/clear 公开 API；暴露清空会让保存静默无效。
+      errors.push({
+        field: "defaultProvider",
+        message: "SDK 暂不支持清空 defaultProvider，请在 settings.json 中手动删除该键",
+      });
     } else if (typeof v === "string") {
       const trimmed = v.trim();
       if (!trimmed) {
@@ -127,7 +131,10 @@ export function parseAgentSettingsPatch(
   if ("defaultModel" in body) {
     const v = body.defaultModel;
     if (v === null) {
-      patch.defaultModel = null;
+      errors.push({
+        field: "defaultModel",
+        message: "SDK 暂不支持清空 defaultModel，请在 settings.json 中手动删除该键",
+      });
     } else if (typeof v === "string") {
       const trimmed = v.trim();
       if (!trimmed) {
@@ -240,8 +247,8 @@ export interface AgentSettingsWriter extends AgentSettingsReader {
 }
 
 /**
- * 应用白名单 patch。null provider/model 无法通过公开 API 删除键时跳过清空
- * （SDK 无 clear 方法）；thinking null → "off"。
+ * 应用白名单 patch。thinking null → "off"（SDK 无 clear）。
+ * provider/model 不允许 null（parseAgentSettingsPatch 已拒绝）。
  */
 export async function applyAgentSettingsPatch(
   manager: AgentSettingsWriter,
@@ -250,13 +257,13 @@ export async function applyAgentSettingsPatch(
   const provider = patch.defaultProvider;
   const model = patch.defaultModel;
 
-  if (provider !== undefined && model !== undefined && provider !== null && model !== null) {
+  if (provider !== undefined && model !== undefined) {
     manager.setDefaultModelAndProvider(provider, model);
   } else {
-    if (provider !== undefined && provider !== null) {
+    if (provider !== undefined) {
       manager.setDefaultProvider(provider);
     }
-    if (model !== undefined && model !== null) {
+    if (model !== undefined) {
       manager.setDefaultModel(model);
     }
   }
