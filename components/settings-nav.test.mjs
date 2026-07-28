@@ -7,13 +7,15 @@ const jiti = createJiti(import.meta.url);
 test("页面清单：appearance/models/memory/agents/trust 无 cwd 可用，skills/plugins 保留导航项并给出提示", async () => {
   const { getSettingsPages } = await jiti.import("./settings-nav.ts");
   const withoutCwd = getSettingsPages(false);
-  assert.deepEqual(withoutCwd.map((p) => p.id), ["appearance", "models", "memory", "agents", "skills", "plugins", "trust"]);
+  assert.deepEqual(withoutCwd.map((p) => p.id), ["appearance", "models", "memory", "agents", "defaults", "skills", "plugins", "trust"]);
   assert.equal(withoutCwd.find((p) => p.id === "appearance").available, true);
   assert.equal(withoutCwd.find((p) => p.id === "models").available, true);
   // memory 可看全局 Hermes 记忆，不依赖活动项目。
   assert.equal(withoutCwd.find((p) => p.id === "memory").available, true);
   // agents 可看 builtin/user 花名册与 run-history，不依赖活动项目。
   assert.equal(withoutCwd.find((p) => p.id === "agents").available, true);
+  // defaults 读写全局 settings.json 白名单键，不依赖活动项目。
+  assert.equal(withoutCwd.find((p) => p.id === "defaults").available, true);
   // trust 是全局 trust.json 的只读视图，不依赖活动项目。
   assert.equal(withoutCwd.find((p) => p.id === "trust").available, true);
   const skills = withoutCwd.find((p) => p.id === "skills");
@@ -23,7 +25,7 @@ test("页面清单：appearance/models/memory/agents/trust 无 cwd 可用，skil
   assert.equal(skills.unavailableHint, "skills");
   assert.equal(plugins.available, false);
   assert.equal(plugins.unavailableHint, "plugins");
-  assert.deepEqual(withoutCwd.map((p) => p.label), ["appearance", "models", "memory", "agents", "skills", "plugins", "trust"]);
+  assert.deepEqual(withoutCwd.map((p) => p.label), ["appearance", "models", "memory", "agents", "defaults", "skills", "plugins", "trust"]);
 
   const withCwd = getSettingsPages(true);
   assert.ok(withCwd.every((p) => p.available));
