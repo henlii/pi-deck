@@ -6,6 +6,7 @@ import { ModelsConfig } from "./ModelsConfig";
 import { SkillsConfig } from "./SkillsConfig";
 import { PluginsConfig } from "./PluginsConfig";
 import { MemoryConfig } from "./MemoryConfig";
+import { AgentsConfig } from "./AgentsConfig";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useTheme } from "@/hooks/useTheme";
 import { useI18n, type Locale } from "@/lib/i18n";
@@ -39,6 +40,8 @@ function settingsPageLabelKey(id: SettingsPageId) {
       return "common_models";
     case "memory":
       return "common_memory";
+    case "agents":
+      return "common_agents";
     case "skills":
       return "common_skills";
     case "plugins":
@@ -351,6 +354,8 @@ export function SettingsView({ cwd, sessionId, onClose, onModelsChanged, onPlugi
         return <ModelsConfig embedded onClose={onModelsChanged ?? onClose} />;
       case "memory":
         return <MemoryConfig cwd={cwd} />;
+      case "agents":
+        return <AgentsConfig cwd={cwd} />;
       case "skills":
         return <SkillsConfig embedded cwd={cwd!} onClose={onClose} />;
       case "plugins":
