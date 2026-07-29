@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
-import { resolveSessionPath, buildSessionContext, resolveSessionManagerForRead } from "@/lib/session-reader";
+import { buildSessionContext } from "@/lib/session-reader";
 import { projectObservationalMemory } from "@/lib/om-ledger";
 import { projectWorkspaceHistory } from "@/lib/workspace-history";
-import { getRpcSession } from "@/lib/rpc-manager";
+import { sessionService } from "@/lib/session-service";
 
 export async function GET(
   req: Request,
@@ -15,17 +15,14 @@ export async function GET(
   const deferToolResultImages = url.searchParams.has("deferMedia");
 
   try {
-    const filePath = await resolveSessionPath(id);
-    if (!filePath) {
+    // 与主会话 GET 一致：getReadView 在存活 live wrapper 时用其 entries，避免 leaf 偏差。
+    // readOnly subagent 仍可读；不 start。投影本身以请求 leafId 为准。
+    const view = await sessionService.getReadView(id);
+    if (!view) {
       return NextResponse.json({ error: "Session not found" }, { status: 404 });
     }
 
-    // 与主会话 GET 一致：有存活 live wrapper 时用其 entries，避免 leaf 偏差。
-    // 投影本身以请求 leafId 为准（in-session branch 切换传 leafId）。
-    const sm = resolveSessionManagerForRead({
-      filePath,
-      liveSession: getRpcSession(id) ?? null,
-    });
+    const sm = view.manager;
     const entries = sm.getEntries() as never;
     const context = buildSessionContext(entries, leafId, {
       deferThinking,

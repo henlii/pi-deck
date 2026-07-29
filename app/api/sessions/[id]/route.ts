@@ -9,10 +9,8 @@ import {
   invalidateSessionListCache,
   readSessionHeader,
   listAllSessions,
-  resolveSessionManagerForRead,
   buildSessionNavigationSnapshot,
 } from "@/lib/session-reader";
-import { getRpcSession } from "@/lib/rpc-manager";
 import { sessionService, READ_ONLY_SUBAGENT_ERROR, requireWritableSession } from "@/lib/session-service";
 import { collectSubagentTree, deleteValidatedSubagents } from "@/lib/subagent-sessions";
 
@@ -22,17 +20,14 @@ export async function GET(
 ) {
   const { id } = await params;
   try {
-    const filePath = await resolveSessionPath(id);
-    if (!filePath) {
+    // navigateTree 只改 live sessionManager leaf，不改磁盘末 entry；
+    // getReadView：存活 wrapper 时以 live 为权威，避免 loadSession 整刷跳回旧 leaf。
+    const view = await sessionService.getReadView(id);
+    if (!view) {
       return NextResponse.json({ error: "Session not found" }, { status: 404 });
     }
 
-    // navigateTree 只改 live sessionManager leaf，不改磁盘末 entry；
-    // 有存活 wrapper 时以 live 为权威，避免 loadSession 整刷跳回旧 leaf。
-    const sm = resolveSessionManagerForRead({
-      filePath,
-      liveSession: getRpcSession(id) ?? null,
-    });
+    const { filePath, manager: sm } = view;
     const searchParams = new URL(req.url).searchParams;
     const { leafId, tree, context, header, sessionName, observationalMemory, workspaceHistory } = buildSessionNavigationSnapshot(sm, {
       deferThinking: searchParams.has("deferThinking"),
@@ -151,7 +146,7 @@ export async function DELETE(
       }
     } catch { /* skip if dir unreadable */ }
 
-    getRpcSession(id)?.destroy();
+    sessionService.destroy(id);
     unlinkSync(filePath);
     const parentRoot = resolve(filePath.slice(0, -6));
     const skippedSubagents = deleteValidatedSubagents(verifiedChildren, parentRoot, invalidateSessionPathCache);
