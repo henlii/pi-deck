@@ -12,6 +12,7 @@ import {
   invalidateSessionListCache,
   listAllSessions,
   resolveSessionPath,
+  type SessionManagerReadView,
 } from "./session-reader";
 import type { SessionInfo } from "./types";
 
@@ -45,6 +46,13 @@ export type CreateNewSessionResult = {
   data: unknown;
 };
 
+/** 只读会话视图：live leaf 优先，否则磁盘 open；不启动 AgentSession。 */
+export type SessionReadView = {
+  source: "live" | "disk";
+  filePath: string;
+  manager: SessionManagerReadView;
+};
+
 export type SessionServiceDeps = {
   listAllSessions: () => Promise<SessionInfo[]>;
   resolveSessionPath: (sessionId: string) => Promise<string | null>;
@@ -60,6 +68,7 @@ export type SessionServiceDeps = {
   allowFileRoot: (root: string) => void;
   invalidateSessionListCache: () => void;
   openSessionCwd: (filePath: string) => string;
+  openSessionManager: (filePath: string) => SessionManagerReadView;
   existsSync: (path: string) => boolean;
   now: () => number;
 };
@@ -74,6 +83,7 @@ const defaultDeps: SessionServiceDeps = {
   allowFileRoot,
   invalidateSessionListCache,
   openSessionCwd: (filePath) => SessionManager.open(filePath).getHeader()?.cwd ?? process.cwd(),
+  openSessionManager: (filePath) => SessionManager.open(filePath) as unknown as SessionManagerReadView,
   existsSync,
   now: () => Date.now(),
 };
@@ -81,8 +91,17 @@ const defaultDeps: SessionServiceDeps = {
 export type SessionService = {
   listSessions(): Promise<{ sessions: SessionInfo[]; runningSessionIds: string[] }>;
   resolvePath(sessionId: string): Promise<string | null>;
+  /** 只读，不启动，不套 readOnly 门禁；readOnly subagent 仍可浏览 */
+  getReadView(sessionId: string): Promise<SessionReadView | null>;
+  /** 只取 alive wrapper，绝不启动 */
+  getLive(sessionId: string): AgentSessionWrapper | undefined;
+  /** @deprecated 使用 getLive；保留兼容 agent GET 等调用方 */
   getLiveSession(sessionId: string): AgentSessionWrapper | undefined;
   isLive(sessionId: string): boolean;
+  /** 复用或启动；启动前必须 readOnly 门禁 */
+  ensureLive(sessionId: string): Promise<AgentSessionWrapper>;
+  /** 销毁 alive/dead wrapper；不存在 no-op；不走 readOnly 门禁 */
+  destroy(sessionId: string): void;
   start(
     sessionId: string,
     sessionFile: string,
@@ -99,7 +118,7 @@ export type SessionService = {
 export function createSessionService(overrides: Partial<SessionServiceDeps> = {}): SessionService {
   const deps: SessionServiceDeps = { ...defaultDeps, ...overrides };
 
-  return {
+  const service: SessionService = {
     async listSessions() {
       const sessions = await deps.listAllSessions();
       return {
@@ -117,26 +136,43 @@ export function createSessionService(overrides: Partial<SessionServiceDeps> = {}
       return session?.readOnly === true;
     },
 
-    getLiveSession(sessionId) {
+    async getReadView(sessionId) {
+      const filePath = await deps.resolveSessionPath(sessionId);
+      if (!filePath) return null;
+
+      const wrapper = deps.getRpcSession(sessionId);
+      if (wrapper?.isAlive()) {
+        return {
+          source: "live",
+          filePath,
+          manager: wrapper.inner.sessionManager as unknown as SessionManagerReadView,
+        };
+      }
+
+      return {
+        source: "disk",
+        filePath,
+        manager: deps.openSessionManager(filePath),
+      };
+    },
+
+    getLive(sessionId) {
       const session = deps.getRpcSession(sessionId);
       return session?.isAlive() ? session : undefined;
     },
 
+    getLiveSession(sessionId) {
+      return service.getLive(sessionId);
+    },
+
     isLive(sessionId) {
-      return Boolean(deps.getRpcSession(sessionId)?.isAlive());
+      return Boolean(service.getLive(sessionId));
     },
 
-    async start(sessionId, sessionFile, cwd, toolNames) {
-      await requireWritableSession(sessionId, this.isReadOnly);
-      return deps.startRpcSession(sessionId, sessionFile, cwd, toolNames);
-    },
-
-    async send(sessionId, command) {
-      await requireWritableSession(sessionId, this.isReadOnly);
-      const live = deps.getRpcSession(sessionId);
-      if (live?.isAlive()) {
-        return live.send(command);
-      }
+    async ensureLive(sessionId) {
+      await requireWritableSession(sessionId, service.isReadOnly);
+      const live = service.getLive(sessionId);
+      if (live) return live;
 
       const filePath = await deps.resolveSessionPath(sessionId);
       if (!filePath) {
@@ -145,6 +181,21 @@ export function createSessionService(overrides: Partial<SessionServiceDeps> = {}
 
       const cwd = deps.openSessionCwd(filePath);
       const { session } = await deps.startRpcSession(sessionId, filePath, cwd);
+      return session;
+    },
+
+    destroy(sessionId) {
+      // 含 dead wrapper；不存在 no-op；不走 readOnly
+      deps.getRpcSession(sessionId)?.destroy();
+    },
+
+    async start(sessionId, sessionFile, cwd, toolNames) {
+      await requireWritableSession(sessionId, service.isReadOnly);
+      return deps.startRpcSession(sessionId, sessionFile, cwd, toolNames);
+    },
+
+    async send(sessionId, command) {
+      const session = await service.ensureLive(sessionId);
       return session.send(command);
     },
 
@@ -194,6 +245,8 @@ export function createSessionService(overrides: Partial<SessionServiceDeps> = {}
       return deps.subscribeRunningSessions(listener);
     },
   };
+
+  return service;
 }
 
 export const sessionService = createSessionService();

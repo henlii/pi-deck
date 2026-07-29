@@ -1,9 +1,8 @@
 import { NextResponse } from "next/server";
-import { SessionManager, type AgentSession } from "@earendil-works/pi-coding-agent";
+import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import { generateSessionTitle } from "@/lib/session-title";
-import { getRpcSession, startRpcSession } from "@/lib/rpc-manager";
-import { invalidateSessionListCache, resolveSessionPath } from "@/lib/session-reader";
-import { sessionService, READ_ONLY_SUBAGENT_ERROR, requireWritableSession } from "@/lib/session-service";
+import { invalidateSessionListCache } from "@/lib/session-reader";
+import { sessionService, READ_ONLY_SUBAGENT_ERROR } from "@/lib/session-service";
 
 export async function POST(
   _req: Request,
@@ -12,17 +11,8 @@ export async function POST(
   const { id } = await params;
 
   try {
-    await requireWritableSession(id, sessionService.isReadOnly);
-    const filePath = await resolveSessionPath(id);
-    if (!filePath) {
-      return NextResponse.json({ error: "Session not found" }, { status: 404 });
-    }
-
-    const cwd = SessionManager.open(filePath).getHeader()?.cwd ?? process.cwd();
-    const existing = getRpcSession(id);
-    const { session } = existing?.isAlive()
-      ? { session: existing }
-      : await startRpcSession(id, filePath, cwd);
+    // ensureLive：readOnly 门禁 + 复用/启动；不存在 → Session not found
+    const session = await sessionService.ensureLive(id);
 
     // globalThis keeps wrappers alive across dev hot reloads; older instances
     // may predate waitUntilReady(), but those have already completed startup.
@@ -43,9 +33,10 @@ export async function POST(
     if (String(error) === READ_ONLY_SUBAGENT_ERROR) {
       return NextResponse.json({ error: READ_ONLY_SUBAGENT_ERROR }, { status: 403 });
     }
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : String(error) },
-      { status: 500 },
-    );
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.includes("Session not found")) {
+      return NextResponse.json({ error: "Session not found" }, { status: 404 });
+    }
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

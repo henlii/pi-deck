@@ -1,6 +1,3 @@
-import { resolveSessionPath } from "@/lib/session-reader";
-import { getRpcSession, startRpcSession } from "@/lib/rpc-manager";
-import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { sessionService, READ_ONLY_SUBAGENT_ERROR, requireWritableSession } from "@/lib/session-service";
 
 export const dynamic = "force-dynamic";
@@ -11,26 +8,30 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  try { await requireWritableSession(id, sessionService.isReadOnly); } catch (error) {
+
+  // 门禁错误形态与历史一致：readOnly→403 JSON，门禁内部异常→500 JSON（非 Failed to start 文本）
+  try {
+    await requireWritableSession(id, sessionService.isReadOnly);
+  } catch (error) {
     if (String(error) === READ_ONLY_SUBAGENT_ERROR) {
       return new Response(JSON.stringify({ error: READ_ONLY_SUBAGENT_ERROR }), { status: 403, headers: { "Content-Type": "application/json" } });
     }
     return new Response(JSON.stringify({ error: String(error) }), { status: 500, headers: { "Content-Type": "application/json" } });
   }
 
-  // Fast path: already-running session
-  let session = getRpcSession(id);
-  if (!session || !session.isAlive()) {
-    const filePath = await resolveSessionPath(id);
-    if (!filePath) {
+  // ensureLive：复用 alive 或 resolve/start；Route 不再直接 import rpc-manager
+  let session;
+  try {
+    session = await sessionService.ensureLive(id);
+  } catch (error) {
+    if (String(error) === READ_ONLY_SUBAGENT_ERROR) {
+      return new Response(JSON.stringify({ error: READ_ONLY_SUBAGENT_ERROR }), { status: 403, headers: { "Content-Type": "application/json" } });
+    }
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.includes("Session not found")) {
       return new Response("Session not found", { status: 404 });
     }
-    const cwd = SessionManager.open(filePath).getHeader()?.cwd ?? process.cwd();
-    try {
-      ({ session } = await startRpcSession(id, filePath, cwd));
-    } catch (error) {
-      return new Response(`Failed to start agent: ${error}`, { status: 500 });
-    }
+    return new Response(`Failed to start agent: ${error}`, { status: 500 });
   }
 
   const stream = new ReadableStream({
