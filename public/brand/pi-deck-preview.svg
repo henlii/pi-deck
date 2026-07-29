@@ -1,0 +1,276 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900" font-family="DejaVu Sans, system-ui, sans-serif" xml:space="preserve">
+  <!-- Pi Deck 样例数据产品预览：手绘 UI mockup，所有内容均为示意样例，非真实会话/路径/账户数据 -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#171b23"/>
+      <stop offset="1" stop-color="#10131a"/>
+    </linearGradient>
+    <linearGradient id="accentGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#7ab2fb"/>
+      <stop offset="1" stop-color="#4a90f4"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.85" cy="0.08" r="0.9">
+      <stop offset="0" stop-color="#60a5fa" stop-opacity="0.10"/>
+      <stop offset="1" stop-color="#60a5fa" stop-opacity="0"/>
+    </radialGradient>
+    <pattern id="dots" width="36" height="36" patternUnits="userSpaceOnUse">
+      <circle cx="1.4" cy="1.4" r="1.4" fill="#ffffff" fill-opacity="0.03"/>
+    </pattern>
+    <filter id="soft" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="10"/>
+    </filter>
+    <clipPath id="win"><rect x="28" y="28" width="1544" height="824" rx="14"/></clipPath>
+  </defs>
+<rect x="0" y="0" width="1600" height="900" fill="url(#bg)"/>
+<rect x="0" y="0" width="1600" height="900" fill="url(#dots)"/>
+<rect x="0" y="0" width="1600" height="900" fill="url(#glow)"/>
+  <rect x="34" y="42" width="1544" height="824" rx="14" fill="#000000" opacity="0.5" filter="url(#soft)"/>
+<rect x="28" y="28" width="1544" height="824" rx="14" fill="#1a1a1a" stroke="#3a3a3a" stroke-width="1"/>
+  <g clip-path="url(#win)">
+<rect x="28" y="28" width="1544" height="48" fill="#242424"/>
+<rect x="28" y="76" width="252" height="776" fill="#242424"/>
+<rect x="1250" y="76" width="322" height="776" fill="#242424"/>
+<line x1="28" y1="76" x2="1572" y2="76" stroke="#3a3a3a" stroke-width="1" stroke-linecap="round"/>
+<line x1="280" y1="76" x2="280" y2="852" stroke="#3a3a3a" stroke-width="1" stroke-linecap="round"/>
+<line x1="1250" y1="76" x2="1250" y2="852" stroke="#3a3a3a" stroke-width="1" stroke-linecap="round"/>
+  </g>
+<line x1="44" y1="47" x2="58" y2="47" stroke="#9ca3af" stroke-width="1.8" stroke-linecap="round"/>
+<line x1="44" y1="52" x2="58" y2="52" stroke="#9ca3af" stroke-width="1.8" stroke-linecap="round"/>
+<line x1="44" y1="57" x2="58" y2="57" stroke="#9ca3af" stroke-width="1.8" stroke-linecap="round"/>
+<rect x="72" y="38" width="216" height="28" rx="7" fill="#383838" stroke="#3a3a3a" stroke-width="1"/>
+<path d="M85.5 48 Q85.5 46.5 87 46.5 H95 Q96.5 46.5 96.5 48 V53.5 Q96.5 55 95 55 H90 L87.5 57.5 V55 H87 Q85.5 55 85.5 53.5 Z" fill="none" stroke="#9ca3af" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="104" y="57" font-size="12.5" fill="#e8e8e8">Fix tag filter overflow</text>
+<rect x="296" y="38" width="158" height="28" rx="7" fill="#242424" stroke="#3a3a3a" stroke-width="1"/>
+<path d="M309 46.5 H315 L318 49.5 V58.5 H309 Z" fill="none" stroke="#9ca3af" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M315 46.5 V49.5 H318" fill="none" stroke="#9ca3af" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="326" y="57" font-size="12.5" fill="#9ca3af">TagFilter.tsx</text>
+<circle cx="436" cy="52" r="3.5" fill="#60a5fa"/>
+<rect x="630" y="39" width="270" height="26" rx="13" fill="#1a1a1a" stroke="#3a3a3a" stroke-width="1"/>
+<text x="765" y="56.5" font-size="11.5" fill="#9ca3af" font-family="DejaVu Sans Mono, monospace" text-anchor="middle">↑ 8.2k  ↓ 1.9k   36% / 200k   $0.42</text>
+<circle cx="1449.4" cy="49.8" r="2.6" fill="none" stroke="#9ca3af" stroke-width="1.5"/>
+<path d="M1444.6 57.2 a4.8 4.8 0 0 1 9.6 0" fill="none" stroke="#9ca3af" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="1456.2" cy="49.2" r="2.1" fill="none" stroke="#9ca3af" stroke-width="1.5"/>
+<path d="M1454.2 57.2 a4 4 0 0 1 5.6-3.7" fill="none" stroke="#9ca3af" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M1484 46.5 L1489.5 56.5 H1478.5 Z" fill="none" stroke="#9ca3af" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<line x1="1484" y1="50.2" x2="1484" y2="53.2" stroke="#9ca3af" stroke-width="1.5" stroke-linecap="round"/>
+<circle cx="1484" cy="55.1" r="0.9" fill="#9ca3af"/>
+<circle cx="1516" cy="52" r="3.4" fill="none" stroke="#9ca3af" stroke-width="1.6"/>
+<line x1="1521.4" y1="52.0" x2="1523.6" y2="52.0" stroke="#9ca3af" stroke-width="1.5" stroke-linecap="round"/>
+<line x1="1519.8183766184075" y1="55.818376618407356" x2="1521.3740115370179" y2="57.37401153701776" stroke="#9ca3af" stroke-width="1.5" stroke-linecap="round"/>
+<line x1="1516.0" y1="57.4" x2="1516.0" y2="59.6" stroke="#9ca3af" stroke-width="1.5" stroke-linecap="round"/>
+<line x1="1512.1816233815925" y1="55.818376618407356" x2="1510.6259884629821" y2="57.374011537017765" stroke="#9ca3af" stroke-width="1.5" stroke-linecap="round"/>
+<line x1="1510.6" y1="52.0" x2="1508.4" y2="52.0" stroke="#9ca3af" stroke-width="1.5" stroke-linecap="round"/>
+<line x1="1512.1816233815925" y1="48.181623381592644" x2="1510.6259884629821" y2="46.62598846298224" stroke="#9ca3af" stroke-width="1.5" stroke-linecap="round"/>
+<line x1="1516.0" y1="46.6" x2="1516.0" y2="44.4" stroke="#9ca3af" stroke-width="1.5" stroke-linecap="round"/>
+<line x1="1519.8183766184075" y1="48.181623381592644" x2="1521.3740115370179" y2="46.625988462982235" stroke="#9ca3af" stroke-width="1.5" stroke-linecap="round"/>
+<circle cx="1548" cy="52" r="2.4" fill="none" stroke="#9ca3af" stroke-width="1.6"/>
+<line x1="1552.6" y1="52.0" x2="1554.8" y2="52.0" stroke="#9ca3af" stroke-width="1.6" stroke-linecap="round"/>
+<line x1="1551.252691193458" y1="55.25269119345812" x2="1552.8083261120685" y2="56.80832611206852" stroke="#9ca3af" stroke-width="1.6" stroke-linecap="round"/>
+<line x1="1548.0" y1="56.6" x2="1548.0" y2="58.8" stroke="#9ca3af" stroke-width="1.6" stroke-linecap="round"/>
+<line x1="1544.747308806542" y1="55.25269119345812" x2="1543.1916738879315" y2="56.80832611206852" stroke="#9ca3af" stroke-width="1.6" stroke-linecap="round"/>
+<line x1="1543.4" y1="52.0" x2="1541.2" y2="52.0" stroke="#9ca3af" stroke-width="1.6" stroke-linecap="round"/>
+<line x1="1544.747308806542" y1="48.74730880654188" x2="1543.1916738879315" y2="47.19167388793148" stroke="#9ca3af" stroke-width="1.6" stroke-linecap="round"/>
+<line x1="1548.0" y1="47.4" x2="1548.0" y2="45.2" stroke="#9ca3af" stroke-width="1.6" stroke-linecap="round"/>
+<line x1="1551.252691193458" y1="48.74730880654188" x2="1552.8083261120685" y2="47.19167388793147" stroke="#9ca3af" stroke-width="1.6" stroke-linecap="round"/>
+<text x="44" y="106" font-size="13" fill="#e8e8e8" font-weight="bold">Sessions</text>
+<line x1="221" y1="100" x2="231" y2="100" stroke="#9ca3af" stroke-width="1.7" stroke-linecap="round"/>
+<line x1="226" y1="95" x2="226" y2="105" stroke="#9ca3af" stroke-width="1.7" stroke-linecap="round"/>
+<path d="M255.5 100 A5.5 5.5 0 1 1 250 94.5" fill="none" stroke="#9ca3af" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M249 91.0 L250 94.5 L253.5 95.3" fill="none" stroke="#9ca3af" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="44" y="116" width="220" height="30" rx="8" fill="#1a1a1a" stroke="#3a3a3a" stroke-width="1"/>
+<circle cx="58" cy="131" r="4.5" fill="none" stroke="#6b7280" stroke-width="1.6"/>
+<line x1="61.4" y1="134.4" x2="65" y2="138" stroke="#6b7280" stroke-width="1.6" stroke-linecap="round"/>
+<text x="72" y="135.5" font-size="12" fill="#6b7280">Search sessions…</text>
+<path d="M46 171.5 L50 175.5 L54 171.5" fill="none" stroke="#9ca3af" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M63.5 170 Q63.5 169 64.5 169 H68 L69.5 171 H74.5 Q75.5 171 75.5 172 V177 Q75.5 178 74.5 178 H64.5 Q63.5 178 63.5 177 Z" fill="none" stroke="#9ca3af" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="82" y="177" font-size="12.5" fill="#e8e8e8" font-weight="bold">notes-app</text>
+<rect x="240" y="165" width="22" height="16" rx="8" fill="#383838"/>
+<text x="251" y="177" font-size="10" fill="#9ca3af" text-anchor="middle">3</text>
+<rect x="36" y="194" width="236" height="32" rx="7" fill="#383838"/>
+<circle cx="52" cy="210" r="7" fill="#4ade80" opacity="0.22"/>
+<circle cx="52" cy="210" r="3.5" fill="#4ade80"/>
+<text x="66" y="214.5" font-size="12.5" fill="#e8e8e8">Fix tag filter overflow</text>
+<text x="248" y="214" font-size="11" fill="#6b7280">2m</text>
+<circle cx="52" cy="245" r="3.5" fill="none" stroke="#6b7280" stroke-width="1.3"/>
+<text x="66" y="249.5" font-size="12.5" fill="#9ca3af">Add full-text search</text>
+<text x="248" y="249" font-size="11" fill="#6b7280">1h</text>
+<text x="62" y="281" font-size="12" fill="#6b7280">↳</text>
+<text x="82" y="281" font-size="11.5" fill="#6b7280">Fork: debounce retry</text>
+<text x="240" y="281" font-size="11" fill="#6b7280">Mon</text>
+<path d="M48.5 313 L52.5 317 L48.5 321" fill="none" stroke="#9ca3af" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M63.5 314 Q63.5 313 64.5 313 H68 L69.5 315 H74.5 Q75.5 315 75.5 316 V321 Q75.5 322 74.5 322 H64.5 Q63.5 322 63.5 321 Z" fill="none" stroke="#9ca3af" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="82" y="321" font-size="12.5" fill="#9ca3af" font-weight="bold">trail-api</text>
+<rect x="240" y="309" width="22" height="16" rx="8" fill="#383838"/>
+<text x="251" y="321" font-size="10" fill="#9ca3af" text-anchor="middle">5</text>
+<line x1="44" y1="348" x2="264" y2="348" stroke="#3a3a3a" stroke-width="1" stroke-linecap="round"/>
+<text x="44" y="374" font-size="12" fill="#9ca3af" font-weight="bold">Explorer</text>
+<line x1="245" y1="368" x2="255" y2="368" stroke="#9ca3af" stroke-width="1.7" stroke-linecap="round"/>
+<line x1="250" y1="363" x2="250" y2="373" stroke="#9ca3af" stroke-width="1.7" stroke-linecap="round"/>
+<path d="M46 390.5 L50 394.5 L54 390.5" fill="none" stroke="#9ca3af" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M61.5 389 Q61.5 388 62.5 388 H66 L67.5 390 H72.5 Q73.5 390 73.5 391 V396 Q73.5 397 72.5 397 H62.5 Q61.5 397 61.5 396 Z" fill="none" stroke="#9ca3af" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="78" y="396" font-size="12" fill="#e8e8e8">src</text>
+<path d="M62 414.5 L66 418.5 L70 414.5" fill="none" stroke="#9ca3af" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M77.5 413 Q77.5 412 78.5 412 H82 L83.5 414 H88.5 Q89.5 414 89.5 415 V420 Q89.5 421 88.5 421 H78.5 Q77.5 421 77.5 420 Z" fill="none" stroke="#9ca3af" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="94" y="420" font-size="12" fill="#e8e8e8">components</text>
+<path d="M95 434.5 H101 L104 437.5 V446.5 H95 Z" fill="none" stroke="#9ca3af" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M101 434.5 V437.5 H104" fill="none" stroke="#9ca3af" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="110" y="444" font-size="12" fill="#e8e8e8">TagFilter.tsx</text>
+<text x="256" y="444" font-size="10" fill="#d97706" font-weight="bold" text-anchor="end">M</text>
+<path d="M79 458.5 H85 L88 461.5 V470.5 H79 Z" fill="none" stroke="#9ca3af" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M85 458.5 V461.5 H88" fill="none" stroke="#9ca3af" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="94" y="468" font-size="12" fill="#9ca3af">index.ts</text>
+<path d="M79 482.5 H85 L88 485.5 V494.5 H79 Z" fill="none" stroke="#9ca3af" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M85 482.5 V485.5 H88" fill="none" stroke="#9ca3af" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="94" y="492" font-size="12" fill="#9ca3af">api.ts</text>
+<text x="256" y="492" font-size="10" fill="#d97706" font-weight="bold" text-anchor="end">M</text>
+<path d="M79 506.5 H85 L88 509.5 V518.5 H79 Z" fill="none" stroke="#9ca3af" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M85 506.5 V509.5 H88" fill="none" stroke="#9ca3af" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="94" y="516" font-size="12" fill="#9ca3af">search.ts</text>
+<text x="256" y="516" font-size="10" fill="#4ade80" font-weight="bold" text-anchor="end">A</text>
+<path d="M63 530.5 H69 L72 533.5 V542.5 H63 Z" fill="none" stroke="#9ca3af" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M69 530.5 V533.5 H72" fill="none" stroke="#9ca3af" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="78" y="540" font-size="12" fill="#9ca3af">package.json</text>
+<path d="M63 554.5 H69 L72 557.5 V566.5 H63 Z" fill="none" stroke="#9ca3af" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M69 554.5 V557.5 H72" fill="none" stroke="#9ca3af" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="78" y="564" font-size="12" fill="#9ca3af">README.md</text>
+<line x1="44" y1="792" x2="264" y2="792" stroke="#3a3a3a" stroke-width="1" stroke-linecap="round"/>
+<rect x="44" y="804" width="74" height="26" rx="7" fill="#1a1a1a" stroke="#3a3a3a" stroke-width="1"/>
+<line x1="52" y1="813" x2="64" y2="813" stroke="#9ca3af" stroke-width="1.5" stroke-linecap="round"/>
+<line x1="52" y1="817" x2="64" y2="817" stroke="#9ca3af" stroke-width="1.5" stroke-linecap="round"/>
+<line x1="52" y1="821" x2="64" y2="821" stroke="#9ca3af" stroke-width="1.5" stroke-linecap="round"/>
+<circle cx="56" cy="813" r="1.8" fill="#242424" stroke="#9ca3af" stroke-width="1.4"/>
+<circle cx="61" cy="817" r="1.8" fill="#242424" stroke="#9ca3af" stroke-width="1.4"/>
+<circle cx="54.5" cy="821" r="1.8" fill="#242424" stroke="#9ca3af" stroke-width="1.4"/>
+<text x="70" y="821" font-size="11" fill="#9ca3af">Models</text>
+<rect x="124" y="804" width="76" height="26" rx="7" fill="#1a1a1a" stroke="#3a3a3a" stroke-width="1"/>
+<path d="M133 814.5 L138 811.5 L143 814.5 V820.5 L138 823.5 L133 820.5 Z" fill="none" stroke="#9ca3af" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M133 814.5 L138 817.5 L143 814.5 M138 817.5 V823.5" fill="none" stroke="#9ca3af" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="150" y="821" font-size="11" fill="#9ca3af">Plugins</text>
+<rect x="206" y="804" width="66" height="26" rx="7" fill="#1a1a1a" stroke="#3a3a3a" stroke-width="1"/>
+<path d="M220 812 L221.3 815.7 L225 817 L221.3 818.3 L220 822 L218.7 818.3 L215 817 L218.7 815.7 Z" fill="#9ca3af"/>
+<text x="232" y="821" font-size="11" fill="#9ca3af">Skills</text>
+<text x="312" y="108" font-size="11" fill="#6b7280" font-weight="bold">You</text>
+<rect x="312" y="116" width="400" height="62" rx="10" fill="#1e293b"/>
+<text x="328" y="140" font-size="13" fill="#e8e8e8">The tag filter bar overflows on narrow screens.</text>
+<text x="328" y="162" font-size="13" fill="#e8e8e8">Can you take a look?</text>
+<text x="312" y="210" font-size="11" fill="#6b7280" font-weight="bold">Assistant · claude-sonnet-4-6</text>
+<path d="M316.5 231 L320.5 235 L316.5 239" fill="none" stroke="#6b7280" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="330" y="240" font-size="12" fill="#6b7280" font-style="italic">Thought for 4s · compared 3 approaches</text>
+<text x="312" y="272" font-size="13.5" fill="#e8e8e8">The filter row doesn't wrap, so long tag lists push past the panel edge.</text>
+<text x="312" y="296" font-size="13.5" fill="#e8e8e8">I'll switch it to a wrapping flex layout and cap the visible tags.</text>
+<rect x="312" y="316" width="620" height="40" rx="10" fill="#1f2937" stroke="#3a3a3a" stroke-width="1"/>
+<path d="M322 334.5 L326 338.5 L330 334.5" fill="none" stroke="#9ca3af" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M345 330.5 H351 L354 333.5 V342.5 H345 Z" fill="none" stroke="#9ca3af" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M351 330.5 V333.5 H354" fill="none" stroke="#9ca3af" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="364" y="341" font-size="12" fill="#e8e8e8" font-weight="bold" font-family="DejaVu Sans Mono, monospace">read</text>
+<text x="416" y="341" font-size="12" fill="#9ca3af" font-family="DejaVu Sans Mono, monospace">src/components/TagFilter.tsx</text>
+<text x="908" y="341" font-size="11" fill="#6b7280" text-anchor="end">212 lines</text>
+<rect x="312" y="368" width="620" height="108" rx="10" fill="#1f2937" stroke="#3a3a3a" stroke-width="1"/>
+<path d="M322 386.5 L326 390.5 L330 386.5" fill="none" stroke="#9ca3af" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M344 393 L344.9 390.1 L351.2 383.8 a1.5 1.5 0 0 1 2.1 2.1 L347 392.2 Z" fill="none" stroke="#9ca3af" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="364" y="393" font-size="12" fill="#e8e8e8" font-weight="bold" font-family="DejaVu Sans Mono, monospace">edit</text>
+<text x="416" y="393" font-size="12" fill="#9ca3af" font-family="DejaVu Sans Mono, monospace">src/components/TagFilter.tsx</text>
+<text x="908" y="393" font-size="11" fill="#4ade80" font-family="DejaVu Sans Mono, monospace" text-anchor="end">+1 −1</text>
+<line x1="313" y1="404" x2="931" y2="404" stroke="#3a3a3a" stroke-width="1" stroke-linecap="round"/>
+<text x="328" y="424" font-size="12" fill="#6b7280" font-family="DejaVu Sans Mono, monospace">  @@ -18,7 +18,7 @@ export function TagFilter()</text>
+<rect x="320" y="430" width="604" height="20" fill="#f87171" opacity="0.08"/>
+<text x="328" y="444" font-size="12" fill="#f87171" font-family="DejaVu Sans Mono, monospace">-      className: 'tag-row',</text>
+<rect x="320" y="450" width="604" height="20" fill="#4ade80" opacity="0.08"/>
+<text x="328" y="464" font-size="12" fill="#4ade80" font-family="DejaVu Sans Mono, monospace">+      className: 'tag-row flex flex-wrap gap-2',</text>
+<rect x="312" y="488" width="620" height="40" rx="10" fill="#1f2937" stroke="#3a3a3a" stroke-width="1"/>
+<path d="M324.5 504 L328.5 508 L324.5 512" fill="none" stroke="#9ca3af" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="343" y="503" width="12" height="10" rx="2" fill="none" stroke="#9ca3af" stroke-width="1.4"/>
+<path d="M345.5 506 L348 508 L345.5 510" fill="none" stroke="#9ca3af" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<line x1="349.5" y1="510.3" x2="352.5" y2="510.3" stroke="#9ca3af" stroke-width="1.4" stroke-linecap="round"/>
+<text x="364" y="513" font-size="12" fill="#e8e8e8" font-weight="bold" font-family="DejaVu Sans Mono, monospace">bash</text>
+<text x="416" y="513" font-size="12" fill="#9ca3af" font-family="DejaVu Sans Mono, monospace">npm test</text>
+<circle cx="824" cy="508" r="7" fill="none" stroke="#4ade80" stroke-width="1.6"/>
+<path d="M821 508 L823.2 510.4 L827.4 505.8" fill="none" stroke="#4ade80" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="838" y="513" font-size="11.5" fill="#4ade80">12 passed · 1.8s</text>
+<text x="312" y="560" font-size="13.5" fill="#e8e8e8">Fixed — the bar now wraps on narrow screens, and all twelve tests pass.</text>
+<text x="312" y="584" font-size="13.5" fill="#e8e8e8">You can review the change in the Git tab on the right.</text>
+<rect x="1226" y="116" width="12" height="8" rx="2" fill="#60a5fa" opacity="0.55"/>
+<rect x="1226" y="206" width="12" height="6" rx="2" fill="#9ca3af" opacity="0.55"/>
+<rect x="1226" y="224" width="12" height="4" rx="2" fill="#6b7280" opacity="0.55"/>
+<rect x="1226" y="268" width="12" height="8" rx="2" fill="#9ca3af" opacity="0.55"/>
+<rect x="1226" y="316" width="12" height="10" rx="2" fill="#6b7280" opacity="0.55"/>
+<rect x="1226" y="368" width="12" height="22" rx="2" fill="#6b7280" opacity="0.55"/>
+<rect x="1226" y="488" width="12" height="10" rx="2" fill="#6b7280" opacity="0.55"/>
+<rect x="1226" y="556" width="12" height="8" rx="2" fill="#9ca3af" opacity="0.55"/>
+<rect x="312" y="740" width="898" height="88" rx="12" fill="#242424" stroke="#3a3a3a" stroke-width="1"/>
+<text x="336" y="770" font-size="13" fill="#6b7280">Message… Type / for commands, @ for files</text>
+<circle cx="1182" cy="764" r="15" fill="url(#accentGrad)"/>
+<line x1="1182" y1="769" x2="1182" y2="759" stroke="#ffffff" stroke-width="2.2" stroke-linecap="round"/>
+<path d="M1178 762.8 L1182 759 L1186 762.8" fill="none" stroke="#ffffff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="332" y="786" width="168" height="26" rx="7" fill="#1a1a1a" stroke="#3a3a3a" stroke-width="1"/>
+<circle cx="347" cy="799" r="4" fill="#4a90f4"/>
+<text x="359" y="803" font-size="11.5" fill="#9ca3af">claude-sonnet-4-6</text>
+<rect x="510" y="786" width="142" height="26" rx="7" fill="#1a1a1a" stroke="#3a3a3a" stroke-width="1"/>
+<path d="M525 794 L526.3 797.7 L530 799 L526.3 800.3 L525 804 L523.7 800.3 L520 799 L523.7 797.7 Z" fill="#9ca3af"/>
+<text x="537" y="803" font-size="11.5" fill="#9ca3af">Thinking · High</text>
+<rect x="662" y="786" width="152" height="26" rx="7" fill="#1a1a1a" stroke="#3a3a3a" stroke-width="1"/>
+<line x1="671" y1="795" x2="683" y2="795" stroke="#9ca3af" stroke-width="1.5" stroke-linecap="round"/>
+<line x1="671" y1="799" x2="683" y2="799" stroke="#9ca3af" stroke-width="1.5" stroke-linecap="round"/>
+<line x1="671" y1="803" x2="683" y2="803" stroke="#9ca3af" stroke-width="1.5" stroke-linecap="round"/>
+<circle cx="675" cy="795" r="1.8" fill="#242424" stroke="#9ca3af" stroke-width="1.4"/>
+<circle cx="680" cy="799" r="1.8" fill="#242424" stroke="#9ca3af" stroke-width="1.4"/>
+<circle cx="673.5" cy="803" r="1.8" fill="#242424" stroke="#9ca3af" stroke-width="1.4"/>
+<text x="689" y="803" font-size="11.5" fill="#9ca3af">Tools · 4 built-in</text>
+<text x="1268" y="104" font-size="12.5" fill="#e8e8e8" font-weight="bold">Files</text>
+<rect x="1262" y="110" width="44" height="2" fill="#60a5fa"/>
+<text x="1328" y="104" font-size="12.5" fill="#9ca3af">Git</text>
+<rect x="1350" y="92" width="18" height="15" rx="7.5" fill="#383838"/>
+<text x="1359" y="103" font-size="10" fill="#9ca3af" text-anchor="middle">3</text>
+<line x1="1463" y1="98" x2="1473" y2="98" stroke="#9ca3af" stroke-width="1.7" stroke-linecap="round"/>
+<line x1="1468" y1="93" x2="1468" y2="103" stroke="#9ca3af" stroke-width="1.7" stroke-linecap="round"/>
+<line x1="1494" y1="92" x2="1494" y2="100" stroke="#9ca3af" stroke-width="1.6" stroke-linecap="round"/>
+<path d="M1490.6 95.2 L1494 92 L1497.4 95.2" fill="none" stroke="#9ca3af" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M1488 100.5 V103.5 H1500 V100.5" fill="none" stroke="#9ca3af" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M1525 98 A5 5 0 1 1 1520 93" fill="none" stroke="#9ca3af" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M1519 89.5 L1520 93 L1523.5 93.8" fill="none" stroke="#9ca3af" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+<line x1="1543.5" y1="93.5" x2="1552.5" y2="102.5" stroke="#9ca3af" stroke-width="1.6" stroke-linecap="round"/>
+<line x1="1552.5" y1="93.5" x2="1543.5" y2="102.5" stroke="#9ca3af" stroke-width="1.6" stroke-linecap="round"/>
+<line x1="1250" y1="116" x2="1572" y2="116" stroke="#3a3a3a" stroke-width="1" stroke-linecap="round"/>
+<path d="M1267.5 135.5 L1273 130.5 L1278.5 135.5 V140.5 H1275 V137 H1271 V140.5 H1267.5 Z" fill="none" stroke="#6b7280" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="1284" y="140" font-size="11.5" fill="#6b7280" font-family="DejaVu Sans Mono, monospace">notes-app</text>
+<line x1="1250" y1="150" x2="1572" y2="150" stroke="#3a3a3a" stroke-width="1" stroke-linecap="round"/>
+<path d="M1268 173.5 L1272 177.5 L1276 173.5" fill="none" stroke="#9ca3af" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M1283.5 172 Q1283.5 171 1284.5 171 H1288 L1289.5 173 H1294.5 Q1295.5 173 1295.5 174 V179 Q1295.5 180 1294.5 180 H1284.5 Q1283.5 180 1283.5 179 Z" fill="none" stroke="#9ca3af" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="1300" y="179" font-size="12" fill="#e8e8e8">src</text>
+<path d="M1284 199.5 L1288 203.5 L1292 199.5" fill="none" stroke="#9ca3af" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M1299.5 198 Q1299.5 197 1300.5 197 H1304 L1305.5 199 H1310.5 Q1311.5 199 1311.5 200 V205 Q1311.5 206 1310.5 206 H1300.5 Q1299.5 206 1299.5 205 Z" fill="none" stroke="#9ca3af" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="1316" y="205" font-size="12" fill="#e8e8e8">components</text>
+<rect x="1256" y="214" width="310" height="26" rx="6" fill="#383838"/>
+<path d="M1317 221.5 H1323 L1326 224.5 V233.5 H1317 Z" fill="none" stroke="#9ca3af" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M1323 221.5 V224.5 H1326" fill="none" stroke="#9ca3af" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="1332" y="231" font-size="12" fill="#e8e8e8">TagFilter.tsx</text>
+<text x="1552" y="231" font-size="10" fill="#d97706" font-weight="bold" text-anchor="end">M</text>
+<path d="M1301 247.5 H1307 L1310 250.5 V259.5 H1301 Z" fill="none" stroke="#9ca3af" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M1307 247.5 V250.5 H1310" fill="none" stroke="#9ca3af" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="1316" y="257" font-size="12" fill="#9ca3af">index.ts</text>
+<path d="M1301 273.5 H1307 L1310 276.5 V285.5 H1301 Z" fill="none" stroke="#9ca3af" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M1307 273.5 V276.5 H1310" fill="none" stroke="#9ca3af" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="1316" y="283" font-size="12" fill="#9ca3af">api.ts</text>
+<text x="1552" y="283" font-size="10" fill="#d97706" font-weight="bold" text-anchor="end">M</text>
+<path d="M1301 299.5 H1307 L1310 302.5 V311.5 H1301 Z" fill="none" stroke="#9ca3af" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M1307 299.5 V302.5 H1310" fill="none" stroke="#9ca3af" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="1316" y="309" font-size="12" fill="#9ca3af">search.ts</text>
+<text x="1552" y="309" font-size="10" fill="#4ade80" font-weight="bold" text-anchor="end">A</text>
+<path d="M1285 325.5 H1291 L1294 328.5 V337.5 H1285 Z" fill="none" stroke="#9ca3af" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M1291 325.5 V328.5 H1294" fill="none" stroke="#9ca3af" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="1300" y="335" font-size="12" fill="#9ca3af">package.json</text>
+<path d="M1285 351.5 H1291 L1294 354.5 V363.5 H1285 Z" fill="none" stroke="#9ca3af" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M1291 351.5 V354.5 H1294" fill="none" stroke="#9ca3af" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="1300" y="361" font-size="12" fill="#9ca3af">README.md</text>
+  <g transform="translate(28 864) scale(0.0332)">
+    <rect width="512" height="512" rx="116" fill="#1d212a" stroke="#ffffff" stroke-opacity="0.1" stroke-width="20"/>
+    <g fill="#f4f7fd">
+      <rect x="118" y="176" width="276" height="58" rx="29"/>
+      <rect x="176" y="176" width="52" height="206" rx="26"/>
+      <rect x="284" y="176" width="52" height="206" rx="26"/>
+    </g>
+    <rect x="166" y="140" width="180" height="30" rx="15" fill="#4a90f4"/>
+  </g>
+<text x="54" y="879" font-size="12" fill="#9ca3af" font-weight="bold">Pi Deck</text>
+<text x="1572" y="879" font-size="12" fill="#6b7280" text-anchor="end">Sample-data product preview · illustrative content, not a live session</text>
+</svg>

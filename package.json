@@ -11,29 +11,46 @@
     "url": "https://github.com/henlii/pi-deck/issues"
   },
   "license": "MIT",
+  "engines": {
+    "node": ">=20.9.0"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
   "bin": {
-    "pi-deck": "bin/pi-web.js",
-    "pi-web": "bin/pi-web.js"
+    "pi-deck": "bin/pi-deck.js"
   },
   "files": [
     "bin",
     ".next",
     "!.next/cache",
     "!.next/dev",
+    "!.next/diagnostics",
+    "!.next/types",
+    "!.next/trace",
+    "!.next/trace-build",
+    "!.next/_events_*",
     "!.next/**/*.js.map",
-    "public",
-    "next.config.ts",
-    "package.json"
+    "!.next/**/*.nft.json",
+    "!.next/required-server-files.js",
+    "!.next/required-server-files.json",
+    "!.next/images-manifest.json",
+    "!.next/export-marker.json",
+    "!.next/react-loadable-manifest.json",
+    "!.next/server/next-font-manifest.js"
   ],
   "scripts": {
-    "dev": "next dev -p 30141",
+    "dev": "next dev -p 31415",
     "build": "next build --webpack",
-    "start": "next start -p 30141",
+    "start": "next start -p 31415",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "node --test lib/*.test.mjs components/*.test.mjs",
     "check": "npm run typecheck && npm run lint && npm run test",
-    "release": "npm version patch --no-git-tag-version && npm run build && npm publish --access public"
+    "release:audit": "node scripts/audit-release-package.mjs --pre",
+    "release:audit:tgz": "node scripts/audit-release-package.mjs --tgz",
+    "release:check": "npm run check && npm run build && npm run release:audit"
   },
   "dependencies": {
     "@earendil-works/pi-agent-core": "0.81.1",

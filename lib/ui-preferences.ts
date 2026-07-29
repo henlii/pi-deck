@@ -31,7 +31,7 @@ export const DEFAULT_SIDEBAR_PREFERENCES: SidebarPreferences = {
   closedProjectRoots: [],
 };
 
-const STORAGE_KEY = "pi-web:sidebar-preferences";
+const STORAGE_KEY = "pi-deck:sidebar-preferences";
 
 /** 仅接受合法 string 数组，逐项过滤非 string 脏数据。 */
 function parsePathList(value: unknown): string[] {
