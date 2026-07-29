@@ -10,6 +10,8 @@ try {
 } catch { /* package not found, use default */ }
 
 const nextConfig: NextConfig = {
+  // 公网生产构建可设 PI_DECK_DIST_DIR=.next-public，避免污染 dev 的 .next
+  distDir: process.env.PI_DECK_DIST_DIR || ".next",
   serverExternalPackages: [
     "undici",
     "@earendil-works/pi-coding-agent",
@@ -25,7 +27,7 @@ const nextConfig: NextConfig = {
     }
     return config;
   },
-  allowedDevOrigins: ["192.168.*.*", "100.99.31.21", "deck.namixinxi.cn"],
+  allowedDevOrigins: ["127.0.0.1", "192.168.*.*", "100.99.31.21", "deck.namixinxi.cn"],
   async headers() {
     return [
       {

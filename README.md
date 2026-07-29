@@ -2,11 +2,13 @@
 
 [中文文档](./README.zh-CN.md)
 
+![Pi Deck banner](https://raw.githubusercontent.com/henlii/pi-deck/main/docs/assets/pi-deck-banner.png)
+
 Pi Deck is a unified Agent workspace built on top of [Pi](https://github.com/badlogic/pi-mono). It does not replace Pi: it reads your local Pi session files and uses Pi's runtime semantics to provide a browser workspace for session browsing, real-time chat, model configuration, skill management, and project file preview.
 
-![上游 Pi Web 截图：展示 Pi 会话中的 Markdown、工具调用和项目导航；Pi Deck 当前暂使用该图片](https://raw.githubusercontent.com/agegr/pi-web/main/docs/screenshot2.png)
+![Sample-data product preview of Pi Deck: session sidebar, chat with tool cards, and the file workspace](https://raw.githubusercontent.com/henlii/pi-deck/main/docs/assets/pi-deck-preview.png)
 
-The image is an upstream Pi Web screenshot, retained temporarily as a representative view; Pi Deck keeps the same Pi session format and runtime semantics.
+*Sample-data product preview: session sidebar, chat with tool cards, and the file workspace. All contents are illustrative sample data, not a live session.*
 
 ## Roadmap
 
@@ -36,7 +38,7 @@ npm install -g @henlii/pi-deck
 pi-deck
 ```
 
-Then open [http://localhost:30141](http://localhost:30141). The CLI will try to open the browser automatically after the server is ready.
+Then open [http://localhost:31415](http://localhost:31415). The CLI will try to open the browser automatically after the server is ready.
 
 **Options:**
 
@@ -47,7 +49,8 @@ pi-deck -p 8080 -H 127.0.0.1     # combine options
 pi-deck --no-open                # do not open the browser automatically
 
 PORT=8080 pi-deck                # environment variable is also supported
-PI_WEB_NO_OPEN=1 pi-deck         # compatibility variable for background services
+PI_DECK_NO_OPEN=1 pi-deck        # do not open the browser (for background services)
+PI_WEB_NO_OPEN=1 pi-deck         # legacy compatibility variable, same effect
 ```
 
 ## HTTP Proxy
@@ -83,7 +86,7 @@ npx @henlii/pi-deck@latest
 
 ## Notes
 
-- **Data directory**: Pi Web reads `~/.pi/agent/sessions` by default. Set `PI_CODING_AGENT_DIR` to point at another pi agent directory.
+- **Data directory**: Pi Deck reads `~/.pi/agent/sessions` by default. Set `PI_CODING_AGENT_DIR` to point at another pi agent directory.
 - **Session files**: files are stored as `~/.pi/agent/sessions/<encoded-cwd>/<timestamp>_<uuid>.jsonl`.
 - **Model config**: the Models panel reads and writes `models.json` in the pi agent directory. Model lists and defaults come from pi's config.
 - **File access**: file browsing and preview are scoped to the selected project directory and working directories that appear in sessions.
@@ -97,11 +100,17 @@ npm install
 npm run dev
 ```
 
-The local dev server runs at [http://localhost:30141](http://localhost:30141).
+The local dev server runs at [http://localhost:31415](http://localhost:31415) (Pi Deck product default; `30141` is reserved for upstream pi-web).
 
 ### Deployment
 
-The continuous test deployment listens on `0.0.0.0:30142` and is publicly accessible at [https://deck.namixinxi.cn](https://deck.namixinxi.cn) through an Alibaba Cloud Nginx reverse proxy. The shell Cookie and Basic Auth are managed by p0017. The default CLI/production port remains `30141`.
+| Port | Role |
+|------|------|
+| **31415** | Product default (`npm run dev` / `npm start` / CLI `pi-deck`) |
+| **31416** | Continuous local test deploy (`local-deploy.mjs`, Next dev, not public) |
+| **30141** | Upstream pi-web / existing service — do not touch |
+
+Public access is [https://deck.namixinxi.cn](https://deck.namixinxi.cn) via Alibaba Cloud Nginx (backend port is deployment config, not the package default). Shell Cookie and Basic Auth are managed by p0017.
 
 Common checks:
 
@@ -173,6 +182,6 @@ hooks/
   useKeyboardShortcuts.ts # keyboard shortcut handling
   useTheme.ts         # theme switching
 bin/
-  pi-web.js           # npm CLI entrypoint
+  pi-deck.js          # npm CLI entrypoint (pi-deck only; pi-web is upstream)
 instrumentation.ts    # initializes the server HTTP dispatcher
 ```

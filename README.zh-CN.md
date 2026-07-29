@@ -2,9 +2,13 @@
 
 [English](./README.md)
 
+![Pi Deck 横幅](https://raw.githubusercontent.com/henlii/pi-deck/main/docs/assets/pi-deck-banner.png)
+
 Pi Deck 是基于 [Pi](https://github.com/badlogic/pi-mono) 的统一 Agent 工作空间上层客户端。它不脱离 Pi，而是读取本机 Pi 会话文件并遵循 Pi 的运行时语义，在浏览器里提供会话管理、实时对话、模型配置、技能管理和项目文件预览。
 
-截图暂使用上游 Pi Web 图片，仅作为代表性示例，不代表 Pi Deck 的最终界面。
+![Pi Deck 样例数据产品预览：会话侧边栏、带工具卡片的对话区和文件工作区](https://raw.githubusercontent.com/henlii/pi-deck/main/docs/assets/pi-deck-preview.png)
+
+*样例数据产品预览：会话侧边栏、包含工具卡片的对话区与文件工作区。图中内容均为示意样例数据，并非真实运行会话。*
 
 ## 路线图
 
@@ -34,7 +38,7 @@ npm install -g @henlii/pi-deck
 pi-deck
 ```
 
-启动后打开 [http://localhost:30141](http://localhost:30141)。命令行版本会在服务就绪后尝试自动打开浏览器。
+启动后打开 [http://localhost:31415](http://localhost:31415)。命令行版本会在服务就绪后尝试自动打开浏览器。
 
 **可选参数：**
 
@@ -45,7 +49,8 @@ pi-deck -p 8080 -H 127.0.0.1     # 组合使用
 pi-deck --no-open                # 不自动打开浏览器
 
 PORT=8080 pi-deck                # 也支持环境变量
-PI_WEB_NO_OPEN=1 pi-deck         # 兼容变量，适用于后台服务或开机自启
+PI_DECK_NO_OPEN=1 pi-deck        # 不自动打开浏览器（适用于后台服务或开机自启）
+PI_WEB_NO_OPEN=1 pi-deck         # 旧版兼容变量，作用相同
 ```
 
 ## HTTP 代理
@@ -95,7 +100,13 @@ npm install
 npm run dev
 ```
 
-本地开发端口为 [http://localhost:30141](http://localhost:30141)。
+本地开发端口为 [http://localhost:31415](http://localhost:31415)（Pi Deck 产品默认；`30141` 留给上游 pi-web）。
+
+| 端口 | 角色 |
+|------|------|
+| **31415** | 产品默认（`npm run dev` / `npm start` / CLI `pi-deck`） |
+| **31416** | 持续本地测试部署（`local-deploy.mjs`，Next dev，不对公网） |
+| **30141** | 上游 pi-web / 既有服务 — 禁止操作 |
 
 常用检查：
 
@@ -167,6 +178,6 @@ hooks/
   useKeyboardShortcuts.ts # 键盘快捷键处理
   useTheme.ts         # 主题切换
 bin/
-  pi-web.js           # npm CLI 入口
+  pi-deck.js          # npm CLI 入口（仅 pi-deck；pi-web 归上游）
 instrumentation.ts    # 初始化服务端 HTTP dispatcher
 ```

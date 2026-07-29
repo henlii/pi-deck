@@ -52,7 +52,7 @@ interface Props {
   onSessionDeleted?: (sessionId: string) => void;
 }
 
-const UNREAD_SESSIONS_STORAGE_KEY = "pi-web:unread-session-ids";
+const UNREAD_SESSIONS_STORAGE_KEY = "pi-deck:unread-session-ids";
 
 function loadUnreadSessionIds(): Set<string> {
   if (typeof window === "undefined") return new Set();

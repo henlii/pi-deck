@@ -286,7 +286,7 @@ export async function GET(
       }
     }
 
-    const tempDir = join(tmpdir(), "pi-web-export");
+    const tempDir = join(tmpdir(), "pi-deck-export");
     mkdirSync(tempDir, { recursive: true });
 
     const sessionBase = basename(filePath, ".jsonl");
