@@ -27,13 +27,13 @@ export async function GET() {
     return NextResponse.json(info);
   } catch {
     const fallback = buildAboutInfo({
-      name: "@henlii/pi-deck",
+      name: "@henlii/pidance",
       version: process.env.NEXT_PUBLIC_APP_VERSION || "0.0.0",
       dependencies: {
         "@earendil-works/pi-coding-agent": process.env.NEXT_PUBLIC_PI_VERSION || "0.81.1",
       },
-      homepage: "https://github.com/henlii/pi-deck#readme",
-      repository: { type: "git", url: "git+https://github.com/henlii/pi-deck.git" },
+      homepage: "https://github.com/henlii/pidance#readme",
+      repository: { type: "git", url: "git+https://github.com/henlii/pidance.git" },
     });
     const installed = readInstalledPiSdkVersion();
     if (installed) fallback.piSdkVersion = installed;

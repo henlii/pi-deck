@@ -1,14 +1,14 @@
 {
-  "name": "@henlii/pi-deck",
+  "name": "@henlii/pidance",
   "version": "0.1.0",
-  "description": "Pi Deck：基于 Pi 的统一 Agent 工作空间上层客户端",
-  "homepage": "https://github.com/henlii/pi-deck#readme",
+  "description": "Pidance：面向 Pi coding agent 的开源 Web 客户端",
+  "homepage": "https://github.com/henlii/pidance#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/henlii/pi-deck.git"
+    "url": "git+https://github.com/henlii/pidance.git"
   },
   "bugs": {
-    "url": "https://github.com/henlii/pi-deck/issues"
+    "url": "https://github.com/henlii/pidance/issues"
   },
   "license": "MIT",
   "engines": {
@@ -19,7 +19,7 @@
     "registry": "https://registry.npmjs.org/"
   },
   "bin": {
-    "pi-deck": "bin/pi-deck.js"
+    "pidance": "bin/pidance.js"
   },
   "files": [
     "bin",

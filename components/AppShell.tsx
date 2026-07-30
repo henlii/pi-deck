@@ -588,7 +588,7 @@ function AppShellInner() {
 
   const activeFileTab = fileTabs.find((t) => t.id === activeFileTabId) ?? null;
   const activeCwdName = activeCwd ? getFileName(activeCwd) || activeCwd : null;
-  const windowTitle = activeCwdName ? `${activeCwdName} - Pi Deck` : "Pi Deck";
+  const windowTitle = activeCwdName ? `${activeCwdName} - Pidance` : "Pidance";
 
   useEffect(() => {
     const syncWindowTitle = () => {

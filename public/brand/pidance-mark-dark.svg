@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Pidance 标记（深色版）：透明底，用于浅色背景 -->
+  <defs>
+    <linearGradient id="trail" gradientUnits="userSpaceOnUse" x1="352" y1="332" x2="404" y2="386">
+      <stop offset="0" stop-color="#3B66F5"/>
+      <stop offset="1" stop-color="#0DAE93"/>
+    </linearGradient>
+  </defs>
+  <g transform="rotate(-7 256 283)">
+    <g fill="#20245E">
+      <rect x="118" y="196" width="276" height="54" rx="27"/>
+      <rect x="176" y="226" width="54" height="170" rx="27"/>
+      <rect x="282" y="170" width="54" height="148" rx="27"/>
+    </g>
+    <path d="M352 332 A64 64 0 0 1 391 372" fill="none" stroke="url(#trail)" stroke-width="20" stroke-linecap="round"/>
+    <circle cx="403" cy="388" r="10.5" fill="#0DAE93"/>
+  </g>
+</svg>

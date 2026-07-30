@@ -1,12 +1,12 @@
-# Pi Deck
+# Pidance
 
 [English](./README.md)
 
-![Pi Deck 横幅](https://raw.githubusercontent.com/henlii/pi-deck/main/docs/assets/pi-deck-banner.png)
+![Pidance 横幅](https://raw.githubusercontent.com/henlii/pidance/main/docs/assets/pidance-banner.png)
 
-Pi Deck 是基于 [Pi](https://github.com/badlogic/pi-mono) 的统一 Agent 工作空间上层客户端。它不脱离 Pi，而是读取本机 Pi 会话文件并遵循 Pi 的运行时语义，在浏览器里提供会话管理、实时对话、模型配置、技能管理和项目文件预览。
+Pidance 是基于 [Pi](https://github.com/badlogic/pi-mono) 的统一 Agent 工作空间上层客户端。它不脱离 Pi，而是读取本机 Pi 会话文件并遵循 Pi 的运行时语义，在浏览器里提供会话管理、实时对话、模型配置、技能管理和项目文件预览。
 
-![Pi Deck 样例数据产品预览：会话侧边栏、带工具卡片的对话区和文件工作区](https://raw.githubusercontent.com/henlii/pi-deck/main/docs/assets/pi-deck-preview.png)
+![Pidance 样例数据产品预览：会话侧边栏、带工具卡片的对话区和文件工作区](https://raw.githubusercontent.com/henlii/pidance/main/docs/assets/pidance-preview.png)
 
 *样例数据产品预览：会话侧边栏、包含工具卡片的对话区与文件工作区。图中内容均为示意样例数据，并非真实运行会话。*
 
@@ -14,28 +14,28 @@ Pi Deck 是基于 [Pi](https://github.com/badlogic/pi-mono) 的统一 Agent 工�
 
 路线图、实施进度和验收标准统一记录在各阶段 tracking Issue 中：
 
-- [第一阶段：架构 seam 与 OpenChamber 风格产品改造](https://github.com/henlii/pi-deck/issues/1)
-- [第二阶段：补齐 Pi 生态高价值盲区（待办镜像、会话全文搜索、subagent 结果卡片、项目信任）](https://github.com/henlii/pi-deck/issues/2)
-- [第三阶段：Pi 扩展生态可观测性与 Agent 默认值设置](https://github.com/henlii/pi-deck/issues/3)
-- [第四阶段：辅助信息面与低频能力（统计、结果浏览、克隆、模板、版本）](https://github.com/henlii/pi-deck/issues/4)
+- [第一阶段：架构 seam 与 OpenChamber 风格产品改造](https://github.com/henlii/pidance/issues/1)
+- [第二阶段：补齐 Pi 生态高价值盲区（待办镜像、会话全文搜索、subagent 结果卡片、项目信任）](https://github.com/henlii/pidance/issues/2)
+- [第三阶段：Pi 扩展生态可观测性与 Agent 默认值设置](https://github.com/henlii/pidance/issues/3)
+- [第四阶段：辅助信息面与低频能力（统计、结果浏览、克隆、模板、版本）](https://github.com/henlii/pidance/issues/4)
 
 ## Upstream / 上游来源
 
-Pi Deck 源自 [agegr/pi-web](https://github.com/agegr/pi-web)，遵循 MIT License；底层运行时来自 [badlogic/pi-mono](https://github.com/badlogic/pi-mono)。项目保留 Pi 的会话文件格式与运行时语义，现有 Pi 数据仍是事实来源。上游版权和派生作品说明保留在 [LICENSE](./LICENSE) 中。
+Pidance 源自 [agegr/pi-web](https://github.com/agegr/pi-web)，遵循 MIT License；底层运行时来自 [badlogic/pi-mono](https://github.com/badlogic/pi-mono)。项目保留 Pi 的会话文件格式与运行时语义，现有 Pi 数据仍是事实来源。上游版权和派生作品说明保留在 [LICENSE](./LICENSE) 中。
 
 ## 快速开始
 
 **无需安装，直接运行：**
 
 ```bash
-npx @henlii/pi-deck@latest
+npx @henlii/pidance@latest
 ```
 
 **或全局安装后使用：**
 
 ```bash
-npm install -g @henlii/pi-deck
-pi-deck
+npm install -g @henlii/pidance
+pidance
 ```
 
 启动后打开 [http://localhost:31415](http://localhost:31415)。命令行版本会在服务就绪后尝试自动打开浏览器。
@@ -43,19 +43,20 @@ pi-deck
 **可选参数：**
 
 ```bash
-pi-deck --port 8080              # 自定义端口
-pi-deck --hostname 127.0.0.1     # 仅本机访问
-pi-deck -p 8080 -H 127.0.0.1     # 组合使用
-pi-deck --no-open                # 不自动打开浏览器
+pidance --port 8080              # 自定义端口
+pidance --hostname 127.0.0.1     # 仅本机访问
+pidance -p 8080 -H 127.0.0.1     # 组合使用
+pidance --no-open                # 不自动打开浏览器
 
-PORT=8080 pi-deck                # 也支持环境变量
-PI_DECK_NO_OPEN=1 pi-deck        # 不自动打开浏览器（适用于后台服务或开机自启）
-PI_WEB_NO_OPEN=1 pi-deck         # 旧版兼容变量，作用相同
+PORT=8080 pidance                # 也支持环境变量
+PIDANCE_NO_OPEN=1 pidance        # 不自动打开浏览器（适用于后台服务或开机自启）
+PI_DECK_NO_OPEN=1 pidance         # 旧产品变量，作用相同
+PI_WEB_NO_OPEN=1 pidance         # 旧版兼容变量，作用相同
 ```
 
 ## HTTP 代理
 
-Pi Deck 的服务端模型请求和 API 请求会读取标准的 `HTTP_PROXY`、`HTTPS_PROXY` 和 `NO_PROXY` 环境变量。
+Pidance 的服务端模型请求和 API 请求会读取标准的 `HTTP_PROXY`、`HTTPS_PROXY` 和 `NO_PROXY` 环境变量。
 
 macOS 或 Linux：
 
@@ -63,7 +64,7 @@ macOS 或 Linux：
 HTTP_PROXY=http://127.0.0.1:7890 \
 HTTPS_PROXY=http://127.0.0.1:7890 \
 NO_PROXY=localhost,127.0.0.1 \
-npx @henlii/pi-deck@latest
+npx @henlii/pidance@latest
 ```
 
 Windows PowerShell：
@@ -72,7 +73,7 @@ Windows PowerShell：
 $env:HTTP_PROXY = "http://127.0.0.1:7890"
 $env:HTTPS_PROXY = "http://127.0.0.1:7890"
 $env:NO_PROXY = "localhost,127.0.0.1"
-npx @henlii/pi-deck@latest
+npx @henlii/pidance@latest
 ```
 
 ## 功能介绍
@@ -90,7 +91,7 @@ npx @henlii/pi-deck@latest
 - **会话文件**：路径形如 `~/.pi/agent/sessions/<编码后的工作目录>/<时间戳>_<uuid>.jsonl`。
 - **模型配置**：Models 面板读写 pi agent 目录下的 `models.json`，模型列表和默认模型由 pi 的配置解析得到。
 - **文件访问**：文件浏览和预览面向当前选择的项目目录，以及会话中已出现过的工作目录。
-- **Git worktree**：什么时候显示切换器、新建目录在哪里、删除会影响什么，见 [Pi Deck 里的 Worktree](./docs/worktrees.zh-CN.md)。
+- **Git worktree**：什么时候显示切换器、新建目录在哪里、删除会影响什么，见 [Pidance 里的 Worktree](./docs/worktrees.zh-CN.md)。
 - **Fork 与会话内分支不同**：Fork 会创建新的 `.jsonl` 文件；“Edit from here” 是同一会话文件里的分支。
 
 ## 开发
@@ -100,11 +101,11 @@ npm install
 npm run dev
 ```
 
-本地开发端口为 [http://localhost:31415](http://localhost:31415)（Pi Deck 产品默认；`30141` 留给上游 pi-web）。
+本地开发端口为 [http://localhost:31415](http://localhost:31415)（Pidance 产品默认；`30141` 留给上游 pi-web）。
 
 | 端口 | 角色 |
 |------|------|
-| **31415** | 产品默认（`npm run dev` / `npm start` / CLI `pi-deck`） |
+| **31415** | 产品默认（`npm run dev` / `npm start` / CLI `pidance`） |
 | **31416** | 持续本地测试部署（`local-deploy.mjs`，Next dev，不对公网） |
 | **30141** | 上游 pi-web / 既有服务 — 禁止操作 |
 
@@ -178,6 +179,6 @@ hooks/
   useKeyboardShortcuts.ts # 键盘快捷键处理
   useTheme.ts         # 主题切换
 bin/
-  pi-deck.js          # npm CLI 入口（仅 pi-deck；pi-web 归上游）
+  pidance.js          # npm CLI 入口（仅 pidance；pi-web 归上游）
 instrumentation.ts    # 初始化服务端 HTTP dispatcher
 ```

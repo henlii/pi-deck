@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 640" font-family="DejaVu Sans, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif">
+  <!-- Pidance README 横幅：左图标 + 字标 + 一句话说明 -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#191C40"/>
+      <stop offset="1" stop-color="#10122A"/>
+    </linearGradient>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#20234E"/>
+      <stop offset="1" stop-color="#12142F"/>
+    </linearGradient>
+    <linearGradient id="trail" gradientUnits="userSpaceOnUse" x1="352" y1="332" x2="404" y2="386">
+      <stop offset="0" stop-color="#5B8CFF"/>
+      <stop offset="1" stop-color="#2FE6C8"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.85" cy="0.08" r="0.9">
+      <stop offset="0" stop-color="#5B8CFF" stop-opacity="0.13"/>
+      <stop offset="1" stop-color="#5B8CFF" stop-opacity="0"/>
+    </radialGradient>
+    <pattern id="dots" width="36" height="36" patternUnits="userSpaceOnUse">
+      <circle cx="1.4" cy="1.4" r="1.4" fill="#ffffff" fill-opacity="0.035"/>
+    </pattern>
+  </defs>
+  <rect width="1280" height="640" fill="url(#bg)"/>
+  <rect width="1280" height="640" fill="url(#dots)"/>
+  <rect width="1280" height="640" fill="url(#glow)"/>
+  <!-- 图标（210px，含深靛蓝圆角底） -->
+  <g transform="translate(150 215) scale(0.41015625)">
+    <rect width="512" height="512" rx="116" fill="url(#tile)"/>
+    <rect x="0.75" y="0.75" width="510.5" height="510.5" rx="115.25" fill="none" stroke="#ffffff" stroke-opacity="0.08" stroke-width="3"/>
+    <g transform="rotate(-7 256 283)">
+      <g fill="#F2F5FF">
+        <rect x="118" y="196" width="276" height="54" rx="27"/>
+        <rect x="176" y="226" width="54" height="170" rx="27"/>
+        <rect x="282" y="170" width="54" height="148" rx="27"/>
+      </g>
+      <path d="M352 332 A64 64 0 0 1 391 372" fill="none" stroke="url(#trail)" stroke-width="20" stroke-linecap="round"/>
+      <circle cx="403" cy="388" r="10.5" fill="#2FE6C8"/>
+    </g>
+  </g>
+  <!-- 字标与说明 -->
+  <text x="428" y="322" font-size="88" font-weight="bold" fill="#F4F6FF" letter-spacing="1">Pidance</text>
+  <text x="430" y="387" font-size="30" fill="#9AA3C4">An open-source client for Pi coding agent</text>
+  <rect x="0.75" y="0.75" width="1278.5" height="638.5" fill="none" stroke="#ffffff" stroke-opacity="0.05" stroke-width="1.5"/>
+</svg>

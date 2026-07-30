@@ -15,8 +15,8 @@ import type { ProjectTrustDecisionList, ProjectTrustStatus } from "@/lib/project
 import {
   SETTINGS_PAGE_STORAGE_KEY,
   getSettingsPages,
+  loadStoredSettingsPage,
   nextMobileSettingsView,
-  parseStoredSettingsPage,
   type MobileSettingsView,
   type SettingsPageId,
 } from "./settings-nav";
@@ -55,11 +55,19 @@ function settingsPageLabelKey(id: SettingsPageId) {
 }
 
 function readInitialPage(): SettingsPageId {
-  if (typeof window === "undefined") return parseStoredSettingsPage(null);
+  if (typeof window === "undefined") return loadStoredSettingsPage({
+    getItem: () => null,
+    setItem: () => {},
+    removeItem: () => {},
+  });
   try {
-    return parseStoredSettingsPage(window.localStorage.getItem(SETTINGS_PAGE_STORAGE_KEY));
+    return loadStoredSettingsPage(window.localStorage);
   } catch {
-    return parseStoredSettingsPage(null);
+    return loadStoredSettingsPage({
+      getItem: () => null,
+      setItem: () => {},
+      removeItem: () => {},
+    });
   }
 }
 

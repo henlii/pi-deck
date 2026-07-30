@@ -109,7 +109,7 @@ function getFocusableElements(root: HTMLElement): HTMLElement[] {
  * 视口安全的通用对话框壳：桌面居中、移动端保留安全边距，
  * 标题/操作区固定可达，只有正文内部滚动。
  *
- * 无进场动画（与 Pi Deck 现有弹窗一致），天然尊重 prefers-reduced-motion；
+ * 无进场动画（与 Pidance 现有弹窗一致），天然尊重 prefers-reduced-motion；
  * 颜色全部来自 globals.css 语义变量，亮暗主题自动适配。
  */
 export function ViewportDialog({
