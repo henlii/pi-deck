@@ -23,11 +23,45 @@ const PAGE_ORDER: SettingsPageId[] = ["appearance", "models", "memory", "agents"
 /** 无 cwd 提示：保留导航项，内容区显示具体指引，不静默隐藏。 */
 const PAGE_NO_CWD_HINT: Partial<Record<SettingsPageId, "skills" | "plugins">> = { skills: "skills", plugins: "plugins" };
 
-export const SETTINGS_PAGE_STORAGE_KEY = "pi-deck:settings:page:v1";
+export const SETTINGS_PAGE_STORAGE_KEY = "pidance:settings:page:v1";
+export const LEGACY_SETTINGS_PAGE_STORAGE_KEY = "pi-deck:settings:page:v1";
 export const DEFAULT_SETTINGS_PAGE: SettingsPageId = "appearance";
+
+/** 可注入 storage，便于迁移单测。 */
+export type StorageLike = {
+  getItem(key: string): string | null;
+  setItem(key: string, value: string): void;
+  removeItem(key: string): void;
+};
 
 export function isSettingsPageId(value: unknown): value is SettingsPageId {
   return typeof value === "string" && (PAGE_ORDER as string[]).includes(value);
+}
+
+/**
+ * 读取最近 Settings 页：新键存在则只读新键；否则一次性迁移旧键。
+ * 仅在新键写入成功后删除旧键；写入失败保留旧键。
+ * parseStoredSettingsPage 对损坏输入安全回退默认页，迁移写入的是规范值。
+ */
+export function loadStoredSettingsPage(storage: StorageLike): SettingsPageId {
+  try {
+    const raw = storage.getItem(SETTINGS_PAGE_STORAGE_KEY);
+    if (raw !== null) return parseStoredSettingsPage(raw);
+
+    const legacy = storage.getItem(LEGACY_SETTINGS_PAGE_STORAGE_KEY);
+    if (legacy === null) return DEFAULT_SETTINGS_PAGE;
+
+    const page = parseStoredSettingsPage(legacy);
+    try {
+      storage.setItem(SETTINGS_PAGE_STORAGE_KEY, JSON.stringify(page));
+      storage.removeItem(LEGACY_SETTINGS_PAGE_STORAGE_KEY);
+    } catch {
+      // 写新键失败：不删旧键
+    }
+    return page;
+  } catch {
+    return DEFAULT_SETTINGS_PAGE;
+  }
 }
 
 /** 页面清单：appearance/models/memory/trust 无 cwd 可用；skills/plugins 无 cwd 时给出提示。 */

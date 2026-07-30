@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "@henlii/pi-deck",
+      "name": "@henlii/pidance",
       "dependencies": {
         "@earendil-works/pi-agent-core": "0.81.1",
         "@earendil-works/pi-ai": "0.81.1",

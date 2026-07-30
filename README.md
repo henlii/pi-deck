@@ -1,12 +1,12 @@
-# Pi Deck
+# Pidance
 
 [中文文档](./README.zh-CN.md)
 
-![Pi Deck banner](https://raw.githubusercontent.com/henlii/pi-deck/main/docs/assets/pi-deck-banner.png)
+![Pidance banner](https://raw.githubusercontent.com/henlii/pidance/main/docs/assets/pidance-banner.png)
 
-Pi Deck is a unified Agent workspace built on top of [Pi](https://github.com/badlogic/pi-mono). It does not replace Pi: it reads your local Pi session files and uses Pi's runtime semantics to provide a browser workspace for session browsing, real-time chat, model configuration, skill management, and project file preview.
+Pidance is a unified Agent workspace built on top of [Pi](https://github.com/badlogic/pi-mono). It does not replace Pi: it reads your local Pi session files and uses Pi's runtime semantics to provide a browser workspace for session browsing, real-time chat, model configuration, skill management, and project file preview.
 
-![Sample-data product preview of Pi Deck: session sidebar, chat with tool cards, and the file workspace](https://raw.githubusercontent.com/henlii/pi-deck/main/docs/assets/pi-deck-preview.png)
+![Sample-data product preview of Pidance: session sidebar, chat with tool cards, and the file workspace](https://raw.githubusercontent.com/henlii/pidance/main/docs/assets/pidance-preview.png)
 
 *Sample-data product preview: session sidebar, chat with tool cards, and the file workspace. All contents are illustrative sample data, not a live session.*
 
@@ -14,28 +14,28 @@ Pi Deck is a unified Agent workspace built on top of [Pi](https://github.com/bad
 
 The roadmap, implementation progress, and acceptance criteria are tracked in phase tracking issues:
 
-- [Phase 1: architecture seams and OpenChamber-style product redesign](https://github.com/henlii/pi-deck/issues/1)
-- [Phase 2: high-value Pi ecosystem blind spots (todo mirror, full-text session search, subagent result cards, project trust)](https://github.com/henlii/pi-deck/issues/2)
-- [Phase 3: Pi extension ecosystem observability and agent default settings](https://github.com/henlii/pi-deck/issues/3)
-- [Phase 4: auxiliary info surfaces and low-frequency capabilities](https://github.com/henlii/pi-deck/issues/4)
+- [Phase 1: architecture seams and OpenChamber-style product redesign](https://github.com/henlii/pidance/issues/1)
+- [Phase 2: high-value Pi ecosystem blind spots (todo mirror, full-text session search, subagent result cards, project trust)](https://github.com/henlii/pidance/issues/2)
+- [Phase 3: Pi extension ecosystem observability and agent default settings](https://github.com/henlii/pidance/issues/3)
+- [Phase 4: auxiliary info surfaces and low-frequency capabilities](https://github.com/henlii/pidance/issues/4)
 
 ## Upstream / 上游来源
 
-Pi Deck is derived from [agegr/pi-web](https://github.com/agegr/pi-web), which is distributed under the MIT License. It is built around [badlogic/pi-mono](https://github.com/badlogic/pi-mono). The project preserves Pi session files and runtime semantics so existing Pi data remains the source of truth. Copyright and derivative-work notices for the upstream project are retained in [LICENSE](./LICENSE).
+Pidance is derived from [agegr/pi-web](https://github.com/agegr/pi-web), which is distributed under the MIT License. It is built around [badlogic/pi-mono](https://github.com/badlogic/pi-mono). The project preserves Pi session files and runtime semantics so existing Pi data remains the source of truth. Copyright and derivative-work notices for the upstream project are retained in [LICENSE](./LICENSE).
 
 ## Quick Start
 
 **Run without installing:**
 
 ```bash
-npx @henlii/pi-deck@latest
+npx @henlii/pidance@latest
 ```
 
 **Or install globally:**
 
 ```bash
-npm install -g @henlii/pi-deck
-pi-deck
+npm install -g @henlii/pidance
+pidance
 ```
 
 Then open [http://localhost:31415](http://localhost:31415). The CLI will try to open the browser automatically after the server is ready.
@@ -43,19 +43,20 @@ Then open [http://localhost:31415](http://localhost:31415). The CLI will try to 
 **Options:**
 
 ```bash
-pi-deck --port 8080              # custom port
-pi-deck --hostname 127.0.0.1     # local access only
-pi-deck -p 8080 -H 127.0.0.1     # combine options
-pi-deck --no-open                # do not open the browser automatically
+pidance --port 8080              # custom port
+pidance --hostname 127.0.0.1     # local access only
+pidance -p 8080 -H 127.0.0.1     # combine options
+pidance --no-open                # do not open the browser automatically
 
-PORT=8080 pi-deck                # environment variable is also supported
-PI_DECK_NO_OPEN=1 pi-deck        # do not open the browser (for background services)
-PI_WEB_NO_OPEN=1 pi-deck         # legacy compatibility variable, same effect
+PORT=8080 pidance                # environment variable is also supported
+PIDANCE_NO_OPEN=1 pidance        # do not open the browser (for background services)
+PI_DECK_NO_OPEN=1 pidance         # legacy product variable, same effect
+PI_WEB_NO_OPEN=1 pidance         # legacy compatibility variable, same effect
 ```
 
 ## HTTP Proxy
 
-Pi Deck reads the standard `HTTP_PROXY`, `HTTPS_PROXY`, and `NO_PROXY` environment variables for server-side model and API requests.
+Pidance reads the standard `HTTP_PROXY`, `HTTPS_PROXY`, and `NO_PROXY` environment variables for server-side model and API requests.
 
 On macOS or Linux:
 
@@ -63,7 +64,7 @@ On macOS or Linux:
 HTTP_PROXY=http://127.0.0.1:7890 \
 HTTPS_PROXY=http://127.0.0.1:7890 \
 NO_PROXY=localhost,127.0.0.1 \
-npx @henlii/pi-deck@latest
+npx @henlii/pidance@latest
 ```
 
 On Windows PowerShell:
@@ -72,7 +73,7 @@ On Windows PowerShell:
 $env:HTTP_PROXY = "http://127.0.0.1:7890"
 $env:HTTPS_PROXY = "http://127.0.0.1:7890"
 $env:NO_PROXY = "localhost,127.0.0.1"
-npx @henlii/pi-deck@latest
+npx @henlii/pidance@latest
 ```
 
 ## Features
@@ -86,11 +87,11 @@ npx @henlii/pi-deck@latest
 
 ## Notes
 
-- **Data directory**: Pi Deck reads `~/.pi/agent/sessions` by default. Set `PI_CODING_AGENT_DIR` to point at another pi agent directory.
+- **Data directory**: Pidance reads `~/.pi/agent/sessions` by default. Set `PI_CODING_AGENT_DIR` to point at another pi agent directory.
 - **Session files**: files are stored as `~/.pi/agent/sessions/<encoded-cwd>/<timestamp>_<uuid>.jsonl`.
 - **Model config**: the Models panel reads and writes `models.json` in the pi agent directory. Model lists and defaults come from pi's config.
 - **File access**: file browsing and preview are scoped to the selected project directory and working directories that appear in sessions.
-- **Git worktrees**: see [Worktrees in Pi Deck](./docs/worktrees.md) for when the switcher appears, how new worktrees are created, and what removal does.
+- **Git worktrees**: see [Worktrees in Pidance](./docs/worktrees.md) for when the switcher appears, how new worktrees are created, and what removal does.
 - **Forks vs in-session branches**: Fork creates a new `.jsonl` file. "Edit from here" creates another branch inside the same session file.
 
 ## Development
@@ -100,13 +101,13 @@ npm install
 npm run dev
 ```
 
-The local dev server runs at [http://localhost:31415](http://localhost:31415) (Pi Deck product default; `30141` is reserved for upstream pi-web).
+The local dev server runs at [http://localhost:31415](http://localhost:31415) (Pidance product default; `30141` is reserved for upstream pi-web).
 
 ### Deployment
 
 | Port | Role |
 |------|------|
-| **31415** | Product default (`npm run dev` / `npm start` / CLI `pi-deck`) |
+| **31415** | Product default (`npm run dev` / `npm start` / CLI `pidance`) |
 | **31416** | Continuous local test deploy (`local-deploy.mjs`, Next dev, not public) |
 | **30141** | Upstream pi-web / existing service — do not touch |
 
@@ -182,6 +183,6 @@ hooks/
   useKeyboardShortcuts.ts # keyboard shortcut handling
   useTheme.ts         # theme switching
 bin/
-  pi-deck.js          # npm CLI entrypoint (pi-deck only; pi-web is upstream)
+  pidance.js          # npm CLI entrypoint (pidance only; pi-web is upstream)
 instrumentation.ts    # initializes the server HTTP dispatcher
 ```

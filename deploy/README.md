@@ -1,14 +1,14 @@
-# Pi Deck 正式安装部署治理
+# Pidance 正式安装部署治理
 
-本目录仅描述 **Pi Deck（`@henlii/pi-deck`，CLI 仅 `pi-deck`）正式安装版** 在项目内的部署约定与 systemd 单元模板。
+本目录仅描述 **Pidance（`@henlii/pidance`，CLI 仅 `pidance`）正式安装版** 在项目内的部署约定与 systemd 单元模板。
 **不**覆盖上游 pi-web、工作区持续测试版，也**不**自动执行安装 / 启停 / 反代切换 / npm publish。
 
 ## 硬边界
 
 | 对象 | 端口 / 标识 | 本流程是否可操作 |
 |------|-------------|------------------|
-| Pi Deck **正式安装版** | `0.0.0.0:31415` | 是（本目录唯一目标） |
-| Pi Deck **工作区持续测试** | `31416` | **否**（独立目录 / `.next` / PID / 日志） |
+| Pidance **正式安装版** | `0.0.0.0:31415` | 是（本目录唯一目标） |
+| Pidance **工作区持续测试** | `31416` | **否**（独立目录 / `.next` / PID / 日志） |
 | 上游 **pi-web** | `30141`、命令 `pi-web` | **永不操作** |
 | 待退役旧反代后端 | `30143` | **不作为当前端口**，勿写入新配置 |
 
@@ -16,24 +16,24 @@
 - 反代（如 Nginx）**只能**在正式服务健康后指向 **31415**，不得指向 31416 / 30141 / 30143。
 - 服务以 **root** 运行（Pi 数据在 `/root/.pi/agent`）：`HOME=/root`，`PI_CODING_AGENT_DIR=/root/.pi/agent`。
 - Node 使用本机稳定入口（例如 `/root/.local/bin/node`），**不要**把 NVM 版本化路径写进 unit。
-- CLI：`pi-deck --hostname 0.0.0.0 --port 31415 --no-open`。
+- CLI：`pidance --hostname 0.0.0.0 --port 31415 --no-open`。
 - **禁止**在本目录或 unit 中写入 API 密钥、口令、私钥等敏感值。
 
 ## 目录布局
 
-建议固定根：`/opt/pi-deck/`。
+建议固定根：`/opt/pidance/`。
 
 ```
-/opt/pi-deck/
+/opt/pidance/
   artifacts/                          # 独立制品区：只放已验收 tgz + 同名 .sha256
-    pi-deck-<version-or-sha>.tgz
-    pi-deck-<version-or-sha>.tgz.sha256
+    pidance-<version-or-sha>.tgz
+    pidance-<version-or-sha>.tgz.sha256
   releases/
     <version-or-sha>/                 # 每次发布一个空目录，再 npm 安装进该目录
       package.json                    # npm init 生成
       node_modules/
-        .bin/pi-deck                  # 稳定 CLI 入口（systemd ExecStart 用此路径）
-        @henlii/pi-deck/              # 包本体（含 bin/、.next/、public/ 等）
+        .bin/pidance                  # 稳定 CLI 入口（systemd ExecStart 用此路径）
+        @henlii/pidance/              # 包本体（含 bin/、.next/、public/ 等）
         ...                           # production dependencies
   current -> releases/<version-or-sha>   # 原子切换用符号链接
 ```
@@ -41,7 +41,7 @@
 说明：
 
 1. **tgz 与 SHA256 只放在 `artifacts/`**，不要混进 `releases/<ver>/`，便于审计与回滚对照。
-2. **`current` 是运行时唯一指针**；回滚 = 改 symlink 后 `systemctl restart pi-deck`。
+2. **`current` 是运行时唯一指针**；回滚 = 改 symlink 后 `systemctl restart pidance`。
 3. 正式版、测试版、上游 pi-web 的目录 / 进程 / 构建产物 / PID / 日志**绝对不可混用**。
 
 ## 正式安装（同一 tgz + SHA 校验）
@@ -53,8 +53,8 @@
 将已通过 allowlist 审计、且与 GitHub Release / npm 发布物一致的 tgz 与 SHA256 文件放入：
 
 ```text
-/opt/pi-deck/artifacts/pi-deck-<version-or-sha>.tgz
-/opt/pi-deck/artifacts/pi-deck-<version-or-sha>.tgz.sha256
+/opt/pidance/artifacts/pidance-<version-or-sha>.tgz
+/opt/pidance/artifacts/pidance-<version-or-sha>.tgz.sha256
 ```
 
 ### 2. 校验 SHA256
@@ -62,14 +62,14 @@
 在 `artifacts/` 下校验，**失败则停止**，不得安装：
 
 ```bash
-cd /opt/pi-deck/artifacts
-sha256sum -c "pi-deck-<version-or-sha>.tgz.sha256"
+cd /opt/pidance/artifacts
+sha256sum -c "pidance-<version-or-sha>.tgz.sha256"
 ```
 
 或显式对比：
 
 ```bash
-sha256sum "pi-deck-<version-or-sha>.tgz"
+sha256sum "pidance-<version-or-sha>.tgz"
 # 与 .sha256 文件中的哈希逐字一致
 ```
 
@@ -78,15 +78,15 @@ sha256sum "pi-deck-<version-or-sha>.tgz"
 **目标**：tgz 包自身与 production dependencies 均落入该 release 目录，且存在：
 
 ```text
-/opt/pi-deck/releases/<version-or-sha>/node_modules/.bin/pi-deck
+/opt/pidance/releases/<version-or-sha>/node_modules/.bin/pidance
 ```
 
 推荐步骤（`TGZ` 与上文 `artifacts/` 布局一致）：
 
 ```bash
 VER="<version-or-sha>"
-TGZ="/opt/pi-deck/artifacts/pi-deck-${VER}.tgz"
-REL="/opt/pi-deck/releases/${VER}"
+TGZ="/opt/pidance/artifacts/pidance-${VER}.tgz"
+REL="/opt/pidance/releases/${VER}"
 
 test -f "${TGZ}" || { echo "缺少制品: ${TGZ}" >&2; exit 1; }
 
@@ -104,38 +104,38 @@ npm install --omit=dev --ignore-scripts "${TGZ}"
 
 | 路径 | 含义 |
 |------|------|
-| `node_modules/@henlii/pi-deck/` | 包根（含 `bin/`、`.next/` 等运行时文件） |
-| `node_modules/.bin/pi-deck` | **稳定 CLI 入口**（systemd 应指向此绝对路径） |
+| `node_modules/@henlii/pidance/` | 包根（含 `bin/`、`.next/` 等运行时文件） |
+| `node_modules/.bin/pidance` | **稳定 CLI 入口**（systemd 应指向此绝对路径） |
 | `node_modules/next/` 等 | production dependencies |
 
-**不要**假定全局 `npm root -g` 或全局 `pi-deck`。正式服务**只**使用 `current` 下安装树中的 CLI。
+**不要**假定全局 `npm root -g` 或全局 `pidance`。正式服务**只**使用 `current` 下安装树中的 CLI。
 
-CLI 实现基于 `__dirname` 定位包内 `.next`，并在包根作为 `next start` 的 cwd；因此 **systemd `WorkingDirectory` 设为 `/opt/pi-deck/current` 即可**，不必设为 `@henlii/pi-deck` 包根。
+CLI 实现基于 `__dirname` 定位包内 `.next`，并在包根作为 `next start` 的 cwd；因此 **systemd `WorkingDirectory` 设为 `/opt/pidance/current` 即可**，不必设为 `@henlii/pidance` 包根。
 
 ### 4. 切换 current
 
 ```bash
-ln -sfn "/opt/pi-deck/releases/${VER}" /opt/pi-deck/current
+ln -sfn "/opt/pidance/releases/${VER}" /opt/pidance/current
 # 确认
-readlink -f /opt/pi-deck/current
-test -x /opt/pi-deck/current/node_modules/.bin/pi-deck
+readlink -f /opt/pidance/current
+test -x /opt/pidance/current/node_modules/.bin/pidance
 ```
 
 ### 5. 安装 systemd 单元
 
-将仓库内 `deploy/pi-deck.service` 复制到：
+将仓库内 `deploy/pidance.service` 复制到：
 
 ```text
-/etc/systemd/system/pi-deck.service
+/etc/systemd/system/pidance.service
 ```
 
 按本机 Node 稳定路径检查 unit 中 `PATH` / 可执行文件是否可达，然后：
 
 ```bash
 systemctl daemon-reload
-systemctl enable pi-deck.service
-systemctl start pi-deck.service
-systemctl status pi-deck.service --no-pager
+systemctl enable pidance.service
+systemctl start pidance.service
+systemctl status pidance.service --no-pager
 ```
 
 **本说明文档不代替你执行上述命令。**
@@ -159,7 +159,7 @@ lsof -iTCP:30141 -sTCP:LISTEN || true
 
 ```bash
 ss -lptn 'sport = :31416' || true
-# 正式 unit 的 ExecStart 仅绑定 31415，且可执行文件名为 pi-deck
+# 正式 unit 的 ExecStart 仅绑定 31415，且可执行文件名为 pidance
 ```
 
 ## 关键 HTTP 验收（正式版 31415）
@@ -168,7 +168,7 @@ ss -lptn 'sport = :31416' || true
 
 ```bash
 # 进程与监听
-systemctl is-active pi-deck.service
+systemctl is-active pidance.service
 ss -lptn 'sport = :31415'
 
 # A2 路由冒烟：/、/api/home、/api/about、/api/sessions、/api/models 均须 200
@@ -182,16 +182,16 @@ for path in / /api/home /api/about /api/sessions /api/models; do
   echo "OK ${path} -> 200"
 done
 
-# CLI 身份：可执行 pi-deck，且无上游产品 bin
-test -x /opt/pi-deck/current/node_modules/.bin/pi-deck
-! test -e /opt/pi-deck/current/node_modules/.bin/pi-web
+# CLI 身份：可执行 pidance，且无上游产品 bin
+test -x /opt/pidance/current/node_modules/.bin/pidance
+! test -e /opt/pidance/current/node_modules/.bin/pi-web
 ```
 
 ## 重启验收
 
 ```bash
-systemctl restart pi-deck.service
-systemctl is-active pi-deck.service
+systemctl restart pidance.service
+systemctl is-active pidance.service
 
 # 与关键 HTTP 验收相同的 A2 路由循环（均须 200）
 BASE="http://127.0.0.1:31415"
@@ -209,9 +209,9 @@ done
 
 ## 回滚
 
-1. 确认旧 release 目录仍完整：`/opt/pi-deck/releases/<old-ver>/node_modules/.bin/pi-deck`。
-2. `ln -sfn /opt/pi-deck/releases/<old-ver> /opt/pi-deck/current`
-3. `systemctl restart pi-deck.service`
+1. 确认旧 release 目录仍完整：`/opt/pidance/releases/<old-ver>/node_modules/.bin/pidance`。
+2. `ln -sfn /opt/pidance/releases/<old-ver> /opt/pidance/current`
+3. `systemctl restart pidance.service`
 4. 重复「关键 HTTP 验收」与「30141 未变化」记录。
 5. **不要**用工作区 `npm run dev` 或 31416 进程顶替正式版。
 
@@ -224,7 +224,7 @@ done
 ## 日志
 
 - 单元使用 journal（`StandardOutput=journal` / `StandardError=journal`）。
-- 查看：`journalctl -u pi-deck.service -e --no-pager`
+- 查看：`journalctl -u pidance.service -e --no-pager`
 - **不要**把正式版日志写到工作区测试目录或上游产品日志路径。
 
 ## 清理约束
@@ -237,7 +237,7 @@ done
 
 ## 单元文件
 
-见同目录 [`pi-deck.service`](./pi-deck.service)。复制到 `/etc/systemd/system/pi-deck.service` 后由 systemd 管理；**本目录不包含自动 enable/start 脚本**。
+见同目录 [`pidance.service`](./pidance.service)。复制到 `/etc/systemd/system/pidance.service` 后由 systemd 管理；**本目录不包含自动 enable/start 脚本**。
 
 ## 与发布门禁的关系（提醒）
 

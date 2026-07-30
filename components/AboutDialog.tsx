@@ -40,11 +40,11 @@ export function AboutDialog({ open, onClose }: AboutDialogProps) {
   const { t } = useI18n();
   // 立即用 env 占位，避免打开弹窗时版本空白；API 成功后再补仓库链接等字段。
   const [info, setInfo] = useState<AboutViewState>(() => ({
-    name: "Pi Deck",
+    name: "Pidance",
     version: envVersion("NEXT_PUBLIC_APP_VERSION"),
     piSdkVersion: envVersion("NEXT_PUBLIC_PI_VERSION"),
-    homepage: "https://github.com/henlii/pi-deck#readme",
-    repository: "https://github.com/henlii/pi-deck",
+    homepage: "https://github.com/henlii/pidance#readme",
+    repository: "https://github.com/henlii/pidance",
   }));
 
   useEffect(() => {
@@ -57,7 +57,7 @@ export function AboutDialog({ open, onClose }: AboutDialogProps) {
         const data = (await res.json()) as AboutInfo;
         if (cancelled) return;
         setInfo((prev) => ({
-          name: data.name || prev.name || "Pi Deck",
+          name: data.name || prev.name || "Pidance",
           // API 优先，env 回退
           version: data.version || prev.version || envVersion("NEXT_PUBLIC_APP_VERSION"),
           piSdkVersion: data.piSdkVersion || prev.piSdkVersion || envVersion("NEXT_PUBLIC_PI_VERSION"),
@@ -73,7 +73,7 @@ export function AboutDialog({ open, onClose }: AboutDialogProps) {
     };
   }, [open]);
 
-  const githubUrl = info.repository ?? info.homepage ?? "https://github.com/henlii/pi-deck";
+  const githubUrl = info.repository ?? info.homepage ?? "https://github.com/henlii/pidance";
   const deckVersion = pickVersion(info.version, envVersion("NEXT_PUBLIC_APP_VERSION"));
   const piVersion = pickVersion(info.piSdkVersion, envVersion("NEXT_PUBLIC_PI_VERSION"));
 
@@ -112,7 +112,7 @@ export function AboutDialog({ open, onClose }: AboutDialogProps) {
 
         <div style={{ display: "flex", flexDirection: "column", gap: 6, width: "100%" }}>
           <div style={{ fontSize: 17, fontWeight: 650, color: "var(--text)", letterSpacing: "-0.01em" }}>
-            Pi Deck
+            Pidance
           </div>
           {/* 版本行固定两行：Deck + Pi，不因加载态隐藏 */}
           <div

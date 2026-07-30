@@ -32,6 +32,7 @@ import { useProjectActions, useProjectIdentity } from "./ProjectProvider";
 import { ViewportDialog } from "./ui/ViewportDialog";
 import { ProjectTrustBadge, ProjectTrustDialog, useProjectTrust, type ProjectTrustEntry } from "./ProjectTrust";
 import { useI18n } from "@/lib/i18n";
+import { loadUnreadSessionIds, saveUnreadSessionIds } from "@/lib/unread-sessions-storage";
 
 declare global {
   interface Window {
@@ -50,31 +51,6 @@ interface Props {
   onInitialRestoreDone?: () => void;
   refreshKey?: number;
   onSessionDeleted?: (sessionId: string) => void;
-}
-
-const UNREAD_SESSIONS_STORAGE_KEY = "pi-deck:unread-session-ids";
-
-function loadUnreadSessionIds(): Set<string> {
-  if (typeof window === "undefined") return new Set();
-  try {
-    const raw = window.localStorage.getItem(UNREAD_SESSIONS_STORAGE_KEY);
-    if (!raw) return new Set();
-    const parsed = JSON.parse(raw) as unknown;
-    if (Array.isArray(parsed)) return new Set(parsed.filter((id): id is string => typeof id === "string"));
-    return new Set();
-  } catch {
-    return new Set();
-  }
-}
-
-function saveUnreadSessionIds(ids: Set<string>): void {
-  if (typeof window === "undefined") return;
-  try {
-    if (ids.size === 0) window.localStorage.removeItem(UNREAD_SESSIONS_STORAGE_KEY);
-    else window.localStorage.setItem(UNREAD_SESSIONS_STORAGE_KEY, JSON.stringify([...ids]));
-  } catch {
-    // ignore storage quota / privacy-mode errors
-  }
 }
 
 function formatRelativeTime(dateStr: string, t: ReturnType<typeof useI18n>["t"]): string {
@@ -206,7 +182,7 @@ function PiWebTitle() {
   const [scrambling, setScrambling] = useState(false);
   const revertTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const target = showVersion ? `${process.env.NEXT_PUBLIC_APP_VERSION ?? "0.0.0"}p${process.env.NEXT_PUBLIC_PI_VERSION ?? "0.0.0"}` : "Pi Deck";
+  const target = showVersion ? `${process.env.NEXT_PUBLIC_APP_VERSION ?? "0.0.0"}p${process.env.NEXT_PUBLIC_PI_VERSION ?? "0.0.0"}` : "Pidance";
   const display = useScramble(target, scrambling);
 
   const triggerScramble = useCallback((toVersion: boolean) => {
@@ -1694,7 +1670,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
         </form>
       </ViewportDialog>
 
-      {/* 编辑项目弹窗：仅修改 Pi Deck 显示名 alias，不动 Pi schema/目录/Git */}
+      {/* 编辑项目弹窗：仅修改 Pidance 显示名 alias，不动 Pi schema/目录/Git */}
       <ViewportDialog
         open={editProjectRoot !== null}
         onClose={() => setEditProjectRoot(null)}

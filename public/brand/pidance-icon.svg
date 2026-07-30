@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Pidance 品牌主图标：深靛蓝圆角底 + 起舞的 π 标记 -->
+  <!-- 设计：π 整体 -7° 倾斜，右侧核心竖笔上提（顶端探出横梁、足底离地），
+       左足点地，足下青绿渐变轨迹弧线 + 节拍圆点，形成单足舞步的节奏感 -->
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#20234E"/>
+      <stop offset="1" stop-color="#12142F"/>
+    </linearGradient>
+    <linearGradient id="trail" gradientUnits="userSpaceOnUse" x1="352" y1="332" x2="404" y2="386">
+      <stop offset="0" stop-color="#5B8CFF"/>
+      <stop offset="1" stop-color="#2FE6C8"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.74" cy="0.2" r="0.75">
+      <stop offset="0" stop-color="#5B8CFF" stop-opacity="0.16"/>
+      <stop offset="1" stop-color="#5B8CFF" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="512" height="512" rx="116" fill="url(#tile)"/>
+  <rect width="512" height="512" rx="116" fill="url(#glow)"/>
+  <rect x="0.75" y="0.75" width="510.5" height="510.5" rx="115.25" fill="none" stroke="#ffffff" stroke-opacity="0.07" stroke-width="1.5"/>
+  <!-- 起舞的 π：横梁与双腿，右腿（核心竖笔）整体上提 -->
+  <g transform="rotate(-7 256 283)">
+    <g fill="#F2F5FF">
+      <rect x="118" y="196" width="276" height="54" rx="27"/>
+      <rect x="176" y="226" width="54" height="170" rx="27"/>
+      <rect x="282" y="170" width="54" height="148" rx="27"/>
+    </g>
+    <path d="M352 332 A64 64 0 0 1 391 372" fill="none" stroke="url(#trail)" stroke-width="20" stroke-linecap="round"/>
+    <circle cx="403" cy="388" r="10.5" fill="#2FE6C8"/>
+  </g>
+</svg>

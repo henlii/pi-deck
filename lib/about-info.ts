@@ -11,7 +11,7 @@ export interface AboutInfo {
 }
 
 const PI_SDK_DEP = "@earendil-works/pi-coding-agent";
-const DEFAULT_NAME = "Pi Deck";
+const DEFAULT_NAME = "Pidance";
 
 /** 将 package.json 的 repository 字段规范为 https 浏览 URL。 */
 export function normalizeRepositoryUrl(repository: unknown): string | null {
@@ -35,19 +35,21 @@ function cleanGitUrl(raw: string): string | null {
   return url || null;
 }
 
+function isProductPackageName(name: string): boolean {
+  return name === "@henlii/pidance" || name === "@henlii/pi-deck";
+}
+
 /**
  * 从已解析的 package.json 对象构造 About 载荷。
  * 字段缺失时使用安全默认值，不抛错。
  */
 export function buildAboutInfo(pkg: unknown): AboutInfo {
   const record = pkg && typeof pkg === "object" ? (pkg as Record<string, unknown>) : {};
-  const name = typeof record.name === "string" && record.name.trim()
-    ? (record.name.includes("pi-deck") ? DEFAULT_NAME : record.name.trim())
+  const rawName = typeof record.name === "string" && record.name.trim()
+    ? record.name.trim()
     : DEFAULT_NAME;
-  // 包名 @henlii/pi-deck 对外展示统一为 Pi Deck
-  const displayName = record.name === "@henlii/pi-deck" || name.includes("pi-deck")
-    ? DEFAULT_NAME
-    : name;
+  // 包名 @henlii/pidance（及历史 @henlii/pi-deck）对外展示统一为 Pidance
+  const displayName = isProductPackageName(rawName) ? DEFAULT_NAME : rawName;
 
   const version = typeof record.version === "string" && record.version.trim()
     ? record.version.trim()
