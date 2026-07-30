@@ -1,9 +1,16 @@
 "use client";
 
 import { memo, useState, useRef, useEffect, useMemo } from "react";
-import { Check, ChevronDown, ChevronUp, Copy } from "lucide-react";
+import { AlertTriangle, Check, CheckCircle2, ChevronDown, ChevronUp, Copy, Terminal, XCircle } from "lucide-react";
 import { MarkdownBody } from "./MarkdownBody";
 import { copyText } from "@/lib/clipboard";
+import {
+  ACTIVITY_KINDS,
+  PIDANCE_ACTIVITY_CUSTOM_TYPE,
+  PIDANCE_ACTIVITY_VERSION,
+  type ActivityKind,
+  type SessionActivity,
+} from "@/lib/session-activity";
 import { getBranchSummaryFileMetadata } from "@/lib/branch-bookmarks";
 import { parseCompactionSummary } from "@/lib/compaction-summary";
 import { isEmptyThinkingBlock } from "@/lib/message-display";
@@ -120,6 +127,13 @@ export const MessageView = memo(function MessageView({ message, isStreaming, too
     }
     if ((message as CustomMessage).customType === "branch_summary") {
       return <BranchSummaryMessageView message={message as CustomMessage} />;
+    }
+    if ((message as CustomMessage).customType === PIDANCE_ACTIVITY_CUSTOM_TYPE) {
+      const activity = toRenderableActivity((message as CustomMessage).details);
+      if (activity) {
+        return <PidanceActivityView message={message as CustomMessage} activity={activity} />;
+      }
+      // 非法 details：安全回退通用 custom view（转义文本，不注入、不崩溃）。
     }
     return <CustomMessageView message={message as CustomMessage} cwd={cwd} onOpenFile={onOpenFile} />;
   }
@@ -1390,6 +1404,167 @@ function FileContextList({ title, files }: { title: string; files: string[] }) {
           <li key={file}>{file}</li>
         ))}
       </ul>
+    </div>
+  );
+}
+
+/**
+ * pidance.activity 渲染门禁：服务端 session-reader 投影时已由 parseActivityData
+ * 严格校验；此处做浏览器安全的结构复验（parseActivityData 依赖 Node Buffer，
+ * 不能进客户端 bundle）。只检查渲染所需不变量，不复制写入侧 schema/有界逻辑；
+ * 不合法返回 null，由调用方回退通用 custom view。
+ */
+function toRenderableActivity(details: unknown): SessionActivity | null {
+  if (!isRecord(details)) return null;
+  if (details.version !== PIDANCE_ACTIVITY_VERSION) return null;
+  if (typeof details.kind !== "string" || !(ACTIVITY_KINDS as readonly string[]).includes(details.kind)) return null;
+  if (typeof details.title !== "string" || details.title.trim() === "") return null;
+  if (typeof details.content !== "string") return null;
+  if (details.source !== undefined && typeof details.source !== "string") return null;
+  if (details.requestId !== undefined && typeof details.requestId !== "string") return null;
+  if (details.metadata !== undefined && !isRecord(details.metadata)) return null;
+  return details as unknown as SessionActivity;
+}
+
+const ACTIVITY_KIND_STYLES: Record<ActivityKind, { color: string; border: string; background: string; Icon: typeof CheckCircle2 }> = {
+  result: { color: "#16a34a", border: "rgba(34,197,94,0.35)", background: "rgba(34,197,94,0.04)", Icon: CheckCircle2 },
+  warning: { color: "#d97706", border: "rgba(217,119,6,0.4)", background: "rgba(217,119,6,0.05)", Icon: AlertTriangle },
+  error: { color: "#f87171", border: "rgba(248,113,113,0.45)", background: "rgba(248,113,113,0.05)", Icon: XCircle },
+  output: { color: "var(--accent)", border: "var(--border)", background: "var(--bg)", Icon: Terminal },
+};
+
+/** metadata 只取前几个原始类型键值做一行预览，绝不整对象倾倒。 */
+function activityMetadataPreview(metadata: SessionActivity["metadata"]): [string, string][] {
+  if (!metadata) return [];
+  const entries: [string, string][] = [];
+  for (const [key, value] of Object.entries(metadata)) {
+    if (entries.length >= 4) break;
+    if (typeof value === "string") entries.push([key, value]);
+    else if (typeof value === "number" || typeof value === "boolean") entries.push([key, String(value)]);
+  }
+  return entries;
+}
+
+/**
+ * pidance.activity 持久卡片：title + 纯文本 content（pre-wrap，不注入 HTML），
+ * 长 content 内部滚动。kind 用「图标 + 可见枚举 token + 色彩」三重区分，
+ * 图标 aria-hidden，不作为唯一区分手段；不新增 locale key。
+ */
+function PidanceActivityView({ message, activity }: { message: CustomMessage; activity: SessionActivity }) {
+  const { t } = useI18n();
+  const [copied, setCopied] = useState(false);
+  const time = formatTime(message.timestamp);
+  const { color, border, background, Icon } = ACTIVITY_KIND_STYLES[activity.kind];
+  const hasContent = activity.content.trim() !== "";
+  const metadataEntries = activityMetadataPreview(activity.metadata);
+
+  const copyContent = () => {
+    copyText(hasContent ? activity.content : activity.title).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  };
+
+  return (
+    <div style={{ marginBottom: 16 }}>
+      <section
+        aria-label={`${activity.kind}: ${activity.title}`}
+        style={{
+          border: `1px solid ${border}`,
+          borderLeft: `2px solid ${color}`,
+          borderRadius: 8,
+          overflow: "hidden",
+          background,
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            padding: "7px 10px",
+            borderBottom: "1px solid var(--border)",
+            background: "var(--bg-panel)",
+            minWidth: 0,
+          }}
+        >
+          <span style={{ display: "flex", color, flexShrink: 0 }} aria-hidden="true">
+            <Icon size={12} strokeWidth={1.8} />
+          </span>
+          <span
+            style={{
+              color,
+              fontFamily: "var(--font-mono)",
+              fontSize: 10,
+              fontWeight: 650,
+              letterSpacing: 0.6,
+              textTransform: "uppercase",
+              flexShrink: 0,
+            }}
+          >
+            {activity.kind}
+          </span>
+          <span style={{ color: "var(--text)", fontSize: 13, fontWeight: 600, minWidth: 0, overflowWrap: "anywhere" }}>
+            {activity.title}
+          </span>
+          {time && <span style={{ marginLeft: "auto", color: "var(--text-dim)", fontSize: 10, flexShrink: 0 }}>{time}</span>}
+        </div>
+
+        {hasContent && (
+          <pre
+            tabIndex={0}
+            style={{
+              margin: 0,
+              padding: "8px 12px",
+              maxHeight: 320,
+              overflow: "auto",
+              color: "var(--text)",
+              fontSize: 12,
+              lineHeight: 1.6,
+              whiteSpace: "pre-wrap",
+              wordBreak: "break-word",
+            }}
+          >
+            {activity.content}
+          </pre>
+        )}
+
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            flexWrap: "wrap",
+            gap: "4px 10px",
+            padding: "4px 9px",
+            borderTop: "1px solid var(--border)",
+            background: "var(--bg-subtle)",
+            color: "var(--text-dim)",
+            fontFamily: "var(--font-mono)",
+            fontSize: 10,
+          }}
+        >
+          <button
+            onClick={copyContent}
+            title={t("message_copy")}
+            aria-label={t("message_copy")}
+            style={{
+              display: "flex", alignItems: "center", justifyContent: "center",
+              padding: "3px 7px",
+              border: "none",
+              background: "none",
+              color: copied ? "var(--accent)" : "var(--text-dim)",
+              cursor: "pointer",
+            }}
+          >
+            {copied ? <Check size={11} strokeWidth={1.8} /> : <Copy size={11} strokeWidth={1.8} />}
+          </button>
+          {activity.source && <span style={{ overflowWrap: "anywhere" }}>{activity.source}</span>}
+          {activity.requestId && <span style={{ overflowWrap: "anywhere" }} title={activity.requestId}>{activity.requestId}</span>}
+          {metadataEntries.map(([key, value]) => (
+            <span key={key} style={{ overflowWrap: "anywhere" }}>{key}={value}</span>
+          ))}
+        </div>
+      </section>
     </div>
   );
 }

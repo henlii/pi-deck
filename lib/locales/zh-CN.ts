@@ -23,6 +23,7 @@ export const zhCN: Record<TranslationKey, string> = {
   about_footerNote: '面向 Pi coding agent 的开源 Web 客户端',
   app_showSidebar: '显示侧栏',
   app_hideSidebar: '隐藏侧栏',
+  app_sidebarResizeHandle: '调整侧栏宽度',
   app_lightMode: '切换到浅色模式',
   app_darkMode: '切换到深色模式',
   app_titleGenerating: '正在生成标题…',
@@ -77,6 +78,8 @@ export const zhCN: Record<TranslationKey, string> = {
   sidebar_compact: '紧凑',
   sidebar_collapseAll: '全部折叠',
   sidebar_expandAll: '全部展开',
+  sidebar_showMore: '显示更多',
+  sidebar_showFewer: '收起',
   sidebar_refresh: '刷新',
   sidebar_searchPlaceholder: '搜索会话…',
   sidebar_searchPlaceholderFulltext: '搜索消息正文…',
@@ -306,6 +309,9 @@ export const zhCN: Record<TranslationKey, string> = {
   extension_cancel: '取消',
   extension_confirm: '确认',
   extension_submit: '提交',
+  extension_other: '其他',
+  extension_selectAnOption: '请选择一项',
+  extension_otherPlaceholder: '输入自定义内容',
   // 本轮核心工作区补充翻译
   // app
   app_generateTitle: "生成标题",

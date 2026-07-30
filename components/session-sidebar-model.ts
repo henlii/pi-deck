@@ -55,6 +55,8 @@ export interface BuildSidebarTreeOptions {
   selectedProjectRoot?: string | null;
   /** 当前项目的完整 worktree 列表，用于补齐无会话的空分组。 */
   knownWorktrees?: KnownWorktree[];
+  /** 全部已知项目的 worktree 快照；用于补齐未选中项目的空 worktree 分组。 */
+  knownWorktreesByProject?: Readonly<Record<string, readonly KnownWorktree[]>>;
 }
 
 interface SessionBucket {
@@ -80,7 +82,12 @@ export function buildSidebarTree(
   sessions: SessionInfo[],
   options: BuildSidebarTreeOptions = {},
 ): SidebarProjectNode[] {
-  const { selectedCwd = null, selectedProjectRoot = null, knownWorktrees = [] } = options;
+  const {
+    selectedCwd = null,
+    selectedProjectRoot = null,
+    knownWorktrees = [],
+    knownWorktreesByProject = {},
+  } = options;
 
   // 第一遍：按项目根 → （主仓 | worktree 路径）两级分桶。
   const projectBuckets = new Map<string, { main: SessionInfo[]; worktrees: Map<string, SessionBucket> }>();
@@ -105,16 +112,19 @@ export function buildSidebarTree(
     }
   }
 
-  // 当前项目已加载的 worktree 列表：补齐无会话的非主 worktree 空分组，
-  // 让「创建/切换到空 worktree」后该分组立即在树中可见、可点击。
+  // 已加载的 worktree 列表：补齐无会话的非主 worktree 空分组，
+  // 让未选中项目以及「创建/切换到空 worktree」后仍可见、可点击。
   const selectedRoot = selectedProjectRoot ?? selectedCwd;
-  if (selectedRoot) {
-    let bucket = projectBuckets.get(selectedRoot);
+  const worktreesByProject: Readonly<Record<string, readonly KnownWorktree[]>> = selectedRoot
+    ? { ...knownWorktreesByProject, [selectedRoot]: knownWorktreesByProject[selectedRoot] ?? knownWorktrees }
+    : knownWorktreesByProject;
+  for (const [projectRoot, projectWorktrees] of Object.entries(worktreesByProject)) {
+    let bucket = projectBuckets.get(projectRoot);
     if (!bucket) {
       bucket = { main: [], worktrees: new Map() };
-      projectBuckets.set(selectedRoot, bucket);
+      projectBuckets.set(projectRoot, bucket);
     }
-    for (const worktree of knownWorktrees) {
+    for (const worktree of projectWorktrees) {
       if (worktree.isMain) continue; // 主 worktree 隐式，永不产生分组行
       if (!bucket.worktrees.has(worktree.path)) {
         bucket.worktrees.set(worktree.path, { sessions: [], branch: worktree.branch });

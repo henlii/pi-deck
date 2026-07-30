@@ -27,6 +27,21 @@ import {
   type SidebarDisplayMode,
   type SidebarPreferences,
 } from "@/lib/ui-preferences";
+import {
+  GROUP_VISIBLE_PAGE_SIZE,
+  bumpGroupVisibleCount,
+  canShowFewerTopLevel,
+  canShowMoreTopLevel,
+  getGroupVisibleCount,
+  getVisibleTopLevelNodes,
+  buildWorktreePreloadGeneration,
+  mergeOptimisticSessions,
+  reconcilePendingSessionIds,
+  resetGroupVisibleCount,
+  shouldApplySessionListResponse,
+  upsertProjectWorktreeSnapshot,
+  type ProjectWorktreeSnapshots,
+} from "./session-sidebar-state";
 import { getSessionCapabilities } from "./session-capabilities";
 import { useProjectActions, useProjectIdentity } from "./ProjectProvider";
 import { ViewportDialog } from "./ui/ViewportDialog";
@@ -45,12 +60,17 @@ declare global {
 interface Props {
   selectedSessionId: string | null;
   onSelectSession: (session: SessionInfo, isRestore?: boolean) => void;
-  onNewSession?: () => void;
+  onNewSession?: (cwd?: string) => void;
   initialSessionId?: string | null;
   skipInitialProjectSelection?: boolean;
   onInitialRestoreDone?: () => void;
   refreshKey?: number;
   onSessionDeleted?: (sessionId: string) => void;
+  /**
+   * 真实 id 已返回、列表尚未回流的乐观会话列表（多 id）。
+   * 内部按 id upsert 进 pending map，与 server 列表 merge。
+   */
+  optimisticSessions?: readonly SessionInfo[];
 }
 
 function formatRelativeTime(dateStr: string, t: ReturnType<typeof useI18n>["t"]): string {
@@ -450,12 +470,16 @@ function ChevronButton({ collapsed, label, onClick }: {
 
 // ── 主组件 ─────────────────────────────────────────────────────────────────
 
-export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSession, initialSessionId, skipInitialProjectSelection, onInitialRestoreDone, refreshKey, onSessionDeleted }: Props) {
+export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSession, initialSessionId, skipInitialProjectSelection, onInitialRestoreDone, refreshKey, onSessionDeleted, optimisticSessions }: Props) {
   const { t } = useI18n();
-  const [allSessions, setAllSessions] = useState<SessionInfo[]>([]);
+  const [serverSessions, setServerSessions] = useState<SessionInfo[]>([]);
+  const [pendingById, setPendingById] = useState<Map<string, SessionInfo>>(() => new Map());
+  const [pendingIds, setPendingIds] = useState<Set<string>>(() => new Set());
+  const [deletedIds, setDeletedIds] = useState<Set<string>>(() => new Set());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const { cwd: selectedCwd } = useProjectIdentity();
+  const sessionListFetchGenRef = useRef(0);
+  const { cwd: selectedCwd, projectRoot: selectedProjectRoot } = useProjectIdentity();
   const { setIdentity } = useProjectActions();
   const [homeDir, setHomeDir] = useState<string>("");
   // 添加项目弹窗（ViewportDialog；原生目录选择仅在弹窗内填充输入，不直接提交）
@@ -472,14 +496,20 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   const [editProjectRoot, setEditProjectRoot] = useState<string | null>(null);
   const [editProjectValue, setEditProjectValue] = useState("");
   const editProjectInputRef = useRef<HTMLInputElement>(null);
-  // Worktree 管理状态（仅作用于当前选中项目）
-  const [worktreeState, setWorktreeState] = useState<WorktreeState | null>(null);
+  // 每个项目独立的 worktree 快照：缓存优先，后台限流预加载。
+  const [worktreeSnapshots, setWorktreeSnapshots] = useState<ProjectWorktreeSnapshots>({});
+  const worktreeSnapshotsRef = useRef<ProjectWorktreeSnapshots>({});
+  const [worktreeMetadata, setWorktreeMetadata] = useState<Readonly<Record<string, Pick<WorktreeState, "isGit" | "isTopLevel">>>>({});
+  const worktreeRequestsRef = useRef(new Set<string>());
+  const worktreeRequestTokenRef = useRef(new Map<string, string>());
+  const mountedRef = useRef(true);
   const [wtNewForProject, setWtNewForProject] = useState<string | null>(null);
   const [wtNewBranch, setWtNewBranch] = useState("");
   const [wtError, setWtError] = useState<string | null>(null);
+  // worktree 错误归属的项目根：避免同一条错误在每个项目行重复显示。
+  const [wtErrorRoot, setWtErrorRoot] = useState<string | null>(null);
   const [wtBusy, setWtBusy] = useState(false);
   const [wtConfirmRemove, setWtConfirmRemove] = useState<string | null>(null);
-  const [worktreeLoadingCwd, setWorktreeLoadingCwd] = useState<string | null>(null);
   const wtNewInputRef = useRef<HTMLInputElement>(null);
   const [sessionRefreshDone, setSessionRefreshDone] = useState(false);
   const [runningSessionIds, setRunningSessionIds] = useState<Set<string>>(() => new Set());
@@ -506,6 +536,8 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   const displayMenuRef = useRef<HTMLDivElement>(null);
   // 跨刷新偏好：显示模式 + 项目/worktree 折叠集合（独立 seam）
   const [prefs, setPrefs] = useState<SidebarPreferences>(() => loadSidebarPreferences());
+  // 每个主仓/非主 worktree group 的展开条数均为瞬时态，不写偏好。
+  const [groupVisibleCounts, setGroupVisibleCounts] = useState<Record<string, number>>({});
   // 会话级 child 折叠：保持瞬时（沿用原行为）
   const [collapsedSessionIds, setCollapsedSessionIds] = useState<Set<string>>(() => new Set());
   // 用户已手动展开/折叠过的会话 id：默认 subagent 收起不得覆盖这些显式选择
@@ -522,7 +554,11 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   const updatePrefs = useCallback((updater: (prev: SidebarPreferences) => SidebarPreferences) => {
     setPrefs((prev) => {
       const next = updater(prev);
-      if (next !== prev) saveSidebarPreferences(next);
+      if (next !== prev) {
+        // sidebarWidth 的唯一 owner 是 AppShell；保存其它偏好时保留存储中的
+        // 当前宽度，避免侧栏内存里的过期副本回写覆盖最近一次拖拽结果。
+        saveSidebarPreferences({ ...next, sidebarWidth: loadSidebarPreferences().sidebarWidth });
+      }
       return next;
     });
   }, []);
@@ -537,35 +573,69 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     setDesktopPickerAvailable(typeof window !== "undefined" && Boolean(window.piDesktop?.selectDirectory));
   }, []);
 
+  const pendingIdsRef = useRef(pendingIds);
+  pendingIdsRef.current = pendingIds;
+
   const loadSessions = useCallback(async (showLoading = false) => {
+    const gen = ++sessionListFetchGenRef.current;
     try {
       if (showLoading) setLoading(true);
       const res = await fetch("/api/sessions");
+      // 仅最新代际可写 serverSessions / loading / error / refresh done / unread 清理。
+      // 卸载后不得 setState。
+      if (!mountedRef.current || !shouldApplySessionListResponse(gen, sessionListFetchGenRef.current)) return;
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json() as { sessions: SessionInfo[]; runningSessionIds?: string[] };
-      setAllSessions(data.sessions);
+      if (!mountedRef.current || !shouldApplySessionListResponse(gen, sessionListFetchGenRef.current)) return;
+      setServerSessions(data.sessions);
+      setPendingIds((prev) => reconcilePendingSessionIds(prev, data.sessions));
+      setPendingById((prev) => {
+        if (prev.size === 0) return prev;
+        const next = new Map(prev);
+        let changed = false;
+        for (const s of data.sessions) {
+          if (next.has(s.id)) {
+            next.delete(s.id);
+            changed = true;
+          }
+        }
+        return changed ? next : prev;
+      });
       // Treat the fetched running set as an initial fallback only. Once SSE is
       // live it owns this state, so a slow fetch can't revive a stale snapshot.
       if (!sseAuthoritativeRef.current) {
         setRunningSessionIds(new Set(data.runningSessionIds ?? []));
       }
       // Drop unread markers for sessions that no longer exist (e.g. deleted).
+      // pending 仍在的 id 不得因 stale server 列表被清掉。
       const existingIds = new Set(data.sessions.map((s) => s.id));
+      const pendingSnapshot = pendingIdsRef.current;
       setUnreadSessionIds((prev) => {
         if (prev.size === 0) return prev;
-        const next = new Set([...prev].filter((id) => existingIds.has(id)));
+        const next = new Set(
+          [...prev].filter((id) => existingIds.has(id) || pendingSnapshot.has(id)),
+        );
         return next.size === prev.size ? prev : next;
       });
       setError(null);
       if (!showLoading) {
         setSessionRefreshDone(true);
         if (sessionRefreshTimerRef.current) clearTimeout(sessionRefreshTimerRef.current);
-        sessionRefreshTimerRef.current = setTimeout(() => setSessionRefreshDone(false), 2000);
+        sessionRefreshTimerRef.current = setTimeout(() => {
+          if (mountedRef.current) setSessionRefreshDone(false);
+        }, 2000);
       }
     } catch (e) {
+      if (!mountedRef.current || !shouldApplySessionListResponse(gen, sessionListFetchGenRef.current)) return;
       setError(String(e));
     } finally {
-      if (showLoading) setLoading(false);
+      if (
+        mountedRef.current
+        && shouldApplySessionListResponse(gen, sessionListFetchGenRef.current)
+        && showLoading
+      ) {
+        setLoading(false);
+      }
     }
   }, []);
 
@@ -575,6 +645,52 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     initialLoadDone.current = true;
     loadSessions(isFirst);
   }, [loadSessions, refreshKey]);
+
+  // 真实 id 乐观 upsert（多条）：立即进入 pending map，不等全量列表。
+  // 父层以 id map/list 传入；单槽覆盖会丢尚未回流的其它真实 session。
+  useEffect(() => {
+    if (!optimisticSessions || optimisticSessions.length === 0) return;
+    const batch = optimisticSessions.filter((s) => s?.id);
+    if (batch.length === 0) return;
+    setDeletedIds((prev) => {
+      let next: Set<string> | null = null;
+      for (const s of batch) {
+        if (!prev.has(s.id)) continue;
+        if (!next) next = new Set(prev);
+        next.delete(s.id);
+      }
+      return next ?? prev;
+    });
+    setPendingIds((prev) => {
+      let next: Set<string> | null = null;
+      for (const s of batch) {
+        if (prev.has(s.id)) continue;
+        if (!next) next = new Set(prev);
+        next.add(s.id);
+      }
+      return next ?? prev;
+    });
+    setPendingById((prev) => {
+      let next: Map<string, SessionInfo> | null = null;
+      for (const s of batch) {
+        const existing = prev.get(s.id);
+        if (existing === s) continue;
+        if (!next) next = new Map(prev);
+        next.set(s.id, s);
+      }
+      return next ?? prev;
+    });
+  }, [optimisticSessions]);
+
+  const allSessions = useMemo(
+    () => mergeOptimisticSessions({
+      serverSessions,
+      pendingSessions: [...pendingById.values()],
+      pendingIds,
+      deletedIds,
+    }),
+    [serverSessions, pendingById, pendingIds, deletedIds],
+  );
 
   // Persist unread markers so they survive a browser refresh before the user
   // has actually opened the completed session.
@@ -638,63 +754,123 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
 
   const restoredRef = useRef(false);
 
+  const commitWorktreeSnapshots = useCallback((updater: (prev: ProjectWorktreeSnapshots) => ProjectWorktreeSnapshots) => {
+    setWorktreeSnapshots((prev) => {
+      const next = updater(prev);
+      worktreeSnapshotsRef.current = next;
+      return next;
+    });
+  }, []);
+
+  useEffect(() => () => {
+    mountedRef.current = false;
+    worktreeRequestTokenRef.current.clear();
+  }, []);
+
   /** 从最新本地数据乐观解析项目根；服务端响应仍是权威来源。 */
   const projectRootFor = useCallback((cwd: string | null): string | null => {
     if (!cwd) return null;
-    if (worktreeState && worktreeState.forCwd === cwd) return worktreeState.projectRoot;
-    // Any path in the loaded worktree list belongs to that project — covers
-    // worktrees without sessions, so switching to them keeps the row mounted.
-    if (worktreeState?.worktrees.some((w) => w.path === cwd)) return worktreeState.projectRoot;
+    if (selectedCwd === cwd && selectedProjectRoot) return selectedProjectRoot;
+    for (const [root, snapshot] of Object.entries(worktreeSnapshotsRef.current)) {
+      if (snapshot.worktrees.some((worktree) => worktree.path === cwd)) return root;
+    }
     const match = allSessions.find((s) => s.cwd === cwd);
     return match?.projectRoot ?? cwd;
-  }, [worktreeState, allSessions]);
+  }, [selectedCwd, selectedProjectRoot, allSessions]);
   const selectCwd = useCallback((cwd: string | null, explicitRoot?: string | null) => {
     const root = cwd === null ? null : explicitRoot ?? projectRootFor(cwd) ?? cwd;
     setIdentity({ cwd, projectRoot: root, status: cwd ? "ready" : "idle", error: null });
   }, [projectRootFor, setIdentity]);
+  const selectedProject = selectedProjectRoot ?? projectRootFor(selectedCwd);
 
-  // Load worktrees for the current effective cwd
+  // 每个项目 root 独立拉取；请求中去重，结果只写自身 key，旧请求不能覆盖别的项目。
   const [wtRefreshKey, setWtRefreshKey] = useState(0);
-  useLayoutEffect(() => {
-    if (!selectedCwd) {
-      setWorktreeState(null);
-      setWorktreeLoadingCwd(null);
-      return;
-    }
-    let cancelled = false;
-    setWorktreeLoadingCwd(selectedCwd);
-    fetch(`/api/worktrees?cwd=${encodeURIComponent(selectedCwd)}`)
-      .then((r) => r.json())
-      .then((d: { projectRoot?: string; isGit?: boolean; isTopLevel?: boolean; worktrees?: WorktreeEntry[]; error?: string }) => {
-        if (cancelled) return;
-        setWorktreeLoadingCwd(null);
-        if (d.error || !d.projectRoot) {
-          setWorktreeState(null);
-          return;
+  const fetchProjectWorktrees = useCallback(async (projectRoot: string) => {
+    if (worktreeRequestsRef.current.has(projectRoot)) return;
+    const token = `${Date.now()}:${Math.random()}`;
+    worktreeRequestsRef.current.add(projectRoot);
+    worktreeRequestTokenRef.current.set(projectRoot, token);
+    commitWorktreeSnapshots((prev) => upsertProjectWorktreeSnapshot(prev, projectRoot, { status: "loading" }));
+    try {
+      const response = await fetch(`/api/worktrees?cwd=${encodeURIComponent(projectRoot)}`);
+      const data = await response.json().catch(() => ({})) as {
+        projectRoot?: string;
+        isGit?: boolean;
+        isTopLevel?: boolean;
+        worktrees?: WorktreeEntry[];
+        error?: string;
+      };
+      if (!response.ok || data.error || !data.projectRoot) throw new Error(data.error ?? `HTTP ${response.status}`);
+      if (!mountedRef.current || worktreeRequestTokenRef.current.get(projectRoot) !== token) return;
+      const canonicalRoot = data.projectRoot;
+      const worktrees = data.worktrees ?? [];
+      commitWorktreeSnapshots((prev) => {
+        let next = upsertProjectWorktreeSnapshot(prev, projectRoot, { status: "ready", worktrees });
+        if (canonicalRoot !== projectRoot) {
+          next = upsertProjectWorktreeSnapshot(next, canonicalRoot, { status: "ready", worktrees });
         }
-        setWorktreeState({
-          forCwd: selectedCwd,
-          projectRoot: d.projectRoot,
-          isGit: d.isGit ?? false,
-          isTopLevel: d.isTopLevel ?? false,
-          worktrees: d.worktrees ?? [],
-        });
-        setIdentity({ cwd: selectedCwd, projectRoot: d.projectRoot, branch: d.worktrees?.find((worktree) => worktree.path === selectedCwd)?.branch ?? null, isGit: d.isGit ?? false, isTopLevel: d.isTopLevel ?? false, status: "ready", error: null });
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setWorktreeLoadingCwd(null);
-          setWorktreeState(null);
-        }
+        return next;
       });
+      setWorktreeMetadata((prev) => {
+        const metadata = { isGit: data.isGit ?? false, isTopLevel: data.isTopLevel ?? false };
+        return { ...prev, [projectRoot]: metadata, [canonicalRoot]: metadata };
+      });
+      if (selectedCwd && (selectedProjectRoot === projectRoot || selectedCwd === projectRoot)) {
+        setIdentity({
+          cwd: selectedCwd,
+          projectRoot: canonicalRoot,
+          branch: worktrees.find((worktree) => worktree.path === selectedCwd)?.branch ?? null,
+          isGit: data.isGit ?? false,
+          isTopLevel: data.isTopLevel ?? false,
+          status: "ready",
+          error: null,
+        });
+      }
+    } catch (error) {
+      if (!mountedRef.current || worktreeRequestTokenRef.current.get(projectRoot) !== token) return;
+      commitWorktreeSnapshots((prev) => upsertProjectWorktreeSnapshot(prev, projectRoot, {
+        status: "error",
+        error: error instanceof Error ? error.message : String(error),
+      }));
+    } finally {
+      if (worktreeRequestTokenRef.current.get(projectRoot) === token) {
+        worktreeRequestTokenRef.current.delete(projectRoot);
+        worktreeRequestsRef.current.delete(projectRoot);
+      }
+    }
+  }, [commitWorktreeSnapshots, selectedCwd, selectedProjectRoot, setIdentity]);
+
+  const knownProjectRoots = useMemo(() => {
+    const roots = getRecentProjects(allSessions);
+    if (selectedProjectRoot && !roots.includes(selectedProjectRoot)) roots.unshift(selectedProjectRoot);
+    else if (selectedCwd && !roots.includes(selectedCwd)) roots.unshift(selectedCwd);
+    return roots;
+  }, [allSessions, selectedCwd, selectedProjectRoot]);
+  // worktree 预加载只跟 wtRefreshKey + known roots；session list refresh 不得重抓 worktree。
+  // generation 不含 refreshKey（见 buildWorktreePreloadGeneration）。
+  const worktreePreloadGenerationRef = useRef(new Map<string, string>());
+  useEffect(() => {
+    const generation = buildWorktreePreloadGeneration(wtRefreshKey);
+    const queue = knownProjectRoots.filter((root) => worktreePreloadGenerationRef.current.get(root) !== generation);
+    for (const root of queue) worktreePreloadGenerationRef.current.set(root, generation);
+    let cancelled = false;
+    const workers = Array.from({ length: Math.min(3, queue.length) }, async () => {
+      while (!cancelled) {
+        const root = queue.shift();
+        if (!root) return;
+        await fetchProjectWorktrees(root);
+      }
+    });
+    void Promise.all(workers);
     return () => { cancelled = true; };
-  }, [selectedCwd, wtRefreshKey, refreshKey, setIdentity]);
+  }, [knownProjectRoots, wtRefreshKey, fetchProjectWorktrees]);
 
   // 切换项目时收起未完成的 worktree 操作行，避免状态串到别的项目。
   useEffect(() => {
     setWtNewForProject(null);
     setWtNewBranch("");
     setWtError(null);
+    setWtErrorRoot(null);
     setWtConfirmRemove(null);
   }, [selectedCwd]);
 
@@ -808,19 +984,24 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   }, [customPathValidating, projectRootFor, restoreClosedProject, selectCwd, closeCustomPathPanel]);
 
   const handleCreateWorktree = useCallback(async () => {
+    // 目标项目以「打开输入行的项目」为准，而非当前选中项目：
+    // 未选中项目的 worktree 管理入口同样可用。
+    const projectRoot = wtNewForProject;
     const branch = wtNewBranch.trim();
-    if (!branch || wtBusy || !worktreeState) return;
+    if (!branch || wtBusy || !projectRoot) return;
     setWtBusy(true);
     setWtError(null);
+    setWtErrorRoot(null);
     try {
       const res = await fetch("/api/worktrees", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ cwd: worktreeState.projectRoot, branch }),
+        body: JSON.stringify({ cwd: projectRoot, branch }),
       });
       const data = await res.json().catch(() => ({})) as { path?: string; error?: string };
       if (!res.ok || data.error || !data.path) {
         setWtError(data.error ?? `HTTP ${res.status}`);
+        setWtErrorRoot(projectRoot);
         return;
       }
       setWtNewForProject(null);
@@ -828,29 +1009,31 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
       // Optimistically register the new worktree so projectRootFor() resolves
       // it to the main repo before the refetch lands (keeps AppShell from
       // treating the new cwd as a different project).
-      setWorktreeState((prev) => prev ? {
-        ...prev,
-        forCwd: data.path!,
-        worktrees: [...prev.worktrees, { path: data.path!, branch, isMain: false }],
-      } : prev);
-      selectCwd(data.path, worktreeState.projectRoot);
+      commitWorktreeSnapshots((prev) => upsertProjectWorktreeSnapshot(prev, projectRoot, {
+        status: "ready",
+        worktrees: [...(prev[projectRoot]?.worktrees ?? []), { path: data.path!, branch, isMain: false }],
+      }));
+      selectCwd(data.path, projectRoot);
       setWtRefreshKey((k) => k + 1);
     } catch (e) {
       setWtError(e instanceof Error ? e.message : String(e));
+      setWtErrorRoot(projectRoot);
     } finally {
       setWtBusy(false);
     }
-  }, [wtNewBranch, wtBusy, worktreeState, selectCwd]);
+  }, [wtNewForProject, wtNewBranch, wtBusy, commitWorktreeSnapshots, selectCwd]);
 
-  const handleRemoveWorktree = useCallback(async (path: string, force: boolean) => {
-    if (!worktreeState || wtBusy) return;
+  const handleRemoveWorktree = useCallback(async (projectRoot: string, path: string, force: boolean) => {
+    // 与创建同理：以分组所属项目根为请求目标，不要求该项目处于选中态。
+    if (wtBusy) return;
     setWtBusy(true);
     setWtError(null);
+    setWtErrorRoot(null);
     try {
       const res = await fetch("/api/worktrees", {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ cwd: worktreeState.projectRoot, path, force }),
+        body: JSON.stringify({ cwd: projectRoot, path, force }),
       });
       const data = await res.json().catch(() => ({})) as { error?: string; dirty?: boolean };
       if (!res.ok) {
@@ -860,17 +1043,19 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
           return;
         }
         setWtError(data.error ?? `HTTP ${res.status}`);
+        setWtErrorRoot(projectRoot);
         return;
       }
       setWtConfirmRemove(null);
-      if (selectedCwd === path) selectCwd(worktreeState.projectRoot);
+      if (selectedCwd === path) selectCwd(projectRoot, projectRoot);
       setWtRefreshKey((k) => k + 1);
     } catch (e) {
       setWtError(e instanceof Error ? e.message : String(e));
+      setWtErrorRoot(projectRoot);
     } finally {
       setWtBusy(false);
     }
-  }, [worktreeState, wtBusy, selectedCwd, selectCwd]);
+  }, [wtBusy, selectedCwd, selectCwd]);
 
   // 点击外部关闭显示模式菜单
   useEffect(() => {
@@ -893,12 +1078,13 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     onSelectSession(s);
   }, [onSelectSession, selectCwd]);
 
-  const handleNewSession = useCallback(() => {
-    if (!selectedCwd) return;
+  const handleNewSession = useCallback((targetCwd = selectedCwd) => {
+    if (!targetCwd) return;
     // Generate a temporary UUID client-side — no backend call needed.
     // Pi will be spawned lazily when the user sends the first message.
-    onNewSession?.();
-  }, [selectedCwd, onNewSession]);
+    selectCwd(targetCwd, projectRootFor(targetCwd));
+    onNewSession?.(targetCwd);
+  }, [selectedCwd, onNewSession, selectCwd, projectRootFor]);
 
   // 搜索行开关：打开自动聚焦；关闭同时清空瞬时查询与全文结果。
   const clearSearchState = useCallback(() => {
@@ -975,16 +1161,14 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   }, [searchOpen, searchMode, sessionQuery]);
 
   // 当前有效项目根（由 selectedCwd 乐观解析；服务端 worktree 数据仍是权威）
-  const selectedProject = projectRootFor(selectedCwd);
-
   // 全项目树：分组/排序/空态补齐全部在纯模型内完成。
-  const knownWorktrees = useMemo(
-    () => (worktreeState && selectedProject === worktreeState.projectRoot ? worktreeState.worktrees : []),
-    [worktreeState, selectedProject],
+  const knownWorktreesByProject = useMemo(
+    () => Object.fromEntries(Object.entries(worktreeSnapshots).map(([root, snapshot]) => [root, snapshot.worktrees])),
+    [worktreeSnapshots],
   );
   const sidebarTree = useMemo(
-    () => buildSidebarTree(allSessions, { selectedCwd, selectedProjectRoot: selectedProject, knownWorktrees }),
-    [allSessions, selectedCwd, selectedProject, knownWorktrees],
+    () => buildSidebarTree(allSessions, { selectedCwd, selectedProjectRoot: selectedProject, knownWorktreesByProject }),
+    [allSessions, selectedCwd, selectedProject, knownWorktreesByProject],
   );
   // 已关闭项目先从树中隐藏（纯 UI 过滤，不删数据），再进入搜索管线。
   const openTree = useMemo(
@@ -1244,22 +1428,21 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
       : { ...prev, collapsedProjectRoots: [], collapsedWorktreePaths: [] }));
   }, [updatePrefs]);
 
-  // worktree 管理能力：仅当前选中项目、且已加载该项目的 git 顶层信息时可
-  // 创建/删除；worktreeState 必须属于本项目，否则项目切换瞬间会用错仓库根。
-  const worktreeLoading = Boolean(selectedCwd && worktreeLoadingCwd === selectedCwd);
+  // worktree 管理能力：所有已知项目均可显示/操作（快照缓存优先、后台预加载），
+  // 不再要求项目处于选中态；可否创建/删除取决于该项目已加载的 git 顶层信息。
   const worktreeActionsFor = useCallback((projectRoot: string): WorktreeActions | null => {
-    if (projectRoot !== selectedProject || !selectedCwd) return null;
-    const state = worktreeState && worktreeState.projectRoot === projectRoot ? worktreeState : null;
-    const canManage = Boolean(state?.isGit && state.isTopLevel);
+    const snapshot = worktreeSnapshots[projectRoot];
+    const metadata = worktreeMetadata[projectRoot];
+    const canManage = Boolean(metadata?.isGit && metadata.isTopLevel);
     const createHint = canManage
       ? t("sidebar_createWorktree")
-      : worktreeLoading
+      : snapshot?.status === "loading" || !snapshot
         ? t("sidebar_checkingWorktree")
-        : state?.isGit
+        : metadata?.isGit
           ? t("sidebar_worktreeOpenRoot")
           : t("sidebar_worktreeGitOnly");
     return { canManage, createHint, busy: wtBusy };
-  }, [selectedProject, selectedCwd, worktreeState, worktreeLoading, wtBusy, t]);
+  }, [worktreeSnapshots, worktreeMetadata, wtBusy, t]);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
@@ -1284,7 +1467,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
             <SidebarIconButton
               label={selectedCwd ? t("sidebar_newSessionIn", { project: displayCwd(selectedCwd, homeDir) }) : t("sidebar_selectProject")}
               disabled={!selectedCwd}
-              onClick={handleNewSession}
+              onClick={() => handleNewSession()}
             >
               <ChatPlusIcon size={18} />
             </SidebarIconButton>
@@ -1524,6 +1707,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
             onToggleWorktree={toggleWorktreeCollapse}
             onSelectProject={handleSelectProject}
             onSelectWorktree={handleSelectWorktree}
+            onNewSession={handleNewSession}
             onSelectSession={handleSelectSessionFromList}
             trustEntries={trustEntries}
             onOpenTrust={(cwd) => setTrustDialogRoot(cwd)}
@@ -1533,33 +1717,56 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
             onCloseProject={() => handleCloseProject(project.root)}
             onRenamed={loadSessions}
             onSessionDeleted={(id) => {
+              setDeletedIds((prev) => {
+                const next = new Set(prev);
+                next.add(id);
+                return next;
+              });
+              setPendingIds((prev) => {
+                if (!prev.has(id)) return prev;
+                const next = new Set(prev);
+                next.delete(id);
+                return next;
+              });
+              setPendingById((prev) => {
+                if (!prev.has(id)) return prev;
+                const next = new Map(prev);
+                next.delete(id);
+                return next;
+              });
               onSessionDeleted?.(id);
               loadSessions();
             }}
             onToggleCollapse={toggleSessionCollapse}
+            groupVisibleCounts={groupVisibleCounts}
+            onShowMore={(groupKey) => setGroupVisibleCounts((counts) => bumpGroupVisibleCount(counts, groupKey))}
+            onShowFewer={(groupKey) => setGroupVisibleCounts((counts) => resetGroupVisibleCount(counts, groupKey))}
             worktreeActions={worktreeActionsFor(project.root)}
             wtNewOpen={wtNewForProject === project.root}
             wtNewBranch={wtNewBranch}
-            wtError={wtError}
+            wtError={wtErrorRoot === project.root ? wtError : null}
             wtConfirmRemove={wtConfirmRemove}
             wtNewInputRef={wtNewInputRef}
             onStartCreateWorktree={() => {
               setWtNewForProject(project.root);
               setWtError(null);
+              setWtErrorRoot(null);
               setTimeout(() => wtNewInputRef.current?.focus(), 0);
             }}
             onWtNewBranchChange={(value) => {
               setWtNewBranch(value);
               setWtError(null);
+              setWtErrorRoot(null);
             }}
             onSubmitCreateWorktree={() => void handleCreateWorktree()}
             onCancelCreateWorktree={() => {
               setWtNewForProject(null);
               setWtNewBranch("");
               setWtError(null);
+              setWtErrorRoot(null);
             }}
-            onRequestRemoveWorktree={(path) => void handleRemoveWorktree(path, false)}
-            onConfirmRemoveWorktree={(path) => void handleRemoveWorktree(path, true)}
+            onRequestRemoveWorktree={(path) => void handleRemoveWorktree(project.root, path, false)}
+            onConfirmRemoveWorktree={(path) => void handleRemoveWorktree(project.root, path, true)}
             onCancelRemoveWorktree={() => setWtConfirmRemove(null)}
            />
          ))}
@@ -1963,6 +2170,35 @@ interface WorktreeActions {
   busy: boolean;
 }
 
+function GroupPagination({ groupKey, total, visibleCount, searchActive, onShowMore, onShowFewer }: {
+  groupKey: string;
+  total: number;
+  visibleCount: number;
+  searchActive: boolean;
+  onShowMore: (groupKey: string) => void;
+  onShowFewer: (groupKey: string) => void;
+}) {
+  const { t } = useI18n();
+  const showMore = canShowMoreTopLevel(total, visibleCount, searchActive);
+  const showFewer = canShowFewerTopLevel(visibleCount, searchActive);
+  if (!showMore && !showFewer) return null;
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 4, padding: "2px 8px 5px 28px" }}>
+      {showMore && (
+        <button type="button" className="sidebar-pagination-btn" onClick={() => onShowMore(groupKey)}>
+          {t("sidebar_showMore")}
+          <span aria-hidden="true">+{GROUP_VISIBLE_PAGE_SIZE}</span>
+        </button>
+      )}
+      {showFewer && (
+        <button type="button" className="sidebar-pagination-btn" onClick={() => onShowFewer(groupKey)}>
+          {t("sidebar_showFewer")}
+        </button>
+      )}
+    </div>
+  );
+}
+
 function ProjectSection({
   project,
   homeDir,
@@ -1981,6 +2217,7 @@ function ProjectSection({
   onToggleWorktree,
   onSelectProject,
   onSelectWorktree,
+  onNewSession,
   onSelectSession,
   menuOpen,
   onMenuOpenChange,
@@ -1991,6 +2228,9 @@ function ProjectSection({
   onRenamed,
   onSessionDeleted,
   onToggleCollapse,
+  groupVisibleCounts,
+  onShowMore,
+  onShowFewer,
   worktreeActions,
   wtNewOpen,
   wtNewBranch,
@@ -2022,6 +2262,7 @@ function ProjectSection({
   onToggleWorktree: (path: string) => void;
   onSelectProject: (root: string) => void;
   onSelectWorktree: (path: string, projectRoot: string) => void;
+  onNewSession: (cwd: string) => void;
   onSelectSession: (s: SessionInfo) => void;
   menuOpen: boolean;
   onMenuOpenChange: (open: boolean) => void;
@@ -2033,6 +2274,9 @@ function ProjectSection({
   onRenamed: () => void;
   onSessionDeleted: (id: string) => void;
   onToggleCollapse: (sessionId: string) => void;
+  groupVisibleCounts: Readonly<Record<string, number>>;
+  onShowMore: (groupKey: string) => void;
+  onShowFewer: (groupKey: string) => void;
   worktreeActions: WorktreeActions | null;
   wtNewOpen: boolean;
   wtNewBranch: string;
@@ -2101,6 +2345,16 @@ function ProjectSection({
             onClick={() => onOpenTrust(project.root)}
           />
         )}
+        <SidebarIconButton
+          label={t("sidebar_newSessionIn", { project: projectName })}
+          hoverReveal
+          onClick={(event) => {
+            event.stopPropagation();
+            onNewSession(project.root);
+          }}
+        >
+          <ChatPlusIcon size={14} />
+        </SidebarIconButton>
         {worktreeActions && (
           <SidebarIconButton
             label={worktreeActions.createHint}
@@ -2128,7 +2382,11 @@ function ProjectSection({
         <div>
           {/* 主仓会话：主 worktree 隐式，直接列在项目下 */}
           <div style={{ paddingLeft: 10 }}>
-            {project.mainTree.map((node) => (
+            {getVisibleTopLevelNodes(
+              project.mainTree,
+              getGroupVisibleCount(groupVisibleCounts, `main:${project.root}`),
+              searchActive,
+            ).map((node) => (
               <SessionTreeItem
                 key={node.session.id}
                 node={node}
@@ -2145,6 +2403,14 @@ function ProjectSection({
                 displayMode={displayMode}
               />
             ))}
+            <GroupPagination
+              groupKey={`main:${project.root}`}
+              total={project.mainTree.length}
+              visibleCount={getGroupVisibleCount(groupVisibleCounts, `main:${project.root}`)}
+              searchActive={searchActive}
+              onShowMore={onShowMore}
+              onShowFewer={onShowFewer}
+            />
           </div>
 
           {/* 非主 worktree 分组 */}
@@ -2163,10 +2429,14 @@ function ProjectSection({
               searchActive={searchActive}
               onToggleWorktree={(path) => onToggleWorktree(path)}
               onSelectWorktree={(path) => onSelectWorktree(path, project.root)}
+              onNewSession={() => onNewSession(group.path)}
               onSelectSession={onSelectSession}
               onRenamed={onRenamed}
               onSessionDeleted={onSessionDeleted}
               onToggleCollapse={onToggleCollapse}
+              visibleCount={getGroupVisibleCount(groupVisibleCounts, `worktree:${group.path}`)}
+              onShowMore={() => onShowMore(`worktree:${group.path}`)}
+              onShowFewer={() => onShowFewer(`worktree:${group.path}`)}
               trustEntry={trustEntries.get(group.path) ?? null}
               onOpenTrust={() => onOpenTrust(group.path)}
               worktreeActions={worktreeActions}
@@ -2259,10 +2529,14 @@ function WorktreeGroupSection({
   searchActive,
   onToggleWorktree,
   onSelectWorktree,
+  onNewSession,
   onSelectSession,
   onRenamed,
   onSessionDeleted,
   onToggleCollapse,
+  visibleCount,
+  onShowMore,
+  onShowFewer,
   trustEntry,
   onOpenTrust,
   worktreeActions,
@@ -2283,10 +2557,14 @@ function WorktreeGroupSection({
   searchActive: boolean;
   onToggleWorktree: (path: string) => void;
   onSelectWorktree: (path: string) => void;
+  onNewSession: () => void;
   onSelectSession: (s: SessionInfo) => void;
   onRenamed: () => void;
   onSessionDeleted: (id: string) => void;
   onToggleCollapse: (sessionId: string) => void;
+  visibleCount: number;
+  onShowMore: () => void;
+  onShowFewer: () => void;
   /** 该 worktree 检出的信任状态；读取失败或不适用时为 null（不显示徽章） */
   trustEntry: ProjectTrustEntry | null;
   onOpenTrust: () => void;
@@ -2343,6 +2621,16 @@ function WorktreeGroupSection({
         {trustEntry && (
           <ProjectTrustBadge status={trustEntry.status} projectName={label} onClick={onOpenTrust} />
         )}
+        <SidebarIconButton
+          label={t("sidebar_newSessionIn", { project: label })}
+          hoverReveal
+          onClick={(event) => {
+            event.stopPropagation();
+            onNewSession();
+          }}
+        >
+          <ChatPlusIcon size={13} />
+        </SidebarIconButton>
         {worktreeActions?.canManage && !confirmRemove && (
           <SidebarIconButton
              label={t("sidebar_removeWorktreeAt", { path: group.path })}
@@ -2385,7 +2673,7 @@ function WorktreeGroupSection({
 
       {!collapsed && (
         <div style={{ paddingLeft: 20 }}>
-          {group.tree.map((node) => (
+          {getVisibleTopLevelNodes(group.tree, visibleCount, searchActive).map((node) => (
             <SessionTreeItem
               key={node.session.id}
               node={node}
@@ -2402,6 +2690,14 @@ function WorktreeGroupSection({
               displayMode={displayMode}
             />
           ))}
+          <GroupPagination
+            groupKey={group.path}
+            total={group.tree.length}
+            visibleCount={visibleCount}
+            searchActive={searchActive}
+            onShowMore={onShowMore}
+            onShowFewer={onShowFewer}
+          />
           {group.tree.length === 0 && (
             <div style={{ padding: "2px 10px 5px 28px", color: "var(--text-dim)", fontSize: 11 }}>
               {t("sidebar_noSessions")}

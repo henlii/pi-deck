@@ -26,7 +26,13 @@ import {
 import { getToolNamesForPreset, type ToolEntry } from "@/lib/tool-presets";
 import { createEventStreamManager, EventStreamConnectionError, type EventStreamManager, type EventStreamConnectionResult } from "@/lib/event-stream-manager";
 import type { SessionStatsInfo } from "@/lib/pi-types";
-import { applyExtensionUiRequest, clearExtensionUiRequest, type ExtensionUiState } from "@/lib/extension-ui-bridge";
+import {
+  applyExtensionUiRequest,
+  clearAllExtensionUiBlocking,
+  clearExtensionUiRequest,
+  createEmptyExtensionUiState,
+  type ExtensionUiState,
+} from "@/lib/extension-ui-bridge";
 import type { ExtensionUiInlineRequest } from "@/lib/extension-ui-bridge";
 import { parseTodos } from "@/lib/todo-parser";
 import { getSessionCapabilities } from "@/components/session-capabilities";
@@ -174,8 +180,13 @@ export type BuiltinSlashCommandResult =
 export interface UseAgentSessionOptions {
   session: SessionInfo | null;
   newSessionCwd: string | null;
+  /**
+   * 新建意图代际 id（AppShell NewSessionIntent.id）。
+   * ensure/promote 时回传，供父层丢弃迟到的旧 intent 结果；缺省时行为与仅 cwd 一致。
+   */
+  newSessionIntentId?: string | null;
   onAgentEnd?: () => void;
-  onSessionCreated?: (session: SessionInfo) => void;
+  onSessionCreated?: (session: SessionInfo, intentId?: string | null) => void;
   onSessionForked?: (newSessionId: string) => void;
   modelsRefreshKey?: number;
   chatInputRef?: React.RefObject<ChatInputHandle | null>;
@@ -351,11 +362,16 @@ type SlashCommandsResponse = {
 
 export function useAgentSession(opts: UseAgentSessionOptions) {
   const {
-    session, newSessionCwd, onAgentEnd, onSessionCreated, onSessionForked,
+    session, newSessionCwd, newSessionIntentId, onAgentEnd, onSessionCreated, onSessionForked,
     modelsRefreshKey, onBranchDataChange, onSystemPromptChange, onSessionStatsPanelOpen,
   } = opts;
 
   const isNew = session === null && newSessionCwd !== null;
+  // intent 捕获的 cwd/id：避免用户随后切项目导致 ensure body 漂移。
+  const newSessionCwdRef = useRef(newSessionCwd);
+  const newSessionIntentIdRef = useRef(newSessionIntentId ?? null);
+  newSessionCwdRef.current = newSessionCwd;
+  newSessionIntentIdRef.current = newSessionIntentId ?? null;
   // 只读（subagent 持久化）会话能力：UI 层先行拦截一切会产生 AgentSession
   // 或写会话的操作；后端 requireWritableSession 仍是权威防线。
   const capabilities = getSessionCapabilities(session);
@@ -523,13 +539,11 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const newSessionPromotedRef = useRef(false);
   const promptRunIdRef = useRef(0);
   const optimisticUserMessageKeyRef = useRef<string | null>(null);
-  const extensionUiStateRef = useRef<ExtensionUiState>({
-    dialog: extensionDialog,
-    inlineRequest: extensionInlineRequest,
+  const extensionUiStateRef = useRef<ExtensionUiState>(createEmptyExtensionUiState({
     customUi: extensionCustomUi,
     statuses: extensionStatuses,
     widgets: extensionWidgets,
-  });
+  }));
   const commitExtensionUiState = useCallback((next: ExtensionUiState) => {
     extensionUiStateRef.current = next;
     setExtensionDialog(next.dialog);
@@ -540,6 +554,13 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   }, []);
   const patchExtensionUiState = useCallback((patch: Partial<ExtensionUiState>) => {
     commitExtensionUiState({ ...extensionUiStateRef.current, ...patch });
+  }, [commitExtensionUiState]);
+  /** 按 id 移除阻塞请求并推进队列；不发送协议响应（本地过期 / 服务端已结算） */
+  const dismissExtensionUiRequest = useCallback((requestId: string) => {
+    const currentState = extensionUiStateRef.current;
+    const nextState = clearExtensionUiRequest(currentState, requestId);
+    if (nextState === currentState) return;
+    commitExtensionUiState(nextState);
   }, [commitExtensionUiState]);
 
   const todos = useMemo(() => {
@@ -723,25 +744,29 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
   const promoteNewSession = useCallback((messageCount = 0, firstMessage = "(no messages)") => {
     const sid = sessionIdRef.current;
-    if (!isNew || !newSessionCwd || !sid || newSessionPromotedRef.current) return;
+    const cwd = newSessionCwdRef.current;
+    if (!isNew || !cwd || !sid || newSessionPromotedRef.current) return;
     newSessionPromotedRef.current = true;
     onSessionCreated?.({
       id: sid,
       path: "",
-      cwd: newSessionCwd,
+      cwd,
       name: undefined,
       created: new Date().toISOString(),
       modified: new Date().toISOString(),
       messageCount,
       firstMessage,
-    });
-  }, [isNew, newSessionCwd, onSessionCreated]);
+    }, newSessionIntentIdRef.current);
+  }, [isNew, onSessionCreated]);
 
   const ensureNewSession = useCallback(async () => {
     if (sessionIdRef.current) return sessionIdRef.current;
-    if (!isNew || !newSessionCwd) return sessionIdRef.current;
+    const cwd = newSessionCwdRef.current;
+    if (!isNew || !cwd) return sessionIdRef.current;
     if (ensuringNewSessionRef.current) return ensuringNewSessionRef.current;
 
+    // 捕获本次 ensure 的 cwd：并发/切项目不得改写已发出的 body。
+    const ensureCwd = cwd;
     const promise = (async () => {
       const selectedModel = newSessionModel ?? newSessionDefaultModel;
       if (selectedModel) setPendingModel(selectedModel);
@@ -750,7 +775,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          cwd: newSessionCwd,
+          cwd: ensureCwd,
           type: "ensure_session",
           toolNames,
           ...(selectedModel ? { provider: selectedModel.provider, modelId: selectedModel.modelId } : {}),
@@ -760,6 +785,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const result = await res.json() as { sessionId: string };
       const realId = result.sessionId;
+      // 真实 sid 一旦返回即写入 ref：后续 prompt/SSE 失败也必须复用，禁止二次创建。
       sessionIdRef.current = realId;
       return realId;
     })();
@@ -770,7 +796,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     } finally {
       ensuringNewSessionRef.current = null;
     }
-  }, [isNew, newSessionCwd, newSessionModel, newSessionDefaultModel, toolPreset, thinkingLevel]);
+  }, [isNew, newSessionModel, newSessionDefaultModel, toolPreset, thinkingLevel]);
 
   const loadSlashCommands = useCallback(async () => {
     // 只读会话：get_commands 会经 /api/agent 启动 AgentSession，直接返回空集。
@@ -778,7 +804,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       setSlashCommands([]);
       return [] as SlashCommandInfo[];
     }
-    const sid = sessionIdRef.current ?? await ensureNewSession();
+    // 新会话空态：禁止因 slash 菜单 mount 而提前 POST /api/agent/new。
+    // 仅当已有真实 sid（用户已写操作 ensure 成功）才拉 commands。
+    const sid = sessionIdRef.current ?? session?.id ?? null;
     if (!sid) {
       setSlashCommands([]);
       return [] as SlashCommandInfo[];
@@ -796,7 +824,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     } finally {
       setSlashCommandsLoading(false);
     }
-  }, [isReadOnly, ensureNewSession]);
+  }, [isReadOnly, session?.id]);
 
   const connectEvents = useCallback((sid: string): Promise<EventStreamConnectionResult> => {
     // 当前调用点均已按能力门禁；保留显式错误，防止未来误把只读会话接入 SSE。
@@ -827,7 +855,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   ) => {
     if (!capabilities.canSendSessionCommands) return;
     const sid = sessionIdRef.current;
-    // 响应和关闭都必须绑定当前请求；旧弹窗/内联卡片的延迟回调不能关闭或回复新请求。
+    // 按 id 从 FIFO 移除并推进；旧卡片延迟回调若 id 已不在队列则忽略，绝不伪造响应。
     const currentState = extensionUiStateRef.current;
     const nextState = clearExtensionUiRequest(currentState, request.id);
     if (nextState === currentState) return;
@@ -1220,13 +1248,15 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
     try {
       let sentSessionId: string | null = null;
-      if (isNew && newSessionCwd) {
+      if (isNew && newSessionCwdRef.current) {
         const selectedModel = newSessionModel;
         const existingSid = sessionIdRef.current ?? await ensuringNewSessionRef.current;
         const sid = existingSid ?? await ensureNewSession();
 
         if (sid) {
           sentSessionId = sid;
+          // ensure 成功即 promote：即使后续 SSE/prompt 失败也保留 sid，禁止二次创建。
+          promoteNewSession(1, message);
           if (selectedModel) {
             setPendingModel(selectedModel);
             if (existingSid) {
@@ -1239,7 +1269,6 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
             message,
             ...(piImages?.length ? { images: piImages } : {}),
           });
-          promoteNewSession(1, message);
         }
       } else if (session) {
         sentSessionId = session.id;
@@ -1273,7 +1302,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       setAgentPhase(null);
       dispatch({ type: "end" });
     }
-  }, [isNew, isReadOnly, newSessionCwd, newSessionModel, session, ensureNewSession, ensureEventsConnected, promoteNewSession, waitForPromptSettlement, addNotice, notifyAutoFollowSend]);
+  }, [isNew, isReadOnly, newSessionModel, session, ensureNewSession, ensureEventsConnected, promoteNewSession, waitForPromptSettlement, addNotice, notifyAutoFollowSend]);
 
   const executeBash = useCallback(async (command: string, excludeFromContext: boolean) => {
     // 只读会话：bash 命令同样会写 session 文件，拦截。
@@ -1286,13 +1315,14 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     try {
       const sid = sessionIdRef.current ?? session?.id ?? await ensureNewSession();
       if (!sid) throw new Error("Unable to create a session for the shell command");
+      // ensure 成功即 promote（写操作已创建 Pi session）。
+      promoteNewSession(1, inputText);
       await sendAgentCommand(sid, {
         type: "bash",
         command,
         excludeFromContext,
       });
       await loadSession(sid);
-      promoteNewSession(1, inputText);
     } catch (e) {
       console.error("Failed to execute shell command:", e);
       addNotice({ type: "error", message: e instanceof Error ? e.message : String(e) });
@@ -1537,7 +1567,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
     const [, commandName, rawArgs = ""] = match;
     const args = rawArgs.trim();
+    // 内置 slash 是明确写命令：允许 ensure；读资源路径不得走这里。
     const sid = sessionIdRef.current ?? await ensureNewSession();
+    if (sid && isNew) promoteNewSession();
     const complete = (result: BuiltinSlashCommandResult): BuiltinSlashCommandResult => {
       if (!result.handled) return result;
       if (result.error) {
@@ -1611,7 +1643,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     } finally {
       if (commandName === "compact") setIsCompacting(false);
     }
-  }, [addNotice, ensureNewSession, isCompacting, isReadOnly, loadModels, loadSession, loadSlashCommands, loadTools, promoteNewSession, onSessionStatsPanelOpen]);
+  }, [addNotice, ensureNewSession, isCompacting, isNew, isReadOnly, loadModels, loadSession, loadSlashCommands, loadTools, promoteNewSession, onSessionStatsPanelOpen]);
 
   // Queued (undelivered) messages live in the queue panel only; the chat gets
   // the real user message when pi delivers it (user message_end event). An
@@ -1766,12 +1798,11 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     await dispatchWorkspaceHistoryPrompt(message);
   }, [dispatchWorkspaceHistoryPrompt]);
 
-  // Load session on mount
+  // 会话切换：清空阻塞队列与可见卡片；不发送 extension_ui_response。
   useEffect(() => {
+    const current = extensionUiStateRef.current;
     commitExtensionUiState({
-      ...extensionUiStateRef.current,
-      dialog: null,
-      inlineRequest: null,
+      ...clearAllExtensionUiBlocking(current),
       customUi: null,
     });
   }, [session?.id, newSessionCwd, commitExtensionUiState]);
@@ -2043,7 +2074,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     retryInfo, contextUsage, systemPrompt, forkingEntryId,
     isCompacting, compactError, compactResult, currentModel, displayModel, sessionStats,
     slashCommands, slashCommandsLoading, queuedMessages,
-    notices: noticeState.visible, extensionDialog, extensionInlineRequest, extensionCustomUi, extensionStatuses, extensionWidgets, respondToExtensionUi, sendExtensionCustomInput,
+    notices: noticeState.visible, extensionDialog, extensionInlineRequest, extensionCustomUi, extensionStatuses, extensionWidgets, respondToExtensionUi, dismissExtensionUiRequest, sendExtensionCustomInput,
     todos,
     isAutoModelSelection: isNew && newSessionModel === null,
     agentPhase,

@@ -23,6 +23,7 @@ export const en = {
   about_footerNote: 'Open-source web client for the Pi coding agent',
   app_showSidebar: 'Show sidebar',
   app_hideSidebar: 'Hide sidebar',
+  app_sidebarResizeHandle: 'Resize sidebar',
   app_lightMode: 'Switch to light mode',
   app_darkMode: 'Switch to dark mode',
   app_titleGenerating: 'Generating title…',
@@ -77,6 +78,8 @@ export const en = {
   sidebar_compact: 'Compact',
   sidebar_collapseAll: 'Collapse all',
   sidebar_expandAll: 'Expand all',
+  sidebar_showMore: 'Show more',
+  sidebar_showFewer: 'Show fewer',
   sidebar_refresh: 'Refresh',
   sidebar_searchPlaceholder: 'Search sessions…',
   sidebar_searchPlaceholderFulltext: 'Search message content…',
@@ -306,6 +309,9 @@ export const en = {
   extension_cancel: 'Cancel',
   extension_confirm: 'Confirm',
   extension_submit: 'Submit',
+  extension_other: 'Other',
+  extension_selectAnOption: 'Select an option',
+  extension_otherPlaceholder: 'Enter a custom value',
   // 本轮核心工作区补充翻译
   // app
   app_generateTitle: "Generate title",

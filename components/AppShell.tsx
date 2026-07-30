@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useRef, useEffect, useMemo, useReducer } from "react";
+import { useState, useCallback, useRef, useEffect, useMemo, useReducer, type CSSProperties } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useGlobalKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { SessionSidebar } from "./SessionSidebar";
@@ -36,7 +36,22 @@ import type { BranchActions } from "@/lib/branch-bookmarks";
 import type { ChatInputHandle } from "./ChatInput";
 import type { SessionStatsInfo } from "@/lib/pi-types";
 import { ProjectProvider, useProjectActions, useProjectIdentity } from "./ProjectProvider";
+import {
+  SIDEBAR_WIDTH_DEFAULT,
+  SIDEBAR_WIDTH_MAX,
+  SIDEBAR_WIDTH_MIN,
+  clampSidebarWidth,
+  loadSidebarPreferences,
+  saveSidebarWidth,
+} from "@/lib/ui-preferences";
 import { useI18n } from "@/lib/i18n";
+import { hydrateSessionById } from "@/lib/session-hydrate";
+import {
+  createNewSessionIntent,
+  shouldApplyHydratedSession,
+  shouldPromoteSessionCreated,
+  type NewSessionIntent,
+} from "@/lib/new-session-intent";
 
 type SessionCopyField = "file" | "id";
 type AutoNameStatus =
@@ -64,6 +79,38 @@ function AppShellInner() {
   const [refreshKey, setRefreshKey] = useState(0);
   const [sessionKey, setSessionKey] = useState(0);
   const [explorerRefreshKey, setExplorerRefreshKey] = useState(0);
+  /** 新建会话客户端意图：点击新会话只建 intent，首次写操作才 POST /api/agent/new。 */
+  const [newSessionIntent, setNewSessionIntent] = useState<NewSessionIntent | null>(null);
+  const newSessionIntentRef = useRef<NewSessionIntent | null>(null);
+  const newSessionIntentGenerationRef = useRef(0);
+  const selectedSessionIdRef = useRef<string | null>(null);
+  const hydrateAbortRef = useRef<AbortController | null>(null);
+  /**
+   * 侧栏乐观 pending（按真实 id）：快速 A/B 创建时多条并存，
+   * 迟到 intent 不选中但必须保留到 server 回流/显式删除。
+   */
+  const [optimisticPendingById, setOptimisticPendingById] = useState<Map<string, SessionInfo>>(
+    () => new Map(),
+  );
+  const optimisticPendingSessions = useMemo(
+    () => [...optimisticPendingById.values()],
+    [optimisticPendingById],
+  );
+  const upsertOptimisticPending = useCallback((session: SessionInfo) => {
+    setOptimisticPendingById((prev) => {
+      const next = new Map(prev);
+      next.set(session.id, session);
+      return next;
+    });
+  }, []);
+  const removeOptimisticPending = useCallback((sessionId: string) => {
+    setOptimisticPendingById((prev) => {
+      if (!prev.has(sessionId)) return prev;
+      const next = new Map(prev);
+      next.delete(sessionId);
+      return next;
+    });
+  }, []);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
   const [modelsRefreshKey, setModelsRefreshKey] = useState(0);
@@ -72,6 +119,61 @@ function AppShellInner() {
   const [workspaceOpen, setWorkspaceOpen] = useState(true);
   const [workspaceWidth, setWorkspaceWidth] = useState(288);
   const [mobileWorkspaceReady, setMobileWorkspaceReady] = useState(false);
+  // ── 桌面会话栏调宽：AppShell 是宽度唯一 owner（布局 owner），从偏好恢复并即时落盘 ──
+  const [sidebarWidth, setSidebarWidth] = useState(() => loadSidebarPreferences().sidebarWidth);
+  const [sidebarDragging, setSidebarDragging] = useState(false);
+  const sidebarDragRef = useRef<{ startX: number; startWidth: number } | null>(null);
+
+  const applySidebarWidth = useCallback((width: number) => {
+    const clamped = clampSidebarWidth(width);
+    setSidebarWidth(clamped);
+    saveSidebarWidth(clamped);
+  }, []);
+
+  const handleSidebarResizeStart = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (isMobile) return;
+    e.preventDefault();
+    sidebarDragRef.current = { startX: e.clientX, startWidth: sidebarWidth };
+    setSidebarDragging(true);
+    e.currentTarget.setPointerCapture(e.pointerId);
+  }, [isMobile, sidebarWidth]);
+
+  const handleSidebarResizeMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    const drag = sidebarDragRef.current;
+    if (!drag) return;
+    // 手柄在会话栏右缘：向右拖增宽、向左拖收窄。
+    applySidebarWidth(drag.startWidth + (e.clientX - drag.startX));
+  }, [applySidebarWidth]);
+
+  const handleSidebarResizeEnd = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (!sidebarDragRef.current) return;
+    sidebarDragRef.current = null;
+    setSidebarDragging(false);
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
+  }, []);
+
+  // 键盘可达：ArrowLeft/Right 微调（Shift 大步），Home/End 直达边界，双击回默认。
+  const handleSidebarResizeKeyDown = useCallback((e: React.KeyboardEvent<HTMLDivElement>) => {
+    const step = e.shiftKey ? 32 : 8;
+    if (e.key === "ArrowLeft") {
+      e.preventDefault();
+      applySidebarWidth(sidebarWidth - step);
+    } else if (e.key === "ArrowRight") {
+      e.preventDefault();
+      applySidebarWidth(sidebarWidth + step);
+    } else if (e.key === "Home") {
+      e.preventDefault();
+      applySidebarWidth(SIDEBAR_WIDTH_MIN);
+    } else if (e.key === "End") {
+      e.preventDefault();
+      applySidebarWidth(SIDEBAR_WIDTH_MAX);
+    }
+  }, [applySidebarWidth, sidebarWidth]);
+
+  const handleSidebarResizeReset = useCallback(() => {
+    applySidebarWidth(SIDEBAR_WIDTH_DEFAULT);
+  }, [applySidebarWidth]);
+
   // On mobile the sidebar is an overlay drawer; hide it by default so the chat
   // is visible on load. Runs once the breakpoint resolves after hydration.
   useEffect(() => {
@@ -292,12 +394,27 @@ function AppShellInner() {
 
   const initialSessionId = initialNavigation.sessionId;
   const identity = useProjectIdentity();
-  const { setIdentity } = useProjectActions();
+  const { setIdentity, getIdentitySnapshot } = useProjectActions();
   const activeCwd = identity.cwd;
   // True once the initial ?session= URL param has been resolved (or confirmed absent)
   const [initialSessionRestored, setInitialSessionRestored] = useState<boolean>(() => !initialSessionId);
   // URL 恢复和首次身份建立不应清理当前聊天。
   const suppressSessionResetRef = useRef(false);
+
+  // selectedSessionIdRef / newSessionIntentRef 在事件路径即时写入；
+  // effect 仅作 state 回流后的兜底同步（同 tick 读必须走事件路径）。
+  useEffect(() => {
+    selectedSessionIdRef.current = selectedSession?.id ?? null;
+  }, [selectedSession?.id]);
+
+  useEffect(() => {
+    newSessionIntentRef.current = newSessionIntent;
+  }, [newSessionIntent]);
+
+  const invalidateHydrate = useCallback(() => {
+    hydrateAbortRef.current?.abort();
+    hydrateAbortRef.current = null;
+  }, []);
 
   useEffect(() => {
     const requestedCwd = initialNavigation.requestedCwd;
@@ -346,19 +463,49 @@ function AppShellInner() {
       suppressSessionResetRef.current = false;
       return;
     }
-    if (previous.cwd === null && previous.projectRoot === null) return;
+    if (previous.cwd === null && previous.projectRoot === null) {
+      // 首次建立 identity：若尚无选中会话，建立新会话 intent（仅客户端，不 POST）。
+      if (!selectedSession && current.cwd) {
+        newSessionIntentGenerationRef.current += 1;
+        const intent = createNewSessionIntent(current.cwd, newSessionIntentGenerationRef.current);
+        newSessionIntentRef.current = intent;
+        setNewSessionIntent(intent);
+      }
+      return;
+    }
     if (selectedSession && (selectedSession.projectRoot ?? selectedSession.cwd) === current.projectRoot) return;
-    if (selectedSession) setSelectedSession(null);
+    if (selectedSession) {
+      selectedSessionIdRef.current = null;
+      setSelectedSession(null);
+    }
     if (!selectedSession && !cwdChanged) return;
+    invalidateHydrate();
+    // 切换 project/worktree：只建客户端 intent，禁止调用 /api/agent/new。
+    // 不清空 multi-pending：其它项目下已创建的真实 id 仍保留至各自回流/删除。
+    if (current.cwd) {
+      newSessionIntentGenerationRef.current += 1;
+      const intent = createNewSessionIntent(current.cwd, newSessionIntentGenerationRef.current);
+      newSessionIntentRef.current = intent;
+      setNewSessionIntent(intent);
+    } else {
+      newSessionIntentRef.current = null;
+      setNewSessionIntent(null);
+    }
     setSessionKey((key) => key + 1);
     setBranchTree([]);
     setBranchActiveLeafId(null);
     setSystemPrompt(null);
     setActiveTopPanel(null);
     router.replace("/", { scroll: false });
-  }, [identity.cwd, identity.projectRoot, router, selectedSession]);
+  }, [identity.cwd, identity.projectRoot, router, selectedSession, invalidateHydrate]);
 
   const handleSelectSession = useCallback((session: SessionInfo, isRestore = false) => {
+    invalidateHydrate();
+    // 选中已有会话：使新建 intent 失效，迟到 ensure 不得覆盖当前 chat。
+    // 不清理 optimistic pending map：其它真实 id 须保留至 server 回流/显式删除。
+    setNewSessionIntent(null);
+    newSessionIntentRef.current = null;
+    selectedSessionIdRef.current = session.id;
     setSelectedSession(session);
     setSessionKey((k) => k + 1);
     setSystemPrompt(null);
@@ -374,9 +521,27 @@ function AppShellInner() {
     if (!isRestore) {
       router.replace(`?session=${encodeURIComponent(session.id)}`, { scroll: false });
     }
-  }, [router, isMobile]);
+  }, [router, isMobile, invalidateHydrate]);
 
-  const handleNewSession = useCallback(() => {
+  const handleNewSession = useCallback((targetCwd?: string) => {
+    // 侧栏行内入口（项目行/非主 worktree 行）显式给出目标 cwd；其点击路径已先把
+    // ProjectContext identity 切到目标 cwd（含 projectRoot）。这里仅兜底：identity
+    // 尚未落在目标 cwd 时补齐（projectRoot 缺省由 store 回填为 cwd，随后由
+    // worktree 数据权威修正），保证 lazy 新会话落到正确项目。
+    const cwd = targetCwd ?? getIdentitySnapshot().cwd;
+    if (!cwd) return;
+    if (getIdentitySnapshot().cwd !== cwd) {
+      setIdentity({ cwd, status: "ready", error: null });
+    }
+    // 本路径已建立 intent + remount；跳过 identity watcher 的二次 intent。
+    suppressSessionResetRef.current = true;
+    invalidateHydrate();
+    newSessionIntentGenerationRef.current += 1;
+    const intent = createNewSessionIntent(cwd, newSessionIntentGenerationRef.current);
+    newSessionIntentRef.current = intent;
+    setNewSessionIntent(intent);
+    // 不清理其它真实 id 的 pending；仅清空当前选中，进入新 intent 空 chat。
+    selectedSessionIdRef.current = null;
     setSelectedSession(null);
     setSessionKey((k) => k + 1);
     setBranchTree([]);
@@ -385,7 +550,7 @@ function AppShellInner() {
     setActiveTopPanel(null);
     if (isMobile) setSidebarOpen(false);
     router.replace("/", { scroll: false });
-  }, [router, isMobile]);
+  }, [router, isMobile, getIdentitySnapshot, setIdentity, invalidateHydrate]);
 
   // Global keyboard shortcuts (handles Esc, Ctrl+Alt+N etc.)
   useGlobalKeyboardShortcuts({
@@ -394,20 +559,61 @@ function AppShellInner() {
     disabled: settingsOpen || aboutOpen,
   });
 
-  // Client-built transient SessionInfo (new session / fork) lacks the
-  // server-computed projectRoot, which the same-project check in
-  // handleCwdChange relies on. Hydrate it from the session list so switching
-  // worktrees right after creating a session doesn't close the chat.
-  const hydrateSelectedSession = useCallback((sessionId: string) => {
-    void fetch("/api/sessions")
-      .then((r) => (r.ok ? (r.json() as Promise<{ sessions: SessionInfo[] }>) : null))
-      .then((d) => {
-        const full = d?.sessions.find((s) => s.id === sessionId);
-        if (!full) return;
-        setSelectedSession((prev) => (prev && prev.id === sessionId && !prev.projectRoot ? full : prev));
-      })
-      .catch(() => {});
-  }, []);
+  /**
+   * 按真实 session id 精确补水（有界重试），不再全量 GET /api/sessions 后 find。
+   * fork 与 new-session 共用；new-intent 门禁仅在 apply 到当前 chat 时检查。
+   */
+  const hydrateSelectedSession = useCallback((sessionId: string, options?: { intentId?: string | null; forFork?: boolean }) => {
+    invalidateHydrate();
+    const controller = new AbortController();
+    hydrateAbortRef.current = controller;
+    const intentId = options?.intentId ?? null;
+    const forFork = options?.forFork === true;
+
+    void hydrateSessionById<SessionInfo>({
+      sessionId,
+      signal: controller.signal,
+      maxAttempts: 5,
+      baseDelayMs: 200,
+      isCurrent: () => {
+        if (controller.signal.aborted) return false;
+        if (selectedSessionIdRef.current !== sessionId) return false;
+        if (!forFork && intentId) {
+          const active = newSessionIntentRef.current;
+          if (active && active.id !== intentId) return false;
+        }
+        return true;
+      },
+      fetchSession: (id, signal) =>
+        fetch(`/api/sessions/${encodeURIComponent(id)}/info`, { signal }),
+      parseBody: (body) => {
+        const session = (body as { session?: SessionInfo } | null)?.session;
+        return session?.id === sessionId ? session : null;
+      },
+    }).then((result) => {
+      if (!result.ok) return;
+      if (!shouldApplyHydratedSession({
+        selectedSessionId: selectedSessionIdRef.current,
+        hydratedId: result.value.id,
+        intentId,
+        activeIntentId: forFork ? intentId : newSessionIntentRef.current?.id,
+      })) {
+        return;
+      }
+      setSelectedSession((prev) => {
+        if (!prev || prev.id !== sessionId) return prev;
+        // 补全 projectRoot 等服务端字段；已有完整字段时仍可刷新 path/name。
+        return { ...prev, ...result.value };
+      });
+      // 服务端完整字段也可替换侧栏 pending map 中的同 id 条目。
+      setOptimisticPendingById((prev) => {
+        if (!prev.has(sessionId)) return prev;
+        const next = new Map(prev);
+        next.set(sessionId, result.value);
+        return next;
+      });
+    }).catch(() => {});
+  }, [invalidateHydrate]);
 
   // subagent 结果卡片按会话文件路径跳转到侧栏已发现的只读子会话。
   // 子会话由 /api/sessions 的嵌套发现返回，这里只做路径匹配与选中，
@@ -428,12 +634,29 @@ function AppShellInner() {
     handleOpenSubagentSession(sessionFile);
   }, [handleOpenSubagentSession]);
 
-  // Called by ChatWindow when a new session gets its real id from pi
-  const handleSessionCreated = useCallback((session: SessionInfo) => {    setSelectedSession(session);
+  // ChatWindow：Pi 返回真实 id 后 promote；仅当前 intent 可写当前 chat。
+  // 迟到旧 intent 的 session 仍 upsert 进 pending map，不销毁、不选中。
+  const handleSessionCreated = useCallback((session: SessionInfo, intentId?: string | null) => {
+    const promote = shouldPromoteSessionCreated({
+      currentIntentId: newSessionIntentRef.current?.id,
+      eventIntentId: intentId,
+      selectedSessionId: selectedSessionIdRef.current,
+      createdSessionId: session.id,
+    });
+
+    // 无论是否仍选中当前 intent：乐观 upsert 进侧栏 multi-pending。
+    upsertOptimisticPending(session);
+    // 仅 session list 刷新；不得带动 worktree preload generation。
     setRefreshKey((k) => k + 1);
-    hydrateSelectedSession(session.id);
+
+    if (!promote) return;
+
+    selectedSessionIdRef.current = session.id;
+    setSelectedSession(session);
+    // 创建成功后 intent 可保留至用户另开新会话/选中其它；hydrate 用 intent 门禁。
+    hydrateSelectedSession(session.id, { intentId: intentId ?? newSessionIntentRef.current?.id });
     router.replace(`?session=${encodeURIComponent(session.id)}`, { scroll: false });
-  }, [router, hydrateSelectedSession]);
+  }, [router, hydrateSelectedSession, upsertOptimisticPending]);
 
   const handleAgentEnd = useCallback(() => {
     setRefreshKey((k) => k + 1);
@@ -478,15 +701,25 @@ function AppShellInner() {
   }, [selectedSession?.id]);
 
   const handleSessionForked = useCallback((newSessionId: string) => {
+    invalidateHydrate();
+    setNewSessionIntent(null);
+    newSessionIntentRef.current = null;
     setRefreshKey((k) => k + 1);
     setSessionKey((k) => k + 1);
-    setSelectedSession((prev) => ({
-      ...(prev ?? { path: "", cwd: "", created: "", modified: "", messageCount: 0, firstMessage: "" }),
-      id: newSessionId,
-    }));
-    hydrateSelectedSession(newSessionId);
+    // 用函数式 prev 保留 fork 前会话字段；同时 upsert pending map。
+    setSelectedSession((prev) => {
+      const forked: SessionInfo = {
+        ...(prev ?? { path: "", cwd: activeCwd ?? "", created: "", modified: "", messageCount: 0, firstMessage: "" }),
+        id: newSessionId,
+      };
+      upsertOptimisticPending(forked);
+      return forked;
+    });
+    selectedSessionIdRef.current = newSessionId;
+    // fork 复用 targeted hydration，不套 new-intent 门禁。
+    hydrateSelectedSession(newSessionId, { forFork: true });
     router.replace(`?session=${encodeURIComponent(newSessionId)}`, { scroll: false });
-  }, [router, hydrateSelectedSession]);
+  }, [router, hydrateSelectedSession, invalidateHydrate, activeCwd, upsertOptimisticPending]);
 
   const handleInitialRestoreDone = useCallback(() => {
     setInitialSessionRestored(true);
@@ -494,7 +727,12 @@ function AppShellInner() {
 
   const handleSessionDeleted = useCallback((sessionId: string) => {
     setRefreshKey((k) => k + 1);
+    removeOptimisticPending(sessionId);
     if (selectedSession?.id === sessionId) {
+      invalidateHydrate();
+      setNewSessionIntent(null);
+      newSessionIntentRef.current = null;
+      selectedSessionIdRef.current = null;
       setSelectedSession(null);
       setSessionKey((k) => k + 1);
       setBranchTree([]);
@@ -503,7 +741,7 @@ function AppShellInner() {
       setActiveTopPanel(null);
       router.replace("/", { scroll: false });
     }
-  }, [selectedSession, router]);
+  }, [selectedSession, router, invalidateHydrate, removeOptimisticPending]);
 
   const handleOpenFile = useCallback((filePath: string, fileName: string, sourceSessionId?: string | null, writable = false) => {
     const bufferKey = makeFileBufferKey(filePath, sourceSessionId);
@@ -580,8 +818,9 @@ function AppShellInner() {
     setActiveFileTabId(tabId === "chat" ? null : tabId);
   }, []);
 
-  // Show chat area if a session is selected, or if we have a cwd to start a new session in
-  const effectiveNewSessionCwd = selectedSession === null ? activeCwd : null;
+  // 新会话 cwd 来自 intent 捕获值，不从随后可能变化的 activeCwd 裸推导。
+  const effectiveNewSessionCwd =
+    selectedSession === null ? (newSessionIntent?.cwd ?? null) : null;
   const showChat = selectedSession !== null || effectiveNewSessionCwd !== null;
   // While restoring initial session from URL, don't show the placeholder
   const showPlaceholder = initialSessionRestored && !showChat;
@@ -612,6 +851,7 @@ function AppShellInner() {
         onInitialRestoreDone={handleInitialRestoreDone}
         refreshKey={refreshKey}
         onSessionDeleted={handleSessionDeleted}
+        optimisticSessions={optimisticPendingSessions}
       />
       {/* 底部 Settings / About：同规格图标按钮（24×24），不显示永久文字标签 */}
       <div style={{ padding: "6px 8px", flexShrink: 0, display: "flex", alignItems: "center", gap: 4 }}>
@@ -743,7 +983,7 @@ function AppShellInner() {
 
       {/* Left sidebar */}
       <div
-        className={`sidebar-container${sidebarOpen ? " sidebar-open" : " sidebar-closed"}${mobileSidebarReady ? "" : " sidebar-mobile-pending"}`}
+        className={`sidebar-container${sidebarOpen ? " sidebar-open" : " sidebar-closed"}${mobileSidebarReady ? "" : " sidebar-mobile-pending"}${sidebarDragging ? " sidebar-dragging" : ""}`}
         style={{
           background: "var(--bg-panel)",
           borderRight: "1px solid var(--border)",
@@ -751,9 +991,32 @@ function AppShellInner() {
           flexDirection: "column",
           flexShrink: 0,
           zIndex: 200,
-        }}
+          "--sidebar-width": `${sidebarWidth}px`,
+        } as CSSProperties}
       >
-        {sidebarContent}
+        <div className="sidebar-inner">
+          {sidebarContent}
+        </div>
+        {/* 桌面调宽手柄：pointer-capture 拖拽 + 键盘（Arrow/Home/End）；移动端不渲染且 CSS 隐藏 */}
+        {sidebarOpen && !isMobile && (
+          <div
+            className={`sidebar-resize-handle${sidebarDragging ? " dragging" : ""}`}
+            role="separator"
+            aria-orientation="vertical"
+            tabIndex={0}
+            title={t("app_sidebarResizeHandle")}
+            aria-label={t("app_sidebarResizeHandle")}
+            aria-valuenow={sidebarWidth}
+            aria-valuemin={SIDEBAR_WIDTH_MIN}
+            aria-valuemax={SIDEBAR_WIDTH_MAX}
+            onPointerDown={handleSidebarResizeStart}
+            onPointerMove={handleSidebarResizeMove}
+            onPointerUp={handleSidebarResizeEnd}
+            onPointerCancel={handleSidebarResizeEnd}
+            onKeyDown={handleSidebarResizeKeyDown}
+            onDoubleClick={handleSidebarResizeReset}
+          />
+        )}
       </div>
 
       {/* Center: chat */}
@@ -1512,6 +1775,7 @@ function AppShellInner() {
                 key={sessionKey}
                 session={selectedSession}
                 newSessionCwd={effectiveNewSessionCwd}
+                newSessionIntentId={newSessionIntent?.id ?? null}
                 onAgentEnd={handleAgentEnd}
                 onSessionCreated={handleSessionCreated}
                 onSessionForked={handleSessionForked}

@@ -6,15 +6,33 @@ import type {
 
 export type ExtensionUiDialogRequest = Extract<ExtensionUiRequest, { method: "select" | "confirm" | "input" | "editor" }>;
 export type ExtensionUiInlineRequest = Extract<ExtensionUiRequest, { method: "select" | "confirm" | "input" }>;
+export type ExtensionUiBlockingRequest = ExtensionUiDialogRequest;
 export type ExtensionUiCustomRequest = Extract<ExtensionUiRequest, { method: "custom" }>;
 export type ExtensionUiNoticeType = "info" | "success" | "warning" | "error";
 
 export interface ExtensionUiState {
+  /** 队首投影：长 select / editor；与 inlineRequest 互斥 */
   dialog: ExtensionUiDialogRequest | null;
+  /** 队首投影：短 select / confirm / input */
   inlineRequest?: ExtensionUiInlineRequest | null;
   customUi: ExtensionUiCustomRequest | null;
   statuses: ExtensionStatusItem[];
   widgets: ExtensionWidgetItem[];
+  /** 阻塞请求 FIFO 内部队列；dialog/inline 始终由队首投影 */
+  blockingQueue: ExtensionUiBlockingRequest[];
+}
+
+export function createEmptyExtensionUiState(
+  partial?: Partial<Pick<ExtensionUiState, "statuses" | "widgets" | "customUi">>,
+): ExtensionUiState {
+  return {
+    dialog: null,
+    inlineRequest: null,
+    customUi: partial?.customUi ?? null,
+    statuses: partial?.statuses ?? [],
+    widgets: partial?.widgets ?? [],
+    blockingQueue: [],
+  };
 }
 
 export function isShortSelectOptions(options: readonly string[]): boolean {
@@ -28,10 +46,79 @@ export function isShortSelectRequest(request: ExtensionUiRequest): request is Ex
   return request.method === "select" && isShortSelectOptions(request.options);
 }
 
+function isBlockingMethod(method: ExtensionUiRequest["method"]): method is ExtensionUiBlockingRequest["method"] {
+  return method === "select" || method === "confirm" || method === "input" || method === "editor";
+}
+
+/** 队首是否走 inline 承载（短 select / confirm / input） */
+export function isInlineBlockingRequest(request: ExtensionUiBlockingRequest): request is ExtensionUiInlineRequest {
+  if (request.method === "confirm" || request.method === "input") return true;
+  if (request.method === "select") return isShortSelectRequest(request);
+  return false;
+}
+
+function getBlockingQueue(state: ExtensionUiState): ExtensionUiBlockingRequest[] {
+  return state.blockingQueue ?? [];
+}
+
+/** 由队列队首投影 dialog / inlineRequest，保证二者互斥 */
+export function projectBlockingHead(queue: readonly ExtensionUiBlockingRequest[]): {
+  dialog: ExtensionUiDialogRequest | null;
+  inlineRequest: ExtensionUiInlineRequest | null;
+} {
+  const head = queue[0];
+  if (!head) return { dialog: null, inlineRequest: null };
+  if (isInlineBlockingRequest(head)) {
+    return { dialog: null, inlineRequest: head };
+  }
+  return { dialog: head, inlineRequest: null };
+}
+
+function withProjectedQueue(
+  state: ExtensionUiState,
+  queue: ExtensionUiBlockingRequest[],
+): ExtensionUiState {
+  const projected = projectBlockingHead(queue);
+  return {
+    ...state,
+    blockingQueue: queue,
+    dialog: projected.dialog,
+    inlineRequest: projected.inlineRequest,
+  };
+}
+
+/**
+ * 按 id 从阻塞队列移除一项并重新投影队首。
+ * 可安全处理非队首 id；未知 id 返回原 state 引用。
+ */
 export function clearExtensionUiRequest(state: ExtensionUiState, requestId: string): ExtensionUiState {
-  if (state.inlineRequest?.id === requestId) return { ...state, inlineRequest: null };
-  if (state.dialog?.id === requestId) return { ...state, dialog: null };
-  return state;
+  const queue = getBlockingQueue(state);
+  if (queue.length === 0) {
+    // 兼容无队列但投影槽仍残留的旧态
+    if (state.inlineRequest?.id === requestId) {
+      return { ...state, inlineRequest: null, blockingQueue: [] };
+    }
+    if (state.dialog?.id === requestId) {
+      return { ...state, dialog: null, blockingQueue: [] };
+    }
+    return state;
+  }
+  const index = queue.findIndex((item) => item.id === requestId);
+  if (index === -1) return state;
+  const nextQueue = queue.filter((item) => item.id !== requestId);
+  return withProjectedQueue(state, nextQueue);
+}
+
+/** 清空全部阻塞投影与队列（会话切换 / 卸载）；不碰 custom/status/widget */
+export function clearAllExtensionUiBlocking(state: ExtensionUiState): ExtensionUiState {
+  const queue = getBlockingQueue(state);
+  if (queue.length === 0 && !state.dialog && !state.inlineRequest) return state;
+  return {
+    ...state,
+    dialog: null,
+    inlineRequest: null,
+    blockingQueue: [],
+  };
 }
 
 export type ExtensionUiEffect =
@@ -45,15 +132,18 @@ export function applyExtensionUiRequest(
 ): { state: ExtensionUiState; effects: ExtensionUiEffect[] } {
   switch (request.method) {
     case "select":
-      if (isShortSelectRequest(request)) {
-        return { state: { ...state, dialog: null, inlineRequest: request }, effects: [] };
-      }
-      return { state: { ...state, dialog: request, inlineRequest: null }, effects: [] };
     case "confirm":
     case "input":
-      return { state: { ...state, dialog: null, inlineRequest: request }, effects: [] };
-    case "editor":
-      return { state: { ...state, dialog: request, inlineRequest: null }, effects: [] };
+    case "editor": {
+      if (!isBlockingMethod(request.method)) return { state, effects: [] };
+      const queue = getBlockingQueue(state);
+      // 同 id 已在队列中：不重复入队（SSE 重放 / 重复事件）
+      if (queue.some((item) => item.id === request.id)) {
+        return { state, effects: [] };
+      }
+      const nextQueue = [...queue, request as ExtensionUiBlockingRequest];
+      return { state: withProjectedQueue(state, nextQueue), effects: [] };
+    }
     case "notify":
       return {
         state,

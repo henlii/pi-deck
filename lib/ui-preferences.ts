@@ -1,8 +1,8 @@
 /**
  * 会话栏 UI 偏好 seam（跨刷新持久化）。
  *
- * 只放跨刷新偏好：显示模式、项目/worktree 折叠集合。
- * 搜索查询、搜索框开关、会话级 child 折叠均为组件瞬时态，绝不写入这里。
+ * 只放跨刷新偏好：显示模式、项目/worktree 折叠集合、侧栏宽度。
+ * 搜索查询、搜索框开关、会话级 child 折叠、可见条数均为组件瞬时态，绝不写入这里。
  * 读写容错：localStorage 不可用（隐私模式/SSR）时静默回退默认值。
  */
 
@@ -10,6 +10,20 @@ export type SidebarDisplayMode = "standard" | "compact";
 
 /** 项目显示名 alias：projectRoot → 用户命名。纯 UI 层数据，与 Pi schema/磁盘/Git 无关。 */
 export type ProjectAliases = Record<string, string>;
+
+/** 桌面侧栏可调宽边界：与右侧工作区同档，避免过窄挤压会话或过宽占屏。 */
+export const SIDEBAR_WIDTH_MIN = 240;
+export const SIDEBAR_WIDTH_MAX = 520;
+export const SIDEBAR_WIDTH_DEFAULT = 300;
+
+/**
+ * 将任意输入钳到侧栏宽度合法范围；非有限数回退默认。
+ * 解析与写入共用，保证持久化值始终可渲染。
+ */
+export function clampSidebarWidth(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return SIDEBAR_WIDTH_DEFAULT;
+  return Math.min(SIDEBAR_WIDTH_MAX, Math.max(SIDEBAR_WIDTH_MIN, Math.round(value)));
+}
 
 export interface SidebarPreferences {
   displayMode: SidebarDisplayMode;
@@ -21,6 +35,8 @@ export interface SidebarPreferences {
   projectAliases: ProjectAliases;
   /** 已关闭项目根路径：仅从侧栏隐藏，不删除任何目录/会话/Git 数据。 */
   closedProjectRoots: string[];
+  /** 桌面侧栏宽度（px）；损坏/越界值解析时 clamp。 */
+  sidebarWidth: number;
 }
 
 export const DEFAULT_SIDEBAR_PREFERENCES: SidebarPreferences = {
@@ -29,6 +45,7 @@ export const DEFAULT_SIDEBAR_PREFERENCES: SidebarPreferences = {
   collapsedWorktreePaths: [],
   projectAliases: {},
   closedProjectRoots: [],
+  sidebarWidth: SIDEBAR_WIDTH_DEFAULT,
 };
 
 export const STORAGE_KEY = "pidance:sidebar-preferences";
@@ -69,7 +86,15 @@ export function parseProjectAliases(value: unknown): ProjectAliases {
  * 整体不是对象时回退完整默认。绝不抛异常。
  */
 export function parseSidebarPreferences(raw: unknown): SidebarPreferences {
-  if (raw === null || typeof raw !== "object") return { ...DEFAULT_SIDEBAR_PREFERENCES, projectAliases: {}, closedProjectRoots: [] };
+  if (raw === null || typeof raw !== "object") {
+    return {
+      ...DEFAULT_SIDEBAR_PREFERENCES,
+      projectAliases: {},
+      closedProjectRoots: [],
+      collapsedProjectRoots: [],
+      collapsedWorktreePaths: [],
+    };
+  }
   const record = raw as Record<string, unknown>;
   return {
     displayMode: record.displayMode === "compact" || record.displayMode === "standard"
@@ -79,6 +104,8 @@ export function parseSidebarPreferences(raw: unknown): SidebarPreferences {
     collapsedWorktreePaths: parsePathList(record.collapsedWorktreePaths),
     projectAliases: parseProjectAliases(record.projectAliases),
     closedProjectRoots: parsePathList(record.closedProjectRoots),
+    // 旧数据缺字段时 clamp 非数字 → 默认 300；越界/损坏一律钳入 [min, max]。
+    sidebarWidth: clampSidebarWidth(record.sidebarWidth),
   };
 }
 
@@ -89,6 +116,7 @@ export function serializeSidebarPreferences(prefs: SidebarPreferences): string {
     collapsedWorktreePaths: prefs.collapsedWorktreePaths,
     projectAliases: prefs.projectAliases,
     closedProjectRoots: prefs.closedProjectRoots,
+    sidebarWidth: clampSidebarWidth(prefs.sidebarWidth),
   });
 }
 
@@ -144,4 +172,26 @@ export function saveSidebarPreferences(prefs: SidebarPreferences): void {
   } catch {
     // 忽略存储配额 / 隐私模式错误
   }
+}
+
+/**
+ * 只更新存储中的 sidebarWidth（read-modify-write），其余字段原样保留。
+ * sidebarWidth 的唯一 owner 是 AppShell（布局 owner）；侧栏其它偏好写入不得经此函数。
+ */
+export function saveSidebarWidthToStorage(storage: StorageLike, width: number): void {
+  try {
+    const current = loadSidebarPreferencesFromStorage(storage);
+    storage.setItem(STORAGE_KEY, serializeSidebarPreferences({
+      ...current,
+      sidebarWidth: clampSidebarWidth(width),
+    }));
+  } catch {
+    // 忽略存储配额 / 隐私模式错误
+  }
+}
+
+/** SSR / 无 localStorage 环境安全 no-op。 */
+export function saveSidebarWidth(width: number): void {
+  if (typeof window === "undefined") return;
+  saveSidebarWidthToStorage(window.localStorage, width);
 }

@@ -1,11 +1,12 @@
 import { randomUUID } from "crypto";
 import { execFile } from "child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { basename, dirname, join } from "path";
 import { promisify } from "util";
 import { fileURLToPath, pathToFileURL } from "url";
 import { NextResponse } from "next/server";
+import { projectSessionFileActivitiesIntoExportHtml } from "@/lib/session-activity-export";
 import {
   exportSessionFileToJsonl,
   getExportJsonlFileName,
@@ -291,14 +292,48 @@ export async function GET(
 
     const sessionBase = basename(filePath, ".jsonl");
     const fileName = `pi-session-${sessionBase}.html`;
-    const outputPath = join(tempDir, `${randomUUID()}.html`);
+    const exportId = randomUUID();
+    const outputPath = join(tempDir, `${exportId}.html`);
+    // 有 leafId 时先写同分支临时 JSONL，再交给 Pi exporter，保证消息本体与 activity 同源
+    const branchInputPath = join(tempDir, `${exportId}-branch.jsonl`);
+    const effectiveLeaf =
+      leafId && leafId.length > 0 ? leafId : undefined;
+    let htmlSourcePath = filePath;
 
     try {
-      await exportSession(filePath, outputPath);
+      if (effectiveLeaf !== undefined) {
+        try {
+          const branchJsonl = exportSessionFileToJsonl(filePath, {
+            leafId: effectiveLeaf,
+          });
+          writeFileSync(branchInputPath, branchJsonl, "utf8");
+          htmlSourcePath = branchInputPath;
+        } catch (error) {
+          if (error instanceof SessionExportError) {
+            return NextResponse.json({ error: error.message }, { status: 400 });
+          }
+          throw error;
+        }
+      }
+
+      await exportSession(htmlSourcePath, outputPath);
 
       const html = readFileSync(outputPath, "utf8");
       const patchedHtml = patchExportHtml(html);
-      return new Response(patchedHtml, {
+      // activity 与 HTML 同源：有 leaf 时从临时 branch 文件默认 leaf 收集
+      let withActivities: string;
+      try {
+        withActivities = projectSessionFileActivitiesIntoExportHtml(
+          patchedHtml,
+          htmlSourcePath,
+        );
+      } catch (error) {
+        if (error instanceof SessionExportError) {
+          return NextResponse.json({ error: error.message }, { status: 400 });
+        }
+        throw error;
+      }
+      return new Response(withActivities, {
         headers: {
           "Content-Type": "text/html; charset=utf-8",
           "Content-Disposition": getContentDisposition(fileName, inline),
@@ -307,6 +342,7 @@ export async function GET(
       });
     } finally {
       rmSync(outputPath, { force: true });
+      rmSync(branchInputPath, { force: true });
     }
   } catch (error) {
     return NextResponse.json({ error: String(error) }, { status: 500 });

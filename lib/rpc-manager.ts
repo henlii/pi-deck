@@ -9,6 +9,21 @@ import type { SlashCommandInfo } from "@earendil-works/pi-coding-agent";
 import type { AgentSessionLike, ExtensionUiContextLike, ToolInfo } from "./pi-types";
 import type { ExtensionUiRequest, ExtensionUiResponse, ExtensionWidgetItem } from "./types";
 import { createHeadlessCustomUiTui, DEFAULT_CUSTOM_UI_COLUMNS } from "./custom-ui-terminal";
+import {
+  PIDANCE_ACTIVITY_CUSTOM_TYPE,
+  normalizeActivityInput,
+  parseAppendActivityCommand,
+  type SessionActivity,
+  type SessionActivityInput,
+} from "./session-activity";
+import {
+  createNotifyPersistState,
+  mapExtensionErrorToActivity,
+  mapPromptErrorToActivity,
+  persistExtensionNotify,
+  tryAppendActivityBestEffort,
+  type NotifyPersistState,
+} from "./session-activity-events";
 
 // ============================================================================
 // Types
@@ -199,6 +214,13 @@ export class AgentSessionWrapper {
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
   private onDestroyCallback: (() => void) | null = null;
   private _alive = true;
+  /**
+   * notify 自动持久化去重状态（有界 FIFO）。
+   * 生产路径每次 notify 现场 randomUUID，同 id 二次通常不发生；
+   * 状态仍保证可测的「同 id 只写一次」与失败不 remember。
+   * 不入 globalThis；wrapper 销毁后随实例释放。
+   */
+  private notifyPersistState: NotifyPersistState = createNotifyPersistState();
 
   constructor(public readonly inner: AgentSessionLike) {}
 
@@ -279,12 +301,7 @@ export class AgentSessionWrapper {
             notifyType: "warning",
             message: "Extension requested shutdown, but shutdown is not supported in Pidance.",
           } as ExtensionUiRequest as AgentEvent),
-          onError: (error) => this.emit({
-            type: "extension_error",
-            extensionPath: error.extensionPath,
-            event: error.event,
-            error: error.error,
-          }),
+          onError: (error) => this.emitExtensionError(error),
         });
       } else {
         this.inner.extensionRunner.setUIContext?.(uiContext, "rpc");
@@ -379,6 +396,55 @@ export class AgentSessionWrapper {
     this.onDestroyCallback = cb;
   }
 
+  /**
+   * 持久活动写入 owner：固定 customType=pidance.activity，经 SessionManager.appendCustomEntry。
+   * 禁止 custom_message（会进入 LLM context）。调用方不可覆盖 customType。
+   */
+  appendActivity(input: SessionActivityInput | SessionActivity): { entryId: string; activity: SessionActivity } {
+    if (!this._alive) {
+      throw new Error("Session is not alive");
+    }
+    const activity = normalizeActivityInput(input);
+    const entryId = this.inner.sessionManager.appendCustomEntry(
+      PIDANCE_ACTIVITY_CUSTOM_TYPE,
+      activity,
+    );
+    invalidateSessionListCache();
+    return { entryId, activity };
+  }
+
+  /**
+   * Best-effort 自动持久化：失败不抛、不阻断原事件、不 console 敏感内容。
+   * 超长/非法由 normalizeActivityInput fail closed；不截断。
+   */
+  private tryAutoPersistActivity(input: SessionActivityInput | null): void {
+    tryAppendActivityBestEffort((mapped) => this.appendActivity(mapped), input);
+  }
+
+  /**
+   * 统一 extension_error 生产：先 best-effort 持久化，再 emit 原事件（形状/次数不变）。
+   * 三个生产点（bindExtensions onError、custom_ui_input、custom_ui）均经此 helper，避免双 emit/双 append。
+   */
+  private emitExtensionError(error: {
+    extensionPath: string;
+    event: string;
+    error: string;
+  }): void {
+    this.tryAutoPersistActivity(
+      mapExtensionErrorToActivity({
+        error: error.error,
+        extensionPath: error.extensionPath,
+        event: error.event,
+      }),
+    );
+    this.emit({
+      type: "extension_error",
+      extensionPath: error.extensionPath,
+      event: error.event,
+      error: error.error,
+    });
+  }
+
   async send(command: Record<string, unknown>): Promise<unknown> {
     this.resetIdleTimer();
     const type = command.type as string;
@@ -405,9 +471,17 @@ export class AgentSessionWrapper {
         }).catch((error) => {
           this.promptRunning = false;
           invalidateSessionListCache();
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          // best-effort 持久化；失败不阻断原 prompt_error
+          this.tryAutoPersistActivity(
+            mapPromptErrorToActivity({
+              errorMessage,
+              ...(streamingBehavior ? { streamingBehavior } : {}),
+            }),
+          );
           this.emit({
             type: "prompt_error",
-            errorMessage: error instanceof Error ? error.message : String(error),
+            errorMessage,
           });
           if (!streamingBehavior) this.emit({ type: "prompt_done" });
           notifyRunningChange();
@@ -692,6 +766,12 @@ export class AgentSessionWrapper {
         return null;
       }
 
+      case "append_activity": {
+        // 受控命令：校验后复用 appendActivity owner；customType 固定不可覆盖。
+        const activity = parseAppendActivityCommand(command);
+        return this.appendActivity(activity);
+      }
+
       default:
         throw new Error(`Unsupported command: ${type}`);
     }
@@ -782,8 +862,7 @@ export class AgentSessionWrapper {
       if (this.activeCustomUis.has(id)) this.emitCustomUiRender(id, custom);
     } catch (error) {
       this.closeCustomUi(id, undefined);
-      this.emit({
-        type: "extension_error",
+      this.emitExtensionError({
         extensionPath: `custom-ui:${id}`,
         event: "custom_ui_input",
         error: error instanceof Error ? error.message : String(error),
@@ -848,8 +927,7 @@ export class AgentSessionWrapper {
         })
         .catch((error) => {
           if (completed) return;
-          this.emit({
-            type: "extension_error",
+          this.emitExtensionError({
             extensionPath: `custom-ui:${id}`,
             event: "custom_ui",
             error: error instanceof Error ? error.message : String(error),
@@ -933,9 +1011,21 @@ export class AgentSessionWrapper {
         opts?.signal,
       ),
       notify: (message, type) => {
+        const id = randomUUID();
+        // warning/error 经单一 owner 自动持久化；info/success/缺省 transient。
+        // 同 requestId 只写一次（失败不 remember）；不同 id 同文案各写一次。
+        persistExtensionNotify(
+          this.notifyPersistState,
+          (input) => this.appendActivity(input),
+          {
+            message: String(message),
+            notifyType: type === undefined ? undefined : String(type),
+            requestId: id,
+          },
+        );
         this.emit({
           type: "extension_ui_request",
-          id: randomUUID(),
+          id,
           method: "notify",
           message,
           notifyType: type,

@@ -9,6 +9,11 @@ import { normalize as normalizePath } from "path";
 import type { AgentMessage, SessionEntry, SessionHeader, SessionInfo, SessionContext } from "./types";
 import type { SessionEntry as PiSessionEntry, SessionInfo as PiSessionInfo } from "@earendil-works/pi-coding-agent";
 import { normalizeToolCalls } from "./normalize";
+import {
+  PIDANCE_ACTIVITY_CUSTOM_TYPE,
+  activityToUiMessage,
+  parseActivityData,
+} from "./session-activity";
 import { projectObservationalMemory, type ObservationalMemoryView } from "./om-ledger";
 import { projectWorkspaceHistory, type WorkspaceHistoryView } from "./workspace-history";
 import { resolveProject, type ProjectInfo } from "./worktree";
@@ -665,6 +670,16 @@ function entryToUiMessage(
         details: entry.details,
         timestamp: parseEntryTimestamp(entry.timestamp),
       };
+    case "custom": {
+      // type:"custom" 不进入 LLM；仅投影合法 pidance.activity 到 UI timeline。
+      // 其它 customType（om / workspace-history 等）保持侧栏投影，不进聊天气泡。
+      // 非法/未知 version 安全跳过。压缩语义跟随 piBuildContextEntries 可见集：
+      // 被压缩掉的普通消息前的 activity 不复活。
+      if (entry.customType !== PIDANCE_ACTIVITY_CUSTOM_TYPE) return null;
+      const activity = parseActivityData(entry.data);
+      if (!activity) return null;
+      return activityToUiMessage(activity, parseEntryTimestamp(entry.timestamp));
+    }
     default:
       return null;
   }

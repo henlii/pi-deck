@@ -31,8 +31,10 @@ import {
 interface Props {
   session: SessionInfo | null;
   newSessionCwd: string | null;
+  /** 新建意图 id，透传 useAgentSession 供 onSessionCreated 门禁。 */
+  newSessionIntentId?: string | null;
   onAgentEnd?: () => void;
-  onSessionCreated?: (session: SessionInfo) => void;
+  onSessionCreated?: (session: SessionInfo, intentId?: string | null) => void;
   onSessionForked?: (newSessionId: string) => void;
   modelsRefreshKey?: number;
   chatInputRef?: React.RefObject<ChatInputHandle | null>;
@@ -62,8 +64,10 @@ const CHAT_MINIMAP_WIDTH = 36;
 const CHAT_COLUMN_PADDING = 16;
 const CHAT_INPUT_RIGHT_PADDING = CHAT_COLUMN_PADDING + CHAT_MINIMAP_WIDTH;
 
-function ProcessDetailsGroup({ messageCount, toolCallCount, children, t }: { messageCount: number; toolCallCount: number; children: ReactNode; t: ReturnType<typeof useI18n>["t"] }) {
-  const [expanded, setExpanded] = useState(false);
+// 过程详情默认持续展开（Issue #13）：外层不再默认隐藏整个 user→answer 过程；
+// 用户仍可主动收起/展开，局部 thinking / tool 明细保持各自的按需折叠。
+export function ProcessDetailsGroup({ messageCount, toolCallCount, children, t }: { messageCount: number; toolCallCount: number; children: ReactNode; t: ReturnType<typeof useI18n>["t"] }) {
+  const [expanded, setExpanded] = useState(true);
   const parts = [t("chat_processDetails"), `${messageCount} ${t(messageCount === 1 ? "chat_message" : "chat_messages")}`];
   if (toolCallCount > 0) parts.push(`${toolCallCount} ${t(toolCallCount === 1 ? "chat_toolCall" : "chat_toolCalls")}`);
 
@@ -105,7 +109,7 @@ function ProcessDetailsGroup({ messageCount, toolCallCount, children, t }: { mes
   );
 }
 
-export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreated, onSessionForked, modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSessionStatsChange, onSessionStatsPanelOpen, onContextUsageChange, onOpenFile, onOpenSubagentSession }: Props) {
+export function ChatWindow({ session, newSessionCwd, newSessionIntentId, onAgentEnd, onSessionCreated, onSessionForked, modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSessionStatsChange, onSessionStatsPanelOpen, onContextUsageChange, onOpenFile, onOpenSubagentSession }: Props) {
   const { t } = useI18n();
   const { soundEnabled, onSoundToggle, playDoneSound, unlockAudio } = useAudio();
   const isMobile = useIsMobile();
@@ -138,7 +142,7 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
     retryInfo, contextUsage, forkingEntryId,
     isCompacting, compactError, compactResult, displayModel: displayModelValue, sessionStats,
     slashCommands, slashCommandsLoading, queuedMessages,
-    notices, extensionDialog, extensionInlineRequest, extensionCustomUi, extensionStatuses, extensionWidgets, respondToExtensionUi, sendExtensionCustomInput,
+    notices, extensionDialog, extensionInlineRequest, extensionCustomUi, extensionStatuses, extensionWidgets, respondToExtensionUi, dismissExtensionUiRequest, sendExtensionCustomInput,
     todos,
     observationalMemory,
     workspaceHistory,
@@ -155,7 +159,7 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
     handleWorkspaceUndo, handleWorkspaceRedo, handleWorkspaceCheckpoint,
     branchBusy,
   } = useAgentSession({
-    session, newSessionCwd, onAgentEnd: wrappedOnAgentEnd, onSessionCreated, onSessionForked,
+    session, newSessionCwd, newSessionIntentId, onAgentEnd: wrappedOnAgentEnd, onSessionCreated, onSessionForked,
     modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSessionStatsPanelOpen,
     isMobile,
   });
@@ -176,7 +180,7 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
     setWhActing(false);
   }, [todoCollapseScope]);
 
-  // 这里只负责在 expiresAt 到达时刷新 UI 并禁用卡片，不发送任何协议响应。
+  // expiresAt 到达：按 id 从 FIFO 清理并推进；不发送 extension_ui_response（服务端 timeout 自结算）。
   useEffect(() => {
     setExpiredInlineRequestId(null);
     const requestId = extensionInlineRequest?.id;
@@ -188,6 +192,7 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
       const remaining = expiresAt - Date.now();
       if (remaining <= 0) {
         setExpiredInlineRequestId(requestId);
+        dismissExtensionUiRequest(requestId);
         return;
       }
       timer = setTimeout(scheduleExpiry, Math.min(remaining, 2_147_483_647));
@@ -197,7 +202,29 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
     return () => {
       if (timer !== undefined) clearTimeout(timer);
     };
-  }, [extensionInlineRequest?.id, extensionInlineRequest?.expiresAt]);
+  }, [extensionInlineRequest?.id, extensionInlineRequest?.expiresAt, dismissExtensionUiRequest]);
+
+  // dialog 队首过期同样按 id 清理推进；不伪造协议响应。
+  useEffect(() => {
+    const requestId = extensionDialog?.id;
+    const expiresAt = extensionDialog?.expiresAt;
+    if (!requestId || typeof expiresAt !== "number" || !Number.isFinite(expiresAt)) return;
+
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const scheduleExpiry = () => {
+      const remaining = expiresAt - Date.now();
+      if (remaining <= 0) {
+        dismissExtensionUiRequest(requestId);
+        return;
+      }
+      timer = setTimeout(scheduleExpiry, Math.min(remaining, 2_147_483_647));
+    };
+    scheduleExpiry();
+
+    return () => {
+      if (timer !== undefined) clearTimeout(timer);
+    };
+  }, [extensionDialog?.id, extensionDialog?.expiresAt, dismissExtensionUiRequest]);
 
   // 扩展请求不会改变 messages.length，因此补充一次受阅读位置约束的末端滚动。
   // 用户若已向上阅读、卡片距离视口较远，则保持当前位置不动。

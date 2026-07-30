@@ -14,6 +14,7 @@ import {
   resolveSessionPath,
   type SessionManagerReadView,
 } from "./session-reader";
+import type { SessionActivity, SessionActivityInput } from "./session-activity";
 import type { SessionInfo } from "./types";
 
 export type SessionCommand = Record<string, unknown> & { type: string };
@@ -91,6 +92,11 @@ const defaultDeps: SessionServiceDeps = {
 export type SessionService = {
   listSessions(): Promise<{ sessions: SessionInfo[]; runningSessionIds: string[] }>;
   resolvePath(sessionId: string): Promise<string | null>;
+  /**
+   * 按 id 只读取单条 SessionInfo（列表投影子集）；不启动 AgentSession。
+   * 底层可能枚举磁盘/缓存，但只返回目标条目；不存在 → null。
+   */
+  getSessionInfo(sessionId: string): Promise<SessionInfo | null>;
   /** 只读，不启动，不套 readOnly 门禁；readOnly subagent 仍可浏览 */
   getReadView(sessionId: string): Promise<SessionReadView | null>;
   /** 只取 alive wrapper，绝不启动 */
@@ -109,6 +115,14 @@ export type SessionService = {
     toolNames?: string[],
   ): Promise<{ session: AgentSessionWrapper; realSessionId: string }>;
   send(sessionId: string, command: SessionCommand): Promise<unknown>;
+  /**
+   * 类型安全的持久活动写入：ensureLive（含 readOnly 门禁）后调用 wrapper.appendActivity。
+   * 不得绕过 readOnly；customType 固定为 pidance.activity。
+   */
+  appendActivity(
+    sessionId: string,
+    input: SessionActivityInput,
+  ): Promise<{ entryId: string; activity: SessionActivity }>;
   createNew(options: CreateNewSessionOptions): Promise<CreateNewSessionResult>;
   getRunningIds(): string[];
   subscribeRunning(listener: (ids: string[]) => void): () => void;
@@ -129,6 +143,12 @@ export function createSessionService(overrides: Partial<SessionServiceDeps> = {}
 
     resolvePath(sessionId) {
       return deps.resolveSessionPath(sessionId);
+    },
+
+    async getSessionInfo(sessionId) {
+      if (!sessionId || typeof sessionId !== "string") return null;
+      const sessions = await deps.listAllSessions();
+      return sessions.find((item) => item.id === sessionId) ?? null;
     },
 
     async isReadOnly(sessionId) {
@@ -197,6 +217,11 @@ export function createSessionService(overrides: Partial<SessionServiceDeps> = {}
     async send(sessionId, command) {
       const session = await service.ensureLive(sessionId);
       return session.send(command);
+    },
+
+    async appendActivity(sessionId, input) {
+      const session = await service.ensureLive(sessionId);
+      return session.appendActivity(input);
     },
 
     async createNew({ cwd, command }) {
