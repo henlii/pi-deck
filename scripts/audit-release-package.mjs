@@ -13,6 +13,11 @@
  *   npm run release:audit:tgz -- path.tgz
  *   → 直接解析 tgz 内容审计；bin 只信包内 package.json，不读工作区冒充制品
  *
+ * 固定中性构建根（可选）：
+ *   仅当 package/workspace 根精确为 /tmp/pidance-release-build 时，
+ *   该路径不作为敏感扫描根；必须设置 PIDANCE_RELEASE_SOURCE_ROOT 为
+ *   原始 source checkout 的绝对路径（加入敏感扫描）。缺失/非法 fail closed。
+ *
  * 不生成 tgz（pre）、不 publish、不 version/tag/push。
  */
 import { spawnSync } from "node:child_process";
@@ -26,15 +31,20 @@ import {
   formatAuditReport,
   loadWorkspaceTextContents,
   normalizePackDryRun,
+  resolveReleaseAuditRoots,
 } from "../lib/release-package-audit.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const repoRoot = path.resolve(__dirname, "..");
+/** package/workspace 根：npm pack、读 package.json、读待打包文件 */
+const packageRoot = path.resolve(__dirname, "..");
 
 function printUsage() {
   console.error(`用法:
   node scripts/audit-release-package.mjs [--pre]
   node scripts/audit-release-package.mjs --tgz <path.tgz>
+
+中性构建根（仅 /tmp/pidance-release-build）:
+  导出 PIDANCE_RELEASE_SOURCE_ROOT=<原始 source checkout 绝对路径>
 `);
 }
 
@@ -58,17 +68,33 @@ function parseArgs(argv) {
   return { mode: "pre" };
 }
 
-function loadPackageJson() {
-  const raw = fs.readFileSync(path.join(repoRoot, "package.json"), "utf8");
+/**
+ * 解析 package 根与敏感扫描根；失败时非 0 退出。
+ * pre 与 tgz 共用同一敏感根集合。
+ */
+function resolveAuditContext() {
+  const resolved = resolveReleaseAuditRoots({
+    packageRoot,
+    env: process.env,
+  });
+  if (!resolved.ok) {
+    console.error(resolved.error);
+    process.exit(2);
+  }
+  return resolved;
+}
+
+function loadPackageJson(root) {
+  const raw = fs.readFileSync(path.join(root, "package.json"), "utf8");
   return JSON.parse(raw);
 }
 
-function runNpmPackDryRun() {
+function runNpmPackDryRun(root) {
   const result = spawnSync(
     "npm",
     ["pack", "--dry-run", "--json", "--ignore-scripts"],
     {
-      cwd: repoRoot,
+      cwd: root,
       encoding: "utf8",
       maxBuffer: 64 * 1024 * 1024,
       env: process.env,
@@ -106,17 +132,20 @@ function emitResult(result) {
 }
 
 function runPre() {
-  const pkg = loadPackageJson();
-  const packJson = runNpmPackDryRun();
+  const ctx = resolveAuditContext();
+  const pkg = loadPackageJson(ctx.packageRoot);
+  const packJson = runNpmPackDryRun(ctx.packageRoot);
   const pack = normalizePackDryRun(packJson);
   const fileContents = loadWorkspaceTextContents(
-    repoRoot,
+    ctx.packageRoot,
     pack.files.map((f) => f.path),
   );
   const result = auditReleasePackage({
     pack,
     bin: pkg.bin ?? null,
-    repoRoot,
+    // package 根仍传 repoRoot 仅作兼容；实际敏感扫描以 sensitiveRoots 为准
+    repoRoot: null,
+    sensitiveRoots: ctx.sensitiveRoots,
     homeDir: os.homedir(),
     fileContents,
     requireTextContents: true,
@@ -129,12 +158,14 @@ function runTgz(tgzPath) {
     console.error(`tgz 不存在: ${tgzPath}`);
     process.exit(2);
   }
-  // 期望身份来自当前 checkout 的 package.json（干净 tag）；bin/内容仍只信 tgz
-  const pkg = loadPackageJson();
+  const ctx = resolveAuditContext();
+  // 期望身份来自当前 package checkout 的 package.json；bin/内容仍只信 tgz
+  const pkg = loadPackageJson(ctx.packageRoot);
   const result = auditReleaseTgz({
     tgzPathOrBuffer: tgzPath,
     filename: path.basename(tgzPath),
-    repoRoot,
+    repoRoot: null,
+    sensitiveRoots: ctx.sensitiveRoots,
     homeDir: os.homedir(),
     expectedName: typeof pkg.name === "string" ? pkg.name : null,
     expectedVersion: typeof pkg.version === "string" ? pkg.version : null,

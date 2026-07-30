@@ -27,7 +27,9 @@ const nextConfig: NextConfig = {
     }
     return config;
   },
-  allowedDevOrigins: ["127.0.0.1", "192.168.*.*", "100.99.31.21", "deck.namixinxi.cn"],
+  ...(process.env.NODE_ENV === "development"
+    ? { allowedDevOrigins: ["127.0.0.1", "192.168.*.*", "100.99.31.21", "deck.namixinxi.cn"] }
+    : {}),
   async headers() {
     return [
       {

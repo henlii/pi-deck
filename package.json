@@ -34,7 +34,6 @@
     "!.next/**/*.js.map",
     "!.next/**/*.nft.json",
     "!.next/required-server-files.js",
-    "!.next/required-server-files.json",
     "!.next/images-manifest.json",
     "!.next/export-marker.json",
     "!.next/react-loadable-manifest.json",
