@@ -14,38 +14,42 @@
  */
 /** 被撤回的一条 user 消息的展示/恢复记录。 */
 export interface RetractedRecord {
-  /** user 消息的 entry id（撤回目标）。 */
-  entryId: string;
-  /** 预览文本（截断后的 user 内容）。 */
-  text: string;
-  /** 该消息子孙链的最深末端 entry id；恢复时作为 navigate_tree 目标。 */
-  chainTailEntryId: string;
-  /** user 消息时间戳（展示用）。 */
-  timestamp?: string;
+	/** user 消息的 entry id（撤回目标）。 */
+	entryId: string;
+	/** 预览文本（截断后的 user 内容）。 */
+	text: string;
+	/** 该消息子孙链的最深末端 entry id；恢复时作为 navigate_tree 目标。 */
+	chainTailEntryId: string;
+	/** user 消息时间戳（展示用）。 */
+	timestamp?: string;
 }
 
 export const RETRACT_PREVIEW_MAX = 120;
 
 /** 从 user 消息内容提取纯文本预览（鸭子类型，兼容 SDK 与本地 message 形状）。 */
-export function extractUserText(message: { role?: string; content?: unknown } | null | undefined): string {
-  if (!message || message.role !== "user") return "";
-  const content = message.content;
-  const text =
-    typeof content === "string"
-      ? content
-      : Array.isArray(content)
-        ? content
-            .filter(
-              (b): b is { type: "text"; text?: string } =>
-                b != null && typeof b === "object" && (b as { type?: unknown }).type === "text",
-            )
-            .map((b) => b.text ?? "")
-            .join("\n")
-        : "";
-  const collapsed = text.replace(/\s+/g, " ").trim();
-  return collapsed.length > RETRACT_PREVIEW_MAX
-    ? `${collapsed.slice(0, RETRACT_PREVIEW_MAX)}…`
-    : collapsed;
+export function extractUserText(
+	message: { role?: string; content?: unknown } | null | undefined,
+): string {
+	if (!message || message.role !== "user") return "";
+	const content = message.content;
+	const text =
+		typeof content === "string"
+			? content
+			: Array.isArray(content)
+				? content
+						.filter(
+							(b): b is { type: "text"; text?: string } =>
+								b != null &&
+								typeof b === "object" &&
+								(b as { type?: unknown }).type === "text",
+						)
+						.map((b) => b.text ?? "")
+						.join("\n")
+				: "";
+	const collapsed = text.replace(/\s+/g, " ").trim();
+	return collapsed.length > RETRACT_PREVIEW_MAX
+		? `${collapsed.slice(0, RETRACT_PREVIEW_MAX)}…`
+		: collapsed;
 }
 
 /**
@@ -54,57 +58,60 @@ export function extractUserText(message: { role?: string; content?: unknown } | 
  * 无子孙时返回 entryId 自身；entry 不存在返回 null。
  */
 export function computeChainTail(
-  entries: ReadonlyArray<{ id: string; parentId: string | null }>,
-  entryId: string,
+	entries: ReadonlyArray<{ id: string; parentId: string | null }>,
+	entryId: string,
 ): string | null {
-  if (!entries.some((e) => e.id === entryId)) return null;
-  const childrenOf = new Map<string, string[]>();
-  for (const e of entries) {
-    if (e.parentId === null) continue;
-    const list = childrenOf.get(e.parentId);
-    if (list) list.push(e.id);
-    else childrenOf.set(e.parentId, [e.id]);
-  }
-  let cur = entryId;
-  for (let guard = 0; guard < entries.length + 1; guard++) {
-    const children = childrenOf.get(cur);
-    if (!children || children.length === 0) return cur;
-    cur = children[0];
-  }
-  return cur;
+	if (!entries.some((e) => e.id === entryId)) return null;
+	const childrenOf = new Map<string, string[]>();
+	for (const e of entries) {
+		if (e.parentId === null) continue;
+		const list = childrenOf.get(e.parentId);
+		if (list) list.push(e.id);
+		else childrenOf.set(e.parentId, [e.id]);
+	}
+	let cur = entryId;
+	for (let guard = 0; guard < entries.length + 1; guard++) {
+		const children = childrenOf.get(cur);
+		if (!children || children.length === 0) return cur;
+		cur = children[0];
+	}
+	return cur;
 }
 
 /** 判断 targetId 是否落在以 ancestorId 为根的子孙链上（含自身）。 */
 export function isDescendantOrSelf(
-  entries: ReadonlyArray<{ id: string; parentId: string | null }>,
-  targetId: string,
-  ancestorId: string,
+	entries: ReadonlyArray<{ id: string; parentId: string | null }>,
+	targetId: string,
+	ancestorId: string,
 ): boolean {
-  if (targetId === ancestorId) return true;
-  const parentOf = new Map<string, string | null>();
-  for (const e of entries) parentOf.set(e.id, e.parentId);
-  let cur = parentOf.get(targetId) ?? null;
-  for (let guard = 0; guard < entries.length + 1 && cur; guard++) {
-    if (cur === ancestorId) return true;
-    cur = parentOf.get(cur) ?? null;
-  }
-  return false;
+	if (targetId === ancestorId) return true;
+	const parentOf = new Map<string, string | null>();
+	for (const e of entries) parentOf.set(e.id, e.parentId);
+	let cur = parentOf.get(targetId) ?? null;
+	for (let guard = 0; guard < entries.length + 1 && cur; guard++) {
+		if (cur === ancestorId) return true;
+		cur = parentOf.get(cur) ?? null;
+	}
+	return false;
 }
 
 /** 判断某 user 消息是否在当前 leaf 的祖先链上（链上校验用）。 */
 export function isOnLeafChain(
-  entries: ReadonlyArray<{ id: string; parentId: string | null }>,
-  leafId: string | null,
-  entryId: string,
+	entries: ReadonlyArray<{ id: string; parentId: string | null }>,
+	leafId: string | null,
+	entryId: string,
 ): boolean {
-  if (!leafId) return false;
-  return isDescendantOrSelf(entries, leafId, entryId);
+	if (!leafId) return false;
+	return isDescendantOrSelf(entries, leafId, entryId);
 }
 
 /** 入栈：已存在的 entryId 忽略（幂等）。返回新栈（不修改入参）。 */
-export function pushRetracted(stack: readonly RetractedRecord[], record: RetractedRecord): RetractedRecord[] {
-  if (stack.some((r) => r.entryId === record.entryId)) return [...stack];
-  return [...stack, record];
+export function pushRetracted(
+	stack: readonly RetractedRecord[],
+	record: RetractedRecord,
+): RetractedRecord[] {
+	if (stack.some((r) => r.entryId === record.entryId)) return [...stack];
+	return [...stack, record];
 }
 
 /**
@@ -113,9 +120,9 @@ export function pushRetracted(stack: readonly RetractedRecord[], record: Retract
  *   并行兄弟分支不在子孙链上，保持撤回状态。）
  */
 export function removeRetracted(
-  entries: ReadonlyArray<{ id: string; parentId: string | null }>,
-  stack: readonly RetractedRecord[],
-  entryId: string,
+	entries: ReadonlyArray<{ id: string; parentId: string | null }>,
+	stack: readonly RetractedRecord[],
+	entryId: string,
 ): RetractedRecord[] {
-  return stack.filter((r) => !isDescendantOrSelf(entries, r.entryId, entryId));
+	return stack.filter((r) => !isDescendantOrSelf(entries, r.entryId, entryId));
 }
