@@ -20,6 +20,8 @@ const MAX_METADATA_CANDIDATES = 512;
 const HEX_RUN = /^[0-9a-f]{8}$/i;
 const RUN_DIR = /^run-(\d+)$/;
 
+const ASYNC_RUN = /^async-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export const SUBAGENT_DISCOVERY_LIMITS = {
   maxChildren: MAX_CHILDREN,
   maxDepth: MAX_DEPTH,
@@ -83,9 +85,12 @@ function runIndex(file: string): number | null {
   return match ? Number(match[1]) : null;
 }
 
-function isStrictLayout(file: string, root: string): boolean {
+function isDiscoveredLayout(file: string, root: string): boolean {
   const parts = relative(resolve(root), resolve(file)).split(/[\\/]/);
-  return parts.length === 3 && HEX_RUN.test(parts[0]) && RUN_DIR.test(parts[1]) && parts[2] === "session.jsonl";
+  // 同步/前台 run 布局：<root>/<hex>/run-<N>/session.jsonl
+  if (parts.length === 3 && HEX_RUN.test(parts[0]) && RUN_DIR.test(parts[1]) && parts[2] === "session.jsonl") return true;
+  // async 布局（pi-subagents sessionDir）：<root>/async-<uuid>/*.jsonl（扁平）
+  return parts.length === 2 && ASYNC_RUN.test(parts[0]) && parts[1].endsWith(".jsonl");
 }
 
 type MetadataCandidate = { path: string; runId?: string; agent?: string };
@@ -193,6 +198,19 @@ function fallbackPaths(parentFile: string): string[] {
         if (result.length >= MAX_SCAN_ENTRIES) return result;
       }
     }
+    // async 布局：<root>/async-<uuid>/<timestamp>_<uuid>.jsonl（扁平，无 run-N）
+    for (const entry of readdirSync(root, { withFileTypes: true })) {
+      if (!entry.isDirectory() || entry.isSymbolicLink() || !ASYNC_RUN.test(entry.name)) continue;
+      const asyncRoot = join(root, entry.name);
+      const names = readdirSync(asyncRoot, { withFileTypes: true })
+        .filter((file) => file.isFile() && !file.isSymbolicLink() && file.name.endsWith(".jsonl"))
+        .map((file) => file.name)
+        .sort();
+      for (const name of names) {
+        result.push(join(asyncRoot, name));
+        if (result.length >= MAX_SCAN_ENTRIES) return result;
+      }
+    }
   } catch { /* 回退扫描失败即安全忽略 */ }
   return result;
 }
@@ -208,13 +226,15 @@ export function discoverSubagentSessions(parentFile: string, parentId: string): 
     if (found.length >= MAX_CHILDREN) break;
     const absolute = resolve(candidate.path);
     const file = safeRealFile(absolute, parentRoot);
-    if (!file || !isStrictLayout(file, parentRoot) || seenPaths.has(file)) continue;
-    const index = runIndex(file);
+    if (!file || !isDiscoveredLayout(file, parentRoot) || seenPaths.has(file)) continue;
+    const rel = relative(resolve(parentRoot), resolve(file)).split(/[\\/]/);
+    const asyncLayout = rel.length === 2 && ASYNC_RUN.test(rel[0]);
+    const index = asyncLayout ? 0 : runIndex(file);
     if (index === null || index < 0) continue;
     const header = readHeader(file);
     if (!header || seenIds.has(header.id) || header.id === parentId) continue;
     // 防止同一条祖先链被恶意 header 重新指回自身。
-    const runId = candidate.runId ?? basename(dirname(dirname(file)));
+    const runId = asyncLayout ? rel[0].slice("async-".length) : candidate.runId ?? basename(dirname(dirname(file)));
     seenPaths.add(file);
     seenIds.add(header.id);
     found.push({ path: file, header, runIndex: index, parentSessionId: parentId, runId, agent: candidate.agent });
