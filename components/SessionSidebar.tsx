@@ -473,6 +473,7 @@ function ChevronButton({ collapsed, label, onClick }: {
 export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSession, initialSessionId, skipInitialProjectSelection, onInitialRestoreDone, refreshKey, onSessionDeleted, optimisticSessions }: Props) {
   const { t } = useI18n();
   const [serverSessions, setServerSessions] = useState<SessionInfo[]>([]);
+  const serverSessionsRef = useRef<SessionInfo[]>([]);
   const [pendingById, setPendingById] = useState<Map<string, SessionInfo>>(() => new Map());
   const [pendingIds, setPendingIds] = useState<Set<string>>(() => new Set());
   const [deletedIds, setDeletedIds] = useState<Set<string>>(() => new Set());
@@ -515,6 +516,9 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   const [runningSessionIds, setRunningSessionIds] = useState<Set<string>>(() => new Set());
   const [unreadSessionIds, setUnreadSessionIds] = useState<Set<string>>(() => loadUnreadSessionIds());
   // 搜索：查询与开关均为组件瞬时态，不写入偏好
+  // subagent 活跃运行（子会话 + 等待中的主会话）；由 /api/subagent-runs 推导。
+  const [subagentRunningIds, setSubagentRunningIds] = useState<Set<string>>(() => new Set());
+  const subagentPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [sessionQuery, setSessionQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   /** meta = 名称/首消息；fulltext = 消息正文（服务端 FTS/JSONL）。 */
@@ -588,6 +592,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
       const data = await res.json() as { sessions: SessionInfo[]; runningSessionIds?: string[] };
       if (!mountedRef.current || !shouldApplySessionListResponse(gen, sessionListFetchGenRef.current)) return;
       setServerSessions(data.sessions);
+      serverSessionsRef.current = data.sessions;
       setPendingIds((prev) => reconcilePendingSessionIds(prev, data.sessions));
       setPendingById((prev) => {
         if (prev.size === 0) return prev;
@@ -719,6 +724,53 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     return () => source.close();
   }, []);
 
+  // subagent 活跃运行轮询：异步子会话运行中 → 子会话 + 其主会话显示 running。
+  // 数据源 /api/subagent-runs（read-only），30s 轮询 + 会话列表刷新时同步拉取。
+  const refreshSubagentRunning = useCallback(async () => {
+    try {
+      const res = await fetch("/api/subagent-runs?limit=50");
+      if (!res.ok) return;
+      const data = await res.json() as { runs?: Array<{
+        state?: string;
+        steps?: Array<{ sessionId?: string }>;
+      }> };
+      const active = (data.runs ?? []).filter((r) =>
+        r.state === "running" || r.state === "queued" || r.state === "paused",
+      );
+      const childIds = new Set<string>();
+      for (const run of active) {
+        for (const step of run.steps ?? []) {
+          if (step.sessionId) childIds.add(step.sessionId);
+        }
+      }
+      // 主会话等待中：子会话的 parent 也显示 running。
+      // 经 ref 读取最新会话列表（不把 setState updater 当数据源用）。
+      const parentIds = new Set<string>();
+      if (childIds.size > 0) {
+        for (const s of serverSessionsRef.current) {
+          if (s.subagent?.parentSessionId && childIds.has(s.id)) {
+            parentIds.add(s.subagent.parentSessionId);
+          }
+        }
+      }
+      setSubagentRunningIds(new Set([...childIds, ...parentIds]));
+    } catch {
+      // 轮询失败静默：保持上次状态。
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshSubagentRunning();
+    subagentPollRef.current = setInterval(() => void refreshSubagentRunning(), 30_000);
+    return () => {
+      if (subagentPollRef.current) clearInterval(subagentPollRef.current);
+    };
+  }, [refreshSubagentRunning]);
+
+  // 会话列表刷新后同步拉一次 subagent 状态（子会话刚被发现时）。
+  useEffect(() => {
+    if (sessionRefreshDone) void refreshSubagentRunning();
+  }, [sessionRefreshDone, refreshSubagentRunning]);
   useEffect(() => {
     const previous = previousRunningSessionIdsRef.current;
     const completedInBackground = [...previous].filter((id) => !runningSessionIds.has(id) && id !== selectedSessionId);
@@ -1698,6 +1750,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
             selectedProject={selectedProject}
             selectedSessionId={selectedSessionId}
             runningSessionIds={runningSessionIds}
+            subagentRunningIds={subagentRunningIds}
             unreadSessionIds={unreadSessionIds}
             collapsedProjectRoots={collapsedProjectRoots}
             collapsedWorktreePaths={collapsedWorktreePaths}
@@ -2208,6 +2261,7 @@ function ProjectSection({
   selectedProject,
   selectedSessionId,
   runningSessionIds,
+  subagentRunningIds,
   unreadSessionIds,
   collapsedProjectRoots,
   collapsedWorktreePaths,
@@ -2253,6 +2307,7 @@ function ProjectSection({
   selectedProject: string | null;
   selectedSessionId: string | null;
   runningSessionIds: Set<string>;
+  subagentRunningIds: Set<string>;
   unreadSessionIds: Set<string>;
   collapsedProjectRoots: ReadonlySet<string>;
   collapsedWorktreePaths: ReadonlySet<string>;
@@ -2392,6 +2447,7 @@ function ProjectSection({
                 node={node}
                 selectedSessionId={selectedSessionId}
                 runningSessionIds={runningSessionIds}
+                subagentRunningIds={subagentRunningIds}
                 unreadSessionIds={unreadSessionIds}
                 onSelectSession={onSelectSession}
                 onRenamed={onRenamed}
@@ -2423,6 +2479,7 @@ function ProjectSection({
               selectedCwd={selectedCwd}
               selectedSessionId={selectedSessionId}
               runningSessionIds={runningSessionIds}
+              subagentRunningIds={subagentRunningIds}
               unreadSessionIds={unreadSessionIds}
               collapsedWorktreePaths={collapsedWorktreePaths}
               collapsedSessionIds={collapsedSessionIds}
@@ -2523,6 +2580,7 @@ function WorktreeGroupSection({
   selectedCwd,
   selectedSessionId,
   runningSessionIds,
+  subagentRunningIds,
   unreadSessionIds,
   collapsedWorktreePaths,
   collapsedSessionIds,
@@ -2551,6 +2609,7 @@ function WorktreeGroupSection({
   selectedCwd: string | null;
   selectedSessionId: string | null;
   runningSessionIds: Set<string>;
+  subagentRunningIds: Set<string>;
   unreadSessionIds: Set<string>;
   collapsedWorktreePaths: ReadonlySet<string>;
   collapsedSessionIds: ReadonlySet<string>;
@@ -2679,6 +2738,7 @@ function WorktreeGroupSection({
               node={node}
               selectedSessionId={selectedSessionId}
               runningSessionIds={runningSessionIds}
+              subagentRunningIds={subagentRunningIds}
               unreadSessionIds={unreadSessionIds}
               onSelectSession={onSelectSession}
               onRenamed={onRenamed}
@@ -2715,6 +2775,7 @@ function SessionTreeItem({
   node,
   selectedSessionId,
   runningSessionIds,
+  subagentRunningIds,
   unreadSessionIds,
   onSelectSession,
   onRenamed,
@@ -2728,6 +2789,7 @@ function SessionTreeItem({
   node: SessionDisplayNode;
   selectedSessionId: string | null;
   runningSessionIds: Set<string>;
+  subagentRunningIds: Set<string>;
   unreadSessionIds: Set<string>;
   onSelectSession: (s: SessionInfo) => void;
   onRenamed?: () => void;
@@ -2759,8 +2821,9 @@ function SessionTreeItem({
           session={node.session}
           relation={node.relation}
           isSelected={node.session.id === selectedSessionId}
-          isRunning={runningSessionIds.has(node.session.id)}
-          isUnread={unreadSessionIds.has(node.session.id)}
+          isRunning={runningSessionIds.has(node.session.id) || subagentRunningIds.has(node.session.id)}
+          // subagent 子会话不参与未读（用户需求：子会话无未读状态）
+          isUnread={!node.session.subagent && unreadSessionIds.has(node.session.id)}
           onClick={() => onSelectSession(node.session)}
           onRenamed={onRenamed}
           onDeleted={(id) => onSessionDeleted?.(id)}
@@ -2779,6 +2842,7 @@ function SessionTreeItem({
               node={child}
               selectedSessionId={selectedSessionId}
               runningSessionIds={runningSessionIds}
+              subagentRunningIds={subagentRunningIds}
               unreadSessionIds={unreadSessionIds}
               onSelectSession={onSelectSession}
               onRenamed={onRenamed}
@@ -2990,7 +3054,7 @@ function SessionItem({
         cursor: confirmDelete || renaming ? "default" : "pointer",
         background: confirmDelete
           ? "rgba(239,68,68,0.06)"
-          : isSelected ? "var(--bg-selected)" : hovered ? "var(--bg-hover)" : "transparent",
+          : isSelected ? "color-mix(in srgb, var(--accent) 9%, var(--bg-selected))" : hovered ? "var(--bg-hover)" : "transparent",
         borderLeft: confirmDelete
           ? "2px solid #ef4444"
           : isSelected ? "2px solid var(--accent)" : "2px solid transparent",
@@ -3116,12 +3180,13 @@ function SessionItem({
               }}
               title={title}
             >
+              {/* 状态指示置前：运行中 / 未读显示在标题之前（OpenChamber 风格） */}
+              {isRunning && <RunningSessionIndicator size={10} />}
+              {!isRunning && isUnread && <UnreadSessionIndicator size={10} />}
               <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>
                 {title}
               </span>
-              {/* Compact：状态指示内联在标题后，次要元数据整体隐藏 */}
-              {compact && isRunning && <RunningSessionIndicator size={12} />}
-              {compact && !isRunning && isUnread && <UnreadSessionIndicator size={12} />}
+              {/* Compact：subagent 徽章内联在标题后 */}
               {compact && session.subagent && (
                 <span
                   title={`${t("sidebar_subagentReadOnly")}${session.subagent.agent ? ` · ${session.subagent.agent}` : ""} · ${t("sidebar_runCount", { count: session.subagent.runIndex })}`}
@@ -3133,41 +3198,35 @@ function SessionItem({
             </div>
             {!compact && (
               <div style={{ marginTop: 1, display: "flex", alignItems: "center", gap: 8, color: "var(--text-dim)", fontSize: 10.5, minWidth: 0 }}>
-                {isRunning ? (
-                  <RunningSessionIndicator />
-                ) : isUnread ? (
-                  <UnreadSessionIndicator />
-                ) : (
-                  <span title={session.modified}>{formatRelativeTime(session.modified, t)}</span>
-                )}
-                <span>{t("sidebar_messagesCount", { count: session.messageCount })}</span>
-                {/* subagent 徽章：agent 名 + run 次序 + 只读语义，克制但明确 */}
-                {session.subagent && (
-                  <span
-                    title={`${t("sidebar_subagentReadOnly")}${session.subagent.agent ? ` · ${session.subagent.agent}` : ""} · ${t("sidebar_runCount", { count: session.subagent.runIndex })}`}
-                    style={{ display: "flex", alignItems: "center", gap: 3, color: "var(--text-muted)", minWidth: 0, overflow: "hidden" }}
-                  >
-                    <LayersIcon size={9} />
-                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontFamily: "var(--font-mono)", fontSize: 10 }}>
-                      {session.subagent.agent ? `${session.subagent.agent} · ` : ""}{t("sidebar_runCount", { count: session.subagent.runIndex })}
-                    </span>
-                    <span style={{ flexShrink: 0, fontSize: 9, padding: "0 4px", borderRadius: 999, border: "1px solid var(--border)", color: "var(--text-dim)", lineHeight: 1.5 }}>
-                      {t("sidebar_readOnly")}
-                    </span>
+              <span title={session.modified}>{formatRelativeTime(session.modified, t)}</span>
+              <span>{t("sidebar_messagesCount", { count: session.messageCount })}</span>
+              {/* subagent 徽章：agent 名 + run 次序 + 只读语义，克制但明确 */}
+              {session.subagent && (
+                <span
+                  title={`${t("sidebar_subagentReadOnly")}${session.subagent.agent ? ` · ${session.subagent.agent}` : ""} · ${t("sidebar_runCount", { count: session.subagent.runIndex })}`}
+                  style={{ display: "flex", alignItems: "center", gap: 3, color: "var(--text-muted)", minWidth: 0, overflow: "hidden" }}
+                >
+                  <LayersIcon size={9} />
+                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontFamily: "var(--font-mono)", fontSize: 10 }}>
+                    {session.subagent.agent ? `${session.subagent.agent} · ` : ""}{t("sidebar_runCount", { count: session.subagent.runIndex })}
                   </span>
-                )}
-                {session.worktreeBranch && (
-                  <span
-                    title={t("sidebar_worktreeTooltip", { path: session.cwd })}
-                    style={{ display: "flex", alignItems: "center", gap: 3, color: "var(--accent)", minWidth: 0, overflow: "hidden" }}
-                  >
-                    <BranchIcon size={9} />
-                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{session.worktreeBranch}</span>
+                  <span style={{ flexShrink: 0, fontSize: 9, padding: "0 4px", borderRadius: 999, border: "1px solid var(--border)", color: "var(--text-dim)", lineHeight: 1.5 }}>
+                    {t("sidebar_readOnly")}
                   </span>
-                )}
-              </div>
-            )}
-          </div>
+                </span>
+              )}
+              {session.worktreeBranch && (
+                <span
+                  title={t("sidebar_worktreeTooltip", { path: session.cwd })}
+                  style={{ display: "flex", alignItems: "center", gap: 3, color: "var(--accent)", minWidth: 0, overflow: "hidden" }}
+                >
+                  <BranchIcon size={9} />
+                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{session.worktreeBranch}</span>
+                </span>
+              )}
+            </div>
+          )}
+        </div>
 
           {/* 行内操作：恒渲染保证触屏可发现、键盘可 Tab 到达；
               细指针下由 .sidebar-row hover/focus-within 渐进显露，

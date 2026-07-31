@@ -32,9 +32,10 @@ import {
   clearAllExtensionUiBlocking,
   clearExtensionUiRequest,
   createEmptyExtensionUiState,
+  projectBlockingHead,
   type ExtensionUiState,
 } from "@/lib/extension-ui-bridge";
-import type { ExtensionUiInlineRequest } from "@/lib/extension-ui-bridge";
+import type { ExtensionUiInlineRequest, ExtensionUiBlockingRequest } from "@/lib/extension-ui-bridge";
 import { parseTodos } from "@/lib/todo-parser";
 import { getSessionCapabilities } from "@/components/session-capabilities";
 import {
@@ -117,6 +118,7 @@ type AgentStateResponse = {
   extensionStatuses?: ExtensionStatusItem[];
   extensionWidgets?: ExtensionWidgetItem[];
   queuedMessages?: { steering?: string[]; followUp?: string[] } | null;
+  pendingExtensionRequests?: AgentEvent[];
 };
 
 export interface QueuedMessages {
@@ -871,6 +873,16 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         id: request.id,
         ...response,
       });
+      // OpenChamber 语义：取消问题块 = 终止当前执行（agent 阻塞在扩展请求上）。
+      // 防护：若取消响应期间 agent 已自行停止（或用户已先停止），不再补发 abort，
+      // 避免误中止之后新启动的 run。
+      if ("cancelled" in response && response.cancelled === true && agentRunningRef.current) {
+        try {
+          await sendAgentCommand(sid, { type: "abort" });
+        } catch {
+          // abort 失败不阻断 cancelled 响应本身。
+        }
+      }
     } catch (e) {
       console.error("Failed to send extension UI response:", e);
     }
@@ -1926,6 +1938,20 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
             if (agentState.state.extensionStatuses !== undefined) patchExtensionUiState({ statuses: agentState.state.extensionStatuses ?? [] });
             if (agentState.state.extensionWidgets !== undefined) patchExtensionUiState({ widgets: agentState.state.extensionWidgets ?? [] });
             if (agentState.state.queuedMessages !== undefined) setQueuedMessages(normalizeQueuedMessages(agentState.state.queuedMessages));
+            // 切回会话时恢复阻塞中的问题块（服务端权威队列）。
+            if (Array.isArray(agentState.state.pendingExtensionRequests)) {
+              const queue = (agentState.state.pendingExtensionRequests as AgentEvent[])
+                .filter((e): e is ExtensionUiBlockingRequest => {
+                  const method = (e as { method?: string }).method;
+                  return method === "select" || method === "confirm" || method === "input" || method === "editor";
+                });
+              if (queue.length > 0) {
+                patchExtensionUiState({
+                  blockingQueue: queue,
+                  ...projectBlockingHead(queue),
+                });
+              }
+            }
           }
         });
       }

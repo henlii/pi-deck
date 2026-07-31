@@ -444,6 +444,14 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
   const refreshToken = `${refreshKey ?? 0}:${treeRefreshKey}`;
   const uploadBusy = uploadPhase !== "idle";
 
+  /** 首屏不抢带宽：文件树/git 请求延迟到浏览器空闲期（降级 250ms）。
+   * 会话内容的加载与显示（/api/sessions、/api/home 等）优先完成。 */
+  const deferToIdle = useCallback(() => {
+    if (typeof requestIdleCallback === "function") {
+      return new Promise<void>((resolve) => requestIdleCallback(() => resolve(), { timeout: 800 }));
+    }
+    return new Promise<void>((resolve) => setTimeout(resolve, 250));
+  }, []);
   const gitStatusByPath = useMemo(() => new Map(
     gitFiles.map((status) => [normalizeFilePathSlashes(status.filePath), status]),
   ), [gitFiles]);
@@ -587,24 +595,32 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
     setLoading(cwdChanged);
     setError(null);
     let cancelled = false;
-    fetchEntries(cwd, t)
-      .then((entries) => { if (!cancelled) setRoots(entries); })
-      .catch((e) => { if (!cancelled) setError(e instanceof Error ? e.message : String(e)); })
-      .finally(() => { if (!cancelled) setLoading(false); });
+    // 首屏延迟到空闲：不与会话内容加载抢占网络/服务器线程。
+    void deferToIdle().then(() => {
+      if (cancelled) return;
+      fetchEntries(cwd, t)
+        .then((entries) => { if (!cancelled) setRoots(entries); })
+        .catch((e) => { if (!cancelled) setError(e instanceof Error ? e.message : String(e)); })
+        .finally(() => { if (!cancelled) setLoading(false); });
+    });
     return () => { cancelled = true; };
-  }, [cwd, refreshKey, t, treeRefreshKey]);
+  }, [cwd, refreshKey, t, treeRefreshKey, deferToIdle]);
 
   useEffect(() => {
     let cancelled = false;
-    fetchGitStatus(cwd, t)
-      .then((status) => {
-        if (!cancelled) setGitFiles(status.isGitRepository ? status.files : []);
-      })
-      .catch(() => {
-        if (!cancelled) setGitFiles([]);
-      });
+    // 首屏延迟到空闲；cwd/refresh 变化时同样延迟一个空闲周期（避免与文件树并发）。
+    void deferToIdle().then(() => {
+      if (cancelled) return;
+      fetchGitStatus(cwd, t)
+        .then((status) => {
+          if (!cancelled) setGitFiles(status.isGitRepository ? status.files : []);
+        })
+        .catch(() => {
+          if (!cancelled) setGitFiles([]);
+        });
+    });
     return () => { cancelled = true; };
-  }, [cwd, refreshKey, t, treeRefreshKey]);
+  }, [cwd, refreshKey, t, treeRefreshKey, deferToIdle]);
 
   const showUploadFeedback = uploadBusy || pendingConflict !== null || uploadError !== null || uploadSummary !== null;
 

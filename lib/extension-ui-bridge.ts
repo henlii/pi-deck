@@ -5,7 +5,7 @@ import type {
 } from "./types";
 
 export type ExtensionUiDialogRequest = Extract<ExtensionUiRequest, { method: "select" | "confirm" | "input" | "editor" }>;
-export type ExtensionUiInlineRequest = Extract<ExtensionUiRequest, { method: "select" | "confirm" | "input" }>;
+export type ExtensionUiInlineRequest = Extract<ExtensionUiRequest, { method: "select" | "confirm" | "input" | "editor" }>;
 export type ExtensionUiBlockingRequest = ExtensionUiDialogRequest;
 export type ExtensionUiCustomRequest = Extract<ExtensionUiRequest, { method: "custom" }>;
 export type ExtensionUiNoticeType = "info" | "success" | "warning" | "error";
@@ -50,11 +50,12 @@ function isBlockingMethod(method: ExtensionUiRequest["method"]): method is Exten
   return method === "select" || method === "confirm" || method === "input" || method === "editor";
 }
 
-/** 队首是否走 inline 承载（短 select / confirm / input） */
+/** 队首是否走 inline 承载（OpenChamber 风格：全部内联卡片，不弹窗） */
 export function isInlineBlockingRequest(request: ExtensionUiBlockingRequest): request is ExtensionUiInlineRequest {
-  if (request.method === "confirm" || request.method === "input") return true;
-  if (request.method === "select") return isShortSelectRequest(request);
-  return false;
+  return request.method === "select"
+    || request.method === "confirm"
+    || request.method === "input"
+    || request.method === "editor";
 }
 
 function getBlockingQueue(state: ExtensionUiState): ExtensionUiBlockingRequest[] {

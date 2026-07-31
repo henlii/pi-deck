@@ -1,7 +1,7 @@
 "use client";
 
-import { memo, useState, useRef, useEffect, useMemo } from "react";
-import { AlertTriangle, Check, CheckCircle2, ChevronDown, ChevronUp, Copy, Terminal, XCircle } from "lucide-react";
+import { memo, useState, useRef, useEffect, useMemo, type ReactNode } from "react";
+import { AlertTriangle, Check, CheckCircle2, ChevronDown, ChevronUp, Copy, FileText, Globe, ListTodo, Pencil, Search, ShieldCheck, Terminal, Webhook, XCircle } from "lucide-react";
 import { MarkdownBody } from "./MarkdownBody";
 import { copyText } from "@/lib/clipboard";
 import {
@@ -720,7 +720,6 @@ function ThinkingBlock({ block, duration, sessionId, entryId, blockIndex }: {
 
 function ToolCallBlock({ block, result, duration, onOpenSubagentSession }: { block: ToolCallContent; result?: ToolResultMessage; duration?: number; onOpenSubagentSession?: (sessionFile: string) => void }) {
   const [expanded, setExpanded] = useState(false);
-  const inputStr = JSON.stringify(block.input, null, 2);
   const isEditTool = isEditToolName(block.toolName);
   const resultDiff = result && !result.isError ? getResultDiff(result) : null;
 
@@ -765,6 +764,13 @@ function ToolCallBlock({ block, result, duration, onOpenSubagentSession }: { blo
           minWidth: 0,
         }}
       >
+        {/* 工具图标 + 状态点（进行中脉冲 / 成功绿 / 错误红） */}
+        <span style={{ display: "flex", alignItems: "center", gap: 5, flexShrink: 0 }}>
+          {getToolIcon(block.toolName, isError ? "#f87171" : "#16a34a")}
+          {result === undefined && !isError && (
+            <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#16a34a", opacity: 0.6, animation: "pulse 1.2s ease-in-out infinite" }} aria-hidden="true" />
+          )}
+        </span>
         <span style={{ color: isError ? "#f87171" : "#16a34a", fontFamily: "var(--font-mono)", fontWeight: 600, fontSize: 11, flexShrink: 0 }}>
           {block.toolName}
         </span>
@@ -779,24 +785,31 @@ function ToolCallBlock({ block, result, duration, onOpenSubagentSession }: { blo
         </svg>
       </button>
 
-      {/* ── Expanded: input args ── */}
+      {/* ── Expanded: 参数友好摘要（替代原始 JSON，OpenChamber 风格） ── */}
       {expanded && !isEditTool && (
-        <pre
+        <div
           style={{
             margin: 0,
             padding: "8px 10px",
             color: "var(--text-muted)",
             fontSize: 12,
             lineHeight: 1.5,
+            maxHeight: 240,
             overflow: "auto",
             background: "var(--bg-subtle)",
             borderTop: isError ? "1px solid rgba(248,113,113,0.25)" : "1px solid rgba(34,197,94,0.2)",
-            whiteSpace: "pre-wrap",
-            wordBreak: "break-all",
+            display: "flex",
+            flexDirection: "column",
+            gap: 3,
           }}
         >
-          {inputStr}
-        </pre>
+          {formatInputSummary(block.input as Record<string, unknown>).map((row) => (
+            <div key={row.key} style={{ display: "flex", gap: 8, minWidth: 0 }}>
+              <span style={{ flexShrink: 0, fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--text-dim)", width: 88, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{row.key}</span>
+              <span style={{ minWidth: 0, flex: 1, overflowWrap: "anywhere", whiteSpace: "pre-wrap" }}>{row.value}</span>
+            </div>
+          ))}
+        </div>
       )}
 
       {/* ── Paired result — only shown when expanded ── */}
@@ -1259,6 +1272,44 @@ function isEditToolName(toolName: string): boolean {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** 工具名 → lucide 图标元素（OpenChamber 风格：每种工具一个可识别图标）。
+ * 返回 JSX 元素而非组件类型：避免 render 中创建组件（react-hooks/static-components）。 */
+function getToolIcon(toolName: string, color: string): ReactNode {
+  const name = toolName.toLowerCase();
+  const props = { size: 12, color };
+  if (name === "bash" || name === "exec_command" || name === "terminal" || name.includes("shell")) return <Terminal {...props} />;
+  if (name === "edit" || name === "write" || name.includes("edit") || name.includes("write")) return <Pencil {...props} />;
+  if (name === "read" || name === "multi_read" || name.includes("read") || name.includes("view")) return <FileText {...props} />;
+  if (name === "grep" || name === "search" || name.includes("grep") || name.includes("search") || name.includes("find")) return <Search {...props} />;
+  if (name.includes("web") || name.includes("fetch") || name.includes("http") || name.includes("url")) return <Globe {...props} />;
+  if (name.includes("todo") || name.includes("task")) return <ListTodo {...props} />;
+  if (name.includes("notify") || name.includes("message")) return <Webhook {...props} />;
+  if (name.includes("approve") || name.includes("permission") || name.includes("confirm")) return <ShieldCheck {...props} />;
+  return <Terminal {...props} />;
+}
+
+/** 参数友好摘要：展开区替代原始 JSON 的关键字段展示（OpenChamber formatInputForDisplay 风格）。 */
+function formatInputSummary(input: Record<string, unknown>): Array<{ key: string; value: string }> {
+  const rows: Array<{ key: string; value: string }> = [];
+  for (const [key, raw] of Object.entries(input)) {
+    if (raw === undefined || raw === null) continue;
+    const friendly = typeof raw === "string"
+      ? raw
+      : typeof raw === "number" || typeof raw === "boolean"
+        ? String(raw)
+        : "";
+    if (friendly) rows.push({ key, value: friendly });
+    else {
+      try {
+        rows.push({ key, value: JSON.stringify(raw).slice(0, 200) });
+      } catch {
+        rows.push({ key, value: "[…]" });
+      }
+    }
+  }
+  return rows;
 }
 
 function PairedResult({ text, isEmpty, isError }: {

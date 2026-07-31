@@ -166,6 +166,12 @@ export function InlineExtensionCard({ request, disabled = false, onRespond }: In
   const [selectState, setSelectState] = useState<InlineSelectCardState>(() =>
     createInlineSelectState(request.id),
   );
+  /** editor 长文本草稿（prefill 初始值；OpenChamber 风格内联编辑）。 */
+  const [editorDraft, setEditorDraft] = useState<{ requestId: string; value: string }>({
+    requestId: request.id,
+    value: request.method === "editor" ? request.prefill ?? "" : "",
+  });
+  const editorValue = editorDraft.requestId === request.id ? editorDraft.value : "";
 
   const value = draft.requestId === request.id ? draft.value : "";
   const scopedSelect = resolveInlineSelectState(selectState, request.id);
@@ -336,6 +342,7 @@ export function InlineExtensionCard({ request, disabled = false, onRespond }: In
               }}
               style={inputStyle}
             />
+
             <button
               type="button"
               className="sidebar-icon-btn"
@@ -360,6 +367,72 @@ export function InlineExtensionCard({ request, disabled = false, onRespond }: In
           </div>
         )}
 
+        {request.method === "editor" && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <textarea
+              value={editorValue}
+              disabled={inert}
+              placeholder={request.prefill ?? ""}
+              aria-label={request.title}
+              autoComplete="off"
+              autoFocus
+              onChange={(event) => setEditorDraft({ requestId: request.id, value: event.target.value })}
+              onKeyDown={(event) => {
+                if (event.nativeEvent.isComposing) return;
+                if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+                  event.preventDefault();
+                  respondOnce({ value: editorValue });
+                }
+                if (event.key === "Escape") {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  respondOnce({ cancelled: true });
+                }
+              }}
+              style={{
+                minWidth: 0,
+                minHeight: 110,
+                maxHeight: 320,
+                padding: "8px 10px",
+                border: "1px solid var(--border)",
+                borderRadius: 6,
+                outline: "none",
+                background: "var(--bg)",
+                color: "var(--text)",
+                font: "inherit",
+                fontSize: 12,
+                lineHeight: 1.55,
+                fontFamily: "var(--font-mono)",
+                resize: "vertical",
+                overflowY: "auto",
+              }}
+            />
+            <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 5 }}>
+              <button
+                type="button"
+                className="extension-card-btn"
+                disabled={inert}
+                title={t("extension_submit")}
+                aria-label={t("extension_submit")}
+                onClick={() => respondOnce({ value: editorValue })}
+                style={{ color: "var(--accent)", borderColor: "var(--accent)" }}
+              >
+                {t("extension_submit")}
+              </button>
+              <button
+                type="button"
+                className="extension-card-btn"
+                disabled={inert}
+                title={t("extension_cancel")}
+                aria-label={t("extension_cancel")}
+                onClick={() => respondOnce({ cancelled: true })}
+              >
+                {t("extension_cancel")}
+              </button>
+              <span style={{ marginLeft: "auto", fontSize: 10, color: "var(--text-dim)" }}>{t("extension_ctrlEnterHint")}</span>
+            </div>
+          </div>
+        )}
         {request.method === "select" && (
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             <div
@@ -407,19 +480,25 @@ export function InlineExtensionCard({ request, disabled = false, onRespond }: In
             </div>
 
             {scopedSelect.otherSelected && (
-              <div style={{ display: "flex", minWidth: 0, alignItems: "center", gap: 5 }}>
-                <input
+              <div style={{ display: "flex", flexDirection: "column", minWidth: 0, gap: 5 }}>
+                <textarea
                   value={scopedSelect.otherDraft}
                   disabled={inert}
                   placeholder={t("extension_otherPlaceholder")}
                   aria-label={t("extension_other")}
                   autoComplete="off"
+                  autoFocus
+                  rows={1}
                   onChange={(event) => {
                     patchSelect(setInlineOtherDraft(scopedSelect, event.target.value));
+                    // 自动高度（最多 4 行）：OpenChamber CustomAnswerTextarea 风格。
+                    const el = event.currentTarget;
+                    el.style.height = "auto";
+                    el.style.height = `${Math.min(el.scrollHeight, 96)}px`;
                   }}
                   onKeyDown={(event) => {
                     if (event.nativeEvent.isComposing) return;
-                    if (event.key === "Enter") {
+                    if (event.key === "Enter" && !event.shiftKey) {
                       event.preventDefault();
                       const submission = getInlineSelectSubmission(
                         setInlineOtherDraft(scopedSelect, event.currentTarget.value),
@@ -437,7 +516,24 @@ export function InlineExtensionCard({ request, disabled = false, onRespond }: In
                       }
                     }
                   }}
-                  style={inputStyle}
+                  style={{
+                    minWidth: 0,
+                    width: "100%",
+                    minHeight: 28,
+                    maxHeight: 96,
+                    padding: "6px 8px",
+                    border: "1px solid var(--border)",
+                    borderRadius: 6,
+                    outline: "none",
+                    background: "var(--bg)",
+                    color: "var(--text)",
+                    font: "inherit",
+                    fontSize: 12,
+                    lineHeight: 1.5,
+                    resize: "none",
+                    overflowY: "auto",
+                    boxSizing: "border-box",
+                  }}
                 />
               </div>
             )}
@@ -445,7 +541,7 @@ export function InlineExtensionCard({ request, disabled = false, onRespond }: In
             <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 5 }}>
               <button
                 type="button"
-                className="sidebar-icon-btn"
+                className="extension-card-btn"
                 disabled={inert || !selectCanSubmit}
                 title={selectCanSubmit ? t("extension_submit") : t("extension_selectAnOption")}
                 aria-label={t("extension_submit")}
@@ -453,19 +549,20 @@ export function InlineExtensionCard({ request, disabled = false, onRespond }: In
                   const submission = getInlineSelectSubmission(scopedSelect);
                   if (submission) respondOnce(submission);
                 }}
-                style={{ color: "var(--accent)" }}
+                style={{ color: "var(--accent)", borderColor: "var(--accent)", opacity: selectCanSubmit ? 1 : 0.45 }}
               >
                 <CheckIcon />
+                {t("extension_submit")}
               </button>
               <button
                 type="button"
-                className="sidebar-icon-btn sidebar-icon-btn--danger"
+                className="extension-card-btn"
                 disabled={inert}
                 title={t("extension_cancel")}
                 aria-label={t("extension_cancel")}
                 onClick={() => respondOnce({ cancelled: true })}
               >
-                <CloseIcon />
+                {t("extension_cancel")}
               </button>
             </div>
           </div>

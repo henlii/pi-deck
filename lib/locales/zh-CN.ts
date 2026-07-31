@@ -325,7 +325,31 @@ export const zhCN: Record<TranslationKey, string> = {
   extension_other: '其他',
   extension_selectAnOption: '请选择一项',
   extension_otherPlaceholder: '输入自定义内容',
+  extension_ctrlEnterHint: 'Ctrl+Enter 提交',
   // 本轮核心工作区补充翻译
+
+  // 新会话引导页（OpenChamber 风格项目/工作树选择）
+  guide_projectTitle: '选择项目',
+  guide_worktreeTitle: '工作树',
+  guide_mainWorktree: '主工作树',
+  guide_worktree: '工作树',
+  guide_sessionCount: '{count} 个会话',
+  guide_loading: '加载中…',
+  guide_noProjects: '还没有项目——从侧栏开始新会话。',
+  guide_noWorktrees: '该项目不是 git 仓库；可直接在此新建会话。',
+  guide_worktreeUnavailable: '该项目的工作树列表不可用。',
+
+  // 命令面板（Ctrl/Cmd+K，OpenChamber CommandPalette 风格）
+  palette_title: '命令面板',
+  palette_placeholder: '搜索会话、文件、操作…',
+  palette_newSession: '新建会话（当前项目）',
+  palette_toggleTheme: '切换主题',
+  palette_settingsModels: '设置 → 模型',
+  palette_settingsSkills: '设置 → 技能',
+  palette_settingsPlugins: '设置 → 插件',
+  palette_settingsMemory: '设置 → 记忆',
+  palette_searching: '搜索中…',
+  palette_noResults: '无结果',
   // app
   app_generateTitle: "生成标题",
   app_saveFailed: "保存失败（HTTP {status}）",

@@ -26,6 +26,8 @@ interface SettingsViewProps {
   cwd: string | null;
   sessionId: string | null;
   onClose: () => void;
+  /** 命令面板等外部入口指定的初始页（null 时用 localStorage 记忆页） */
+  initialPage?: SettingsPageId | null;
   /** Models 保存后刷新聊天区的模型列表 */
   onModelsChanged?: () => void;
   /** Plugins reload 后需要重建会话（沿用旧 AppShell 行为） */
@@ -326,10 +328,14 @@ function TrustPage({ cwd }: { cwd: string | null }) {
   );
 }
 
-export function SettingsView({ cwd, sessionId, onClose, onModelsChanged, onPluginsReloaded }: SettingsViewProps) {
+export function SettingsView({ cwd, sessionId, onClose, onModelsChanged, onPluginsReloaded, initialPage }: SettingsViewProps) {
   const { t } = useI18n();
   const isMobile = useIsMobile();
   const [activePage, setActivePage] = useState<SettingsPageId>(readInitialPage);
+  // 外部入口（命令面板）指定的初始页优先于 localStorage 记忆页。
+  useEffect(() => {
+    if (initialPage) setActivePage(initialPage);
+  }, [initialPage]);
   // 移动端「导航首页 → 页面内容」：null 表示导航首页；桌面端始终双栏。
   const [mobileView, setMobileView] = useState<MobileSettingsView>({ page: null });
 

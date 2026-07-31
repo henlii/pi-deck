@@ -498,9 +498,12 @@ export class AgentSessionWrapper {
       }
 
       case "abort":
+        // 先强制清除 running 状态并广播：即使 SDK 的 waitForIdle 因流式挂起不返回，
+        // 会话列表/聊天区也能立即恢复非运行态（用户已主动终止）。
+        this.promptRunning = false;
+        notifyRunningChange();
         await this.withFinalRunningNotification(() => this.inner.abort());
         return null;
-
       case "get_state": {
         const model = this.inner.model;
         const contextUsage = this.inner.getContextUsage();
@@ -527,6 +530,10 @@ export class AgentSessionWrapper {
           thinkingLevel: this.inner.agent.state?.thinkingLevel ?? "off",
           extensionStatuses: this.getExtensionStatuses(),
           extensionWidgets: this.getExtensionWidgets(),
+          // 阻塞中扩展请求（切回会话时重建问题块用；服务端权威）
+          pendingExtensionRequests: Array.from(this.pendingUiRequests.values())
+            .filter((event) => event.type === "extension_ui_request")
+            .map((event) => event),
         };
       }
 

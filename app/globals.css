@@ -913,6 +913,31 @@ span.linenumber {
 }
 .sidebar-icon-btn:disabled {
   color: var(--text-dim);
+
+/* ── 扩展卡片文字按钮（OpenChamber 风格：Submit/Cancel） ── */
+.extension-card-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 12;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+.extension-card-btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.extension-card-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
   cursor: not-allowed;
   opacity: 0.55;
 }

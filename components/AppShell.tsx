@@ -9,6 +9,8 @@ import { FileViewer } from "./FileViewer";
 import { TabBar, type Tab } from "./TabBar";
 import { RightWorkspace } from "./RightWorkspace";
 import { SettingsView } from "./SettingsView";
+import { CommandPalette } from "./CommandPalette";
+import type { SettingsPageId } from "./settings-nav";
 import { AboutDialog } from "./AboutDialog";
 import { BranchNavigator } from "./BranchNavigator";
 import { SubagentRunsPanel } from "./SubagentRunsPanel";
@@ -112,6 +114,9 @@ function AppShellInner() {
     });
   }, []);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsInitialPage, setSettingsInitialPage] = useState<SettingsPageId | null>(null);
+  /** Ctrl/Cmd+K 命令面板 */
+  const [paletteOpen, setPaletteOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
   const [modelsRefreshKey, setModelsRefreshKey] = useState(0);
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -563,6 +568,19 @@ function AppShellInner() {
     activeCwd,
     disabled: settingsOpen || aboutOpen,
   });
+
+  // Ctrl/Cmd+K 打开命令面板
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        if (settingsOpen || aboutOpen) return;
+        e.preventDefault();
+        setPaletteOpen((v) => !v);
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [settingsOpen, aboutOpen]);
 
   /**
    * 按真实 session id 精确补水（有界重试），不再全量 GET /api/sessions 后 find。
@@ -1793,6 +1811,7 @@ function AppShellInner() {
                 onContextUsageChange={handleContextUsageChange}
                 onOpenFile={handleOpenLinkedFile}
                 onOpenSubagentSession={handleOpenSubagentSession}
+                onGuideNewSession={handleNewSession}
               />
             ) : initialCwdStatus === "validating" ? (
               <div role="status" style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, padding: 24, color: "var(--text-muted)", textAlign: "center" }}>
@@ -1873,6 +1892,7 @@ function AppShellInner() {
     </div>
     {settingsOpen && (
       <SettingsView
+        initialPage={settingsInitialPage}
         cwd={activeCwd ?? selectedSession?.cwd ?? null}
         sessionId={selectedSession?.id ?? null}
         onClose={() => {
@@ -1886,6 +1906,20 @@ function AppShellInner() {
         onPluginsReloaded={() => setSessionKey((key) => key + 1)}
       />
     )}
+    <AboutDialog open={aboutOpen} onClose={() => setAboutOpen(false)} />
+    <CommandPalette
+      open={paletteOpen}
+      onClose={() => setPaletteOpen(false)}
+      onSelectSession={(session) => handleSelectSession(session)}
+      onNewSession={() => handleNewSession()}
+      onOpenFile={(filePath, fileName) => handleOpenFile(filePath, fileName, selectedSession?.id ?? null, Boolean(selectedSession?.id && selectedSession.readOnly !== true))}
+      onOpenSettings={(page) => {
+        setSettingsOpen(true);
+        setSettingsInitialPage(page);
+      }}
+      onToggleTheme={toggleTheme}
+      cwd={activeCwd ?? selectedSession?.cwd ?? null}
+    />
     <AboutDialog open={aboutOpen} onClose={() => setAboutOpen(false)} />
     </>
   );

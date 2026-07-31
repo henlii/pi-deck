@@ -325,7 +325,31 @@ export const en = {
   extension_other: 'Other',
   extension_selectAnOption: 'Select an option',
   extension_otherPlaceholder: 'Enter a custom value',
+  extension_ctrlEnterHint: 'Ctrl+Enter to submit',
   // 本轮核心工作区补充翻译
+
+  // 新会话引导页（OpenChamber 风格项目/工作树选择）
+  guide_projectTitle: 'Choose a project',
+  guide_worktreeTitle: 'Worktrees',
+  guide_mainWorktree: 'Main worktree',
+  guide_worktree: 'Worktree',
+  guide_sessionCount: '{count} sessions',
+  guide_loading: 'Loading…',
+  guide_noProjects: 'No projects yet — start a session from the sidebar.',
+  guide_noWorktrees: 'This project is not a git repository; start a session here directly.',
+  guide_worktreeUnavailable: 'Worktree list unavailable for this project.',
+
+  // 命令面板（Ctrl/Cmd+K，OpenChamber CommandPalette 风格）
+  palette_title: 'Command palette',
+  palette_placeholder: 'Search sessions, files, actions…',
+  palette_newSession: 'New session (current project)',
+  palette_toggleTheme: 'Toggle theme',
+  palette_settingsModels: 'Settings → Models',
+  palette_settingsSkills: 'Settings → Skills',
+  palette_settingsPlugins: 'Settings → Plugins',
+  palette_settingsMemory: 'Settings → Memory',
+  palette_searching: 'searching…',
+  palette_noResults: 'No results',
   // app
   app_generateTitle: "Generate title",
   app_saveFailed: "Save failed (HTTP {status})",
