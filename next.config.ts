@@ -1,4 +1,5 @@
 import type { NextConfig } from "next";
+import { builtinModules } from "module";
 import { readFileSync } from "fs";
 import { join } from "path";
 
@@ -24,6 +25,12 @@ const nextConfig: NextConfig = {
       // instrumentation.ts 也必须复用 Node 侧的 undici；否则 webpack 会尝试
       // 打包其 node:console 等内建模块并触发 UnhandledSchemeError。
       config.externals.push({ undici: "commonjs undici" });
+      // instrumentation 链上的本地模块（pi-subagent-bridge 等）直接 import
+      // node: 内建（fs/path/url/...），同样必须保持 external，否则
+      // UnhandledSchemeError 打断 server 编译。
+      for (const name of builtinModules) {
+        config.externals.push({ [`node:${name}`]: `commonjs node:${name}` });
+      }
     }
     return config;
   },
