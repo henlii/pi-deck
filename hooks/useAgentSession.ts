@@ -23,6 +23,7 @@ import {
   type BranchActionResult,
   type BranchSwitchChoice,
 } from "@/lib/branch-bookmarks";
+import type { RetractedRecord } from "@/lib/retract-stack";
 import { getToolNamesForPreset, type ToolEntry } from "@/lib/tool-presets";
 import { createEventStreamManager, EventStreamConnectionError, type EventStreamManager, type EventStreamConnectionResult } from "@/lib/event-stream-manager";
 import type { SessionStatsInfo } from "@/lib/pi-types";
@@ -419,6 +420,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const [queuedMessages, setQueuedMessages] = useState<QueuedMessages>({ steering: [], followUp: [] });
   // 分支切换/总结进行中：树节点、发送与再次导航全部暂停，避免与 navigateTree 并发写。
   const [branchBusy, setBranchBusy] = useState(false);
+
+  // 消息撤回坞（OpenChamber 风格）：服务端内存栈，会话切换时重新拉取。
+  const [retractedMessages, setRetractedMessages] = useState<RetractedRecord[]>([]);
 
   const eventSourceRef = useRef<EventSource | null>(null);
   const sessionIdRef = useRef<string | null>(session?.id ?? null);
@@ -1393,6 +1397,84 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     await loadContext(sid, entryId);
   }, [isReadOnly, loadContext]);
 
+  const refreshRetracted = useCallback(async () => {
+    const sid = sessionIdRef.current;
+    if (!sid || isReadOnly) {
+      setRetractedMessages([]);
+      return;
+    }
+    try {
+      const res = await sendAgentCommand<{ retracted?: RetractedRecord[] }>(sid, { type: "list_retracted" });
+      setRetractedMessages(res?.retracted ?? []);
+    } catch {
+      // 未持久化会话等场景无此命令：静默保持空坞。
+    }
+  }, [isReadOnly]);
+
+  useEffect(() => {
+    void refreshRetracted();
+  }, [session?.id, refreshRetracted]);
+
+  /**
+   * 撤回消息 M：navigate_tree(M.parentId)（Pi 原生分支语义，文件保留）。
+   * 工作区还原由已安装扩展经 session_before_tree 被动完成，不绑定插件。
+   */
+  const handleRetractMessage = useCallback(async (entryId: string) => {
+    const gate = gateBranchAction({
+      readOnly: isReadOnly,
+      busy: agentRunningRef.current || bashRunningRef.current || branchBusyRef.current,
+    });
+    if (!gate.allowed) return;
+    const sid = sessionIdRef.current;
+    if (!sid) return;
+    branchBusyRef.current = true;
+    setBranchBusy(true);
+    try {
+      const result = await sendAgentCommand<{ ok?: boolean; cancelled?: boolean; retracted?: RetractedRecord[] }>(
+        sid,
+        { type: "retract_message", entryId },
+      );
+      // cancelled（如插件 dirty 检查拒绝）：插件已 notify，静默保持现状。
+      if (result?.cancelled) return;
+      if (result?.retracted) setRetractedMessages(result.retracted);
+      await loadSession(sid, false, false, true, true);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      addNotice({ type: "error", message });
+    } finally {
+      branchBusyRef.current = false;
+      setBranchBusy(false);
+    }
+  }, [addNotice, isReadOnly, loadSession]);
+
+  /** 恢复消息 M：navigate_tree(M 链尾)，工作区由插件被动恢复。 */
+  const handleRestoreMessage = useCallback(async (entryId: string) => {
+    const gate = gateBranchAction({
+      readOnly: isReadOnly,
+      busy: agentRunningRef.current || bashRunningRef.current || branchBusyRef.current,
+    });
+    if (!gate.allowed) return;
+    const sid = sessionIdRef.current;
+    if (!sid) return;
+    branchBusyRef.current = true;
+    setBranchBusy(true);
+    try {
+      const result = await sendAgentCommand<{ ok?: boolean; cancelled?: boolean; retracted?: RetractedRecord[] }>(
+        sid,
+        { type: "restore_message", entryId },
+      );
+      if (result?.cancelled) return;
+      if (result?.retracted) setRetractedMessages(result.retracted);
+      await loadSession(sid, false, false, true, true);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      addNotice({ type: "error", message });
+    } finally {
+      branchBusyRef.current = false;
+      setBranchBusy(false);
+    }
+  }, [addNotice, isReadOnly, loadSession]);
+
   const handleLeafChange = useCallback(async (leafId: string | null) => {
     if (bashRunningRef.current || branchBusyRef.current) return;
     setActiveLeafId(leafId);
@@ -2093,6 +2175,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     bashRunning, pendingBash,
     // Workspace History（仅 type:prompt 派发到扩展）
     handleWorkspaceUndo, handleWorkspaceRedo, handleWorkspaceCheckpoint,
+    retractedMessages, handleRetractMessage, handleRestoreMessage,
     // 分支书签与带选项切换（D3）
     branchBusy, branchActions, navigateBranch, setBranchLabel,
     // Subscriptions

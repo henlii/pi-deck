@@ -104,6 +104,20 @@ export function mapExtensionErrorToActivity(
 }
 
 /**
+ * 已知的纯提示性、每次导航都会重发的扩展 warning 前缀：不持久化。
+ * pi-workspace-history 在禁用目录（如 home）每次 session_before_tree 都会 notify
+ * 「Workspace history is disabled…」；若写入会话文件会作为 pidance.activity
+ * 挂在当前 leaf 下并推进 leaf，导致后续消息脱离显示链（会话树显示异常）。
+ */
+export const TRANSIENT_NOTIFY_CONTENT_PREFIXES: readonly string[] = [
+  "Workspace history is disabled for this directory",
+];
+
+function isTransientNotifyContent(message: string): boolean {
+  return TRANSIENT_NOTIFY_CONTENT_PREFIXES.some((prefix) => message.startsWith(prefix));
+}
+
+/**
  * extension ui.notify → activity；仅 warning/error。
  * info / success / 缺省 / 未知 → null（transient，不持久化）。
  */
@@ -112,6 +126,10 @@ export function mapExtensionNotifyToActivity(
 ): SessionActivityInput | null {
   const notifyType = source.notifyType;
   if (notifyType !== "warning" && notifyType !== "error") {
+    return null;
+  }
+  // 纯提示性 warning（如 workspace-history 的 disabled 提示）：transient，不持久化。
+  if (isTransientNotifyContent(source.message)) {
     return null;
   }
   return {
@@ -189,4 +207,4 @@ export function persistExtensionNotify(
   }
   return wrote;
 }
-
+

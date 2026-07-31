@@ -8,6 +8,7 @@ import { asBracketedPaste, toTerminalKeyData } from "@/lib/terminal-input";
 import { composeChatPlan, type ChatRenderItem } from "@/lib/chat-compositor";
 import { MessageView } from "./MessageView";
 import { ChatInput, type ChatInputHandle } from "./ChatInput";
+import { RetractedMessagesDock } from "./RetractedMessagesDock";
 import { ChatMinimap, useMessageRefs } from "./ChatMinimap";
 import { InlineExtensionCard } from "./InlineExtensionCard";
 import { MarkdownBody } from "./MarkdownBody";
@@ -158,6 +159,7 @@ export function ChatWindow({ session, newSessionCwd, newSessionIntentId, onAgent
     handleToolPresetChange, handleThinkingLevelChange, loadSlashCommands,
     handleWorkspaceUndo, handleWorkspaceRedo, handleWorkspaceCheckpoint,
     branchBusy,
+    retractedMessages, handleRetractMessage, handleRestoreMessage,
   } = useAgentSession({
     session, newSessionCwd, newSessionIntentId, onAgentEnd: wrappedOnAgentEnd, onSessionCreated, onSessionForked,
     modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSessionStatsPanelOpen,
@@ -351,10 +353,20 @@ export function ChatWindow({ session, newSessionCwd, newSessionIntentId, onAgent
     ? (modelThinkingLevelMaps[`${displayModelValue.provider}:${displayModelValue.modelId}`] ?? null)
     : null;
 
-  const chatInputElement = isReadOnly && session ? (
-    <ReadOnlySessionBar session={session} isMobile={isMobile} />
-  ) : (
-    <ChatInput
+  const chatInputElement = (
+    <>
+      {/* 消息撤回坞：输入框上方折叠卡片（OpenChamber 风格）；只读会话不显示。 */}
+      {!isReadOnly && (
+        <RetractedMessagesDock
+          records={retractedMessages}
+          busy={sessionBusy || branchBusy}
+          onRestore={handleRestoreMessage}
+        />
+      )}
+      {isReadOnly && session ? (
+        <ReadOnlySessionBar session={session} isMobile={isMobile} />
+      ) : (
+        <ChatInput
       ref={chatInputRef}
       onSend={handleSend}
       onAbort={handleAbort}
@@ -391,6 +403,8 @@ export function ChatWindow({ session, newSessionCwd, newSessionIntentId, onAgent
       draftKey={session?.id ?? (newSessionCwd ? `new:${newSessionCwd}` : undefined)}
       cwd={session?.cwd ?? newSessionCwd}
     />
+      )}
+    </>
   );
 
   const todoPanelElement = todos.length === 0 ? null : (
@@ -645,6 +659,7 @@ export function ChatWindow({ session, newSessionCwd, newSessionIntentId, onAgent
                     showTimestamp={item.showTimestamp}
                     prevTimestamp={idx > 0 ? (messages[idx - 1] as AgentMessage & { timestamp?: number }).timestamp : undefined}
                     sessionId={session?.id ?? sessionIdRef.current ?? undefined}
+                    onRetract={sessionBusy || isReadOnly ? undefined : handleRetractMessage}
                   />
                 );
                 if (!isVisible || !item.attachRef || currentRefIdx === undefined) return view;

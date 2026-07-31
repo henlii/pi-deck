@@ -145,6 +145,12 @@ export const zhCN: Record<TranslationKey, string> = {
   chat_readOnlySessionDescription: "仅可浏览：发送、引导、追问、压缩、分叉与设置修改均已禁用；消息、文件与会话统计仍可查看。",
   chat_extensionRequest: '扩展请求',
   chat_extensionPanel: '扩展面板',
+
+  // 消息撤回坞（OpenChamber 风格）
+  retracted_messagesTitle: '已撤回 {count} 条消息',
+  retracted_restore: '恢复',
+  retracted_restoreTooltip: '恢复这条消息及其回复（若安装了扩展则一并恢复工作区）',
+  retracted_noText: '（无文本）',
   chat_confirm: '确认',
   chat_submit: '提交',
   chat_cancel: '取消',
@@ -174,6 +180,8 @@ export const zhCN: Record<TranslationKey, string> = {
   // message
   message_copy: '复制消息',
   message_editFromHere: '从此处编辑',
+  message_retract: '撤回',
+  message_retractTooltip: '撤回这条消息及其回复（若安装了扩展则一并还原工作区）',
   message_newSession: '新建会话',
   message_creating: '创建中…',
   message_thinkingUnavailable: '思考不可用',

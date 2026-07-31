@@ -144,6 +144,12 @@ export const en = {
   chat_readOnlySession: 'Read-only session',
   chat_readOnlySessionDescription: "Browsing only: sending, steering, follow-ups, compaction, forking, and setting changes are disabled. Messages, files and session stats remain viewable.",
   chat_extensionRequest: 'Extension request',
+
+  // 消息撤回坞（OpenChamber 风格）
+  retracted_messagesTitle: 'Retracted messages {count}',
+  retracted_restore: 'Restore',
+  retracted_restoreTooltip: 'Restore this message and its replies (workspace state restores via extension if installed)',
+  retracted_noText: '(no text)',
   chat_extensionPanel: 'Extension panel',
   chat_confirm: 'Confirm',
   chat_submit: 'Submit',
@@ -174,6 +180,8 @@ export const en = {
   // message
   message_copy: 'Copy message',
   message_editFromHere: 'Edit from here',
+  message_retract: 'Retract',
+  message_retractTooltip: 'Retract this message and its replies (workspace restores via extension if installed)',
   message_newSession: 'New session',
   message_creating: 'Creating…',
   message_thinkingUnavailable: 'Thinking unavailable',
