@@ -50,8 +50,6 @@ pidance --no-open                # do not open the browser automatically
 
 PORT=8080 pidance                # environment variable is also supported
 PIDANCE_NO_OPEN=1 pidance        # do not open the browser (for background services)
-PI_DECK_NO_OPEN=1 pidance         # legacy product variable, same effect
-PI_WEB_NO_OPEN=1 pidance         # legacy compatibility variable, same effect
 ```
 
 ## HTTP Proxy
@@ -111,7 +109,7 @@ The local dev server runs at [http://localhost:31415](http://localhost:31415) (P
 | **31416** | Continuous local test deploy (`local-deploy.mjs`, Next dev, not public) |
 | **30141** | Upstream pi-web / existing service — do not touch |
 
-Public access is [https://deck.namixinxi.cn](https://deck.namixinxi.cn) via Alibaba Cloud Nginx (backend port is deployment config, not the package default). Shell Cookie and Basic Auth are managed by p0017.
+Public access is [https://pidance.namixinxi.cn](https://pidance.namixinxi.cn) via Alibaba Cloud Nginx (backend port is deployment config, not the package default). Shell Cookie and Basic Auth are managed by p0017.
 
 Common checks:
 

@@ -64,6 +64,7 @@ function RelevanceBadge({ relevance }: { relevance: OmRelevance }) {
 export function OmPanel({ memory, collapsed, onToggle }: OmPanelProps) {
   const { t } = useI18n();
   const listId = useId();
+  const hasData = memory?.hasData === true;
 
   const observationsNewestFirst = useMemo(() => {
     if (!memory) return [] as OmObservationView[];
@@ -75,13 +76,12 @@ export function OmPanel({ memory, collapsed, onToggle }: OmPanelProps) {
     return [...memory.reflections].reverse();
   }, [memory]);
 
-  if (!memory || !memory.hasData) return null;
-
-  const { counts, relevance } = memory;
+  const counts = memory?.counts;
+  const relevance = memory?.relevance;
   const latestObservation = observationsNewestFirst[0] ?? null;
   const relevanceParts = RELEVANCE_ORDER
-    .filter((key) => (relevance[key] ?? 0) > 0)
-    .map((key) => `${relevance[key]} ${t(RELEVANCE_KEYS[key])}`);
+    .filter((key) => (relevance?.[key] ?? 0) > 0)
+    .map((key) => `${relevance?.[key]} ${t(RELEVANCE_KEYS[key])}`);
 
   return (
     <section
@@ -156,13 +156,15 @@ export function OmPanel({ memory, collapsed, onToggle }: OmPanelProps) {
             fontSize: 10,
           }}
         >
-          {t("om_countSummary", {
-            observations: counts.observationsActive,
-            reflections: counts.reflectionsRecorded,
-          })}
+          {hasData && counts
+            ? t("om_countSummary", {
+              observations: counts.observationsActive,
+              reflections: counts.reflectionsRecorded,
+            })
+            : t("om_readOnlySummary")}
         </span>
 
-        {counts.observationsDropped > 0 ? (
+        {(counts?.observationsDropped ?? 0) > 0 ? (
           <span
             style={{
               flexShrink: 0,
@@ -171,7 +173,7 @@ export function OmPanel({ memory, collapsed, onToggle }: OmPanelProps) {
               fontSize: 10,
             }}
           >
-            {t("om_dropped", { count: counts.observationsDropped })}
+            {t("om_dropped", { count: counts?.observationsDropped ?? 0 })}
           </span>
         ) : null}
 
@@ -219,67 +221,87 @@ export function OmPanel({ memory, collapsed, onToggle }: OmPanelProps) {
             borderTop: "1px solid var(--border)",
           }}
         >
-          <div style={{ padding: "6px 10px 2px", color: "var(--text-dim)", fontFamily: "var(--font-mono)", fontSize: 10, fontWeight: 650, letterSpacing: 0.4, textTransform: "uppercase" }}>
-            {t("om_observations")}
-            <span style={{ marginLeft: 6, fontWeight: 500 }}>{counts.observationsActive}</span>
+          <div style={{ padding: "8px 10px", color: "var(--text-dim)", fontSize: 11, lineHeight: 1.5 }}>
+            <p style={{ margin: 0 }}>{t("om_sourceDescription")}</p>
+            <p style={{ margin: "4px 0 0" }}>
+              <strong style={{ color: "var(--text-muted)", fontWeight: 650 }}>{t("om_observations")}.</strong>{" "}
+              {t("om_observationsDescription")}
+            </p>
+            <p style={{ margin: "2px 0 0" }}>
+              <strong style={{ color: "var(--text-muted)", fontWeight: 650 }}>{t("om_reflections")}.</strong>{" "}
+              {t("om_reflectionsDescription")}
+            </p>
           </div>
-          {observationsNewestFirst.length === 0 ? (
-            <div style={{ padding: "2px 10px 8px", color: "var(--text-dim)", fontSize: 11 }}>{t("om_emptyObservations")}</div>
-          ) : (
-            <ul style={{ margin: 0, padding: "0 0 4px", listStyle: "none" }}>
-              {observationsNewestFirst.map((item) => (
-                <li
-                  key={item.id}
-                  style={{
-                    display: "flex",
-                    alignItems: "flex-start",
-                    gap: 8,
-                    padding: "4px 10px",
-                    color: "var(--text)",
-                    fontSize: 12,
-                    lineHeight: 1.45,
-                  }}
-                >
-                  <span style={{ minWidth: 0, flex: 1 }}>
-                    <span style={{ display: "block", overflowWrap: "anywhere" }}>{item.content}</span>
-                    <span style={{ display: "block", marginTop: 1, color: "var(--text-dim)", fontFamily: "var(--font-mono)", fontSize: 10 }}>
-                      {formatOmTime(item.timestamp)}
-                      {item.tokenCount > 0 ? ` · ${item.tokenCount} tok` : ""}
-                    </span>
-                  </span>
-                  <RelevanceBadge relevance={item.relevance} />
-                </li>
-              ))}
-            </ul>
-          )}
 
-          <div style={{ padding: "6px 10px 2px", borderTop: "1px solid color-mix(in srgb, var(--border) 70%, transparent)", color: "var(--text-dim)", fontFamily: "var(--font-mono)", fontSize: 10, fontWeight: 650, letterSpacing: 0.4, textTransform: "uppercase" }}>
-            {t("om_reflections")}
-            <span style={{ marginLeft: 6, fontWeight: 500 }}>{counts.reflectionsRecorded}</span>
-          </div>
-          {reflectionsNewestFirst.length === 0 ? (
-            <div style={{ padding: "2px 10px 8px", color: "var(--text-dim)", fontSize: 11 }}>{t("om_emptyReflections")}</div>
+          {!hasData || !counts ? (
+            <div style={{ padding: "7px 10px 9px", borderTop: "1px solid color-mix(in srgb, var(--border) 70%, transparent)", color: "var(--text-dim)", fontSize: 11, lineHeight: 1.45 }}>
+              {t("om_projectionUnavailable")}
+            </div>
           ) : (
-            <ul style={{ margin: 0, padding: "0 0 6px", listStyle: "none" }}>
-              {reflectionsNewestFirst.map((item) => (
-                <li
-                  key={item.id}
-                  style={{
-                    padding: "4px 10px",
-                    color: "var(--text)",
-                    fontSize: 12,
-                    lineHeight: 1.45,
-                  }}
-                >
-                  <span style={{ display: "block", overflowWrap: "anywhere" }}>{item.content}</span>
-                  {item.tokenCount > 0 ? (
-                    <span style={{ display: "block", marginTop: 1, color: "var(--text-dim)", fontFamily: "var(--font-mono)", fontSize: 10 }}>
-                      {item.tokenCount} tok
-                    </span>
-                  ) : null}
-                </li>
-              ))}
-            </ul>
+            <>
+              <div style={{ padding: "6px 10px 2px", borderTop: "1px solid color-mix(in srgb, var(--border) 70%, transparent)", color: "var(--text-dim)", fontFamily: "var(--font-mono)", fontSize: 10, fontWeight: 650, letterSpacing: 0.4, textTransform: "uppercase" }}>
+                {t("om_observations")}
+                <span style={{ marginLeft: 6, fontWeight: 500 }}>{counts.observationsActive}</span>
+              </div>
+              {observationsNewestFirst.length === 0 ? (
+                <div style={{ padding: "2px 10px 8px", color: "var(--text-dim)", fontSize: 11 }}>{t("om_emptyObservations")}</div>
+              ) : (
+                <ul style={{ margin: 0, padding: "0 0 4px", listStyle: "none" }}>
+                  {observationsNewestFirst.map((item) => (
+                    <li
+                      key={item.id}
+                      style={{
+                        display: "flex",
+                        alignItems: "flex-start",
+                        gap: 8,
+                        padding: "4px 10px",
+                        color: "var(--text)",
+                        fontSize: 12,
+                        lineHeight: 1.45,
+                      }}
+                    >
+                      <span style={{ minWidth: 0, flex: 1 }}>
+                        <span style={{ display: "block", overflowWrap: "anywhere" }}>{item.content}</span>
+                        <span style={{ display: "block", marginTop: 1, color: "var(--text-dim)", fontFamily: "var(--font-mono)", fontSize: 10 }}>
+                          {formatOmTime(item.timestamp)}
+                          {item.tokenCount > 0 ? ` · ${item.tokenCount} tok` : ""}
+                        </span>
+                      </span>
+                      <RelevanceBadge relevance={item.relevance} />
+                    </li>
+                  ))}
+                </ul>
+              )}
+
+              <div style={{ padding: "6px 10px 2px", borderTop: "1px solid color-mix(in srgb, var(--border) 70%, transparent)", color: "var(--text-dim)", fontFamily: "var(--font-mono)", fontSize: 10, fontWeight: 650, letterSpacing: 0.4, textTransform: "uppercase" }}>
+                {t("om_reflections")}
+                <span style={{ marginLeft: 6, fontWeight: 500 }}>{counts.reflectionsRecorded}</span>
+              </div>
+              {reflectionsNewestFirst.length === 0 ? (
+                <div style={{ padding: "2px 10px 8px", color: "var(--text-dim)", fontSize: 11 }}>{t("om_emptyReflections")}</div>
+              ) : (
+                <ul style={{ margin: 0, padding: "0 0 6px", listStyle: "none" }}>
+                  {reflectionsNewestFirst.map((item) => (
+                    <li
+                      key={item.id}
+                      style={{
+                        padding: "4px 10px",
+                        color: "var(--text)",
+                        fontSize: 12,
+                        lineHeight: 1.45,
+                      }}
+                    >
+                      <span style={{ display: "block", overflowWrap: "anywhere" }}>{item.content}</span>
+                      {item.tokenCount > 0 ? (
+                        <span style={{ display: "block", marginTop: 1, color: "var(--text-dim)", fontFamily: "var(--font-mono)", fontSize: 10 }}>
+                          {item.tokenCount} tok
+                        </span>
+                      ) : null}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </>
           )}
         </div>
       )}

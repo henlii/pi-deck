@@ -50,8 +50,6 @@ pidance --no-open                # 不自动打开浏览器
 
 PORT=8080 pidance                # 也支持环境变量
 PIDANCE_NO_OPEN=1 pidance        # 不自动打开浏览器（适用于后台服务或开机自启）
-PI_DECK_NO_OPEN=1 pidance         # 旧产品变量，作用相同
-PI_WEB_NO_OPEN=1 pidance         # 旧版兼容变量，作用相同
 ```
 
 ## HTTP 代理

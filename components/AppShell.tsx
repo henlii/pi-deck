@@ -120,7 +120,8 @@ function AppShellInner() {
   const [workspaceWidth, setWorkspaceWidth] = useState(288);
   const [mobileWorkspaceReady, setMobileWorkspaceReady] = useState(false);
   // ── 桌面会话栏调宽：AppShell 是宽度唯一 owner（布局 owner），从偏好恢复并即时落盘 ──
-  const [sidebarWidth, setSidebarWidth] = useState(() => loadSidebarPreferences().sidebarWidth);
+  // 首次客户端渲染必须与 SSR 一致；挂载后再恢复浏览器持久化宽度。
+  const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_WIDTH_DEFAULT);
   const [sidebarDragging, setSidebarDragging] = useState(false);
   const sidebarDragRef = useRef<{ startX: number; startWidth: number } | null>(null);
 
@@ -173,6 +174,10 @@ function AppShellInner() {
   const handleSidebarResizeReset = useCallback(() => {
     applySidebarWidth(SIDEBAR_WIDTH_DEFAULT);
   }, [applySidebarWidth]);
+
+  useEffect(() => {
+    setSidebarWidth(loadSidebarPreferences().sidebarWidth);
+  }, []);
 
   // On mobile the sidebar is an overlay drawer; hide it by default so the chat
   // is visible on load. Runs once the breakpoint resolves after hydration.

@@ -280,6 +280,11 @@ export const zhCN: Record<TranslationKey, string> = {
   om_relevanceLow: '低',
   om_emptyObservations: '暂无有效观察',
   om_emptyReflections: '暂无反思',
+  om_readOnlySummary: '扩展写入的只读认知记忆',
+  om_sourceDescription: '这些只读认知记忆由扩展写入，并非 Pidance 自动生成。Pidance 只负责展示，不直接编辑 Pi 会话。',
+  om_observationsDescription: 'Agent 为当前分支保留的事实与线索。',
+  om_reflectionsDescription: '基于这些上下文形成的更高层总结。',
+  om_projectionUnavailable: '当前分支暂无可读的观察与反思投影。',
   // workspace history
   wh_toggle: '工作区历史',
   wh_expand: '展开工作区历史',

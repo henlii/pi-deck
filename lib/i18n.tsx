@@ -6,7 +6,6 @@ import { en, type TranslationKey } from "./locales/en";
 import { zhCN } from "./locales/zh-CN";
 
 export const I18N_STORAGE_KEY = "pidance:i18n:v1";
-export const LEGACY_I18N_STORAGE_KEY = "pi-deck:i18n:v1";
 export type Locale = "en" | "zh-CN";
 export type Messages = Record<TranslationKey, string>;
 
@@ -18,36 +17,13 @@ export type StorageLike = {
 };
 
 /**
- * 读取持久化 locale：新键存在则只读新键；否则一次性迁移旧键。
- * 仅在新键写入成功后删除旧键；写入失败保留旧键。
- * 旧键损坏/非法时安全返回 null，并在可写时清除无用旧键以免反复解析。
+ * 读取持久化 locale：仅读规范键；损坏输入安全返回 null。
  */
 export function readPersistedLocale(storage: StorageLike): Locale | null {
   try {
     const raw = storage.getItem(I18N_STORAGE_KEY);
-    if (raw !== null) return parsePersistedLocale(raw);
-
-    const legacy = storage.getItem(LEGACY_I18N_STORAGE_KEY);
-    if (legacy === null) return null;
-
-    const stored = parsePersistedLocale(legacy);
-    if (!stored) {
-      // 损坏/非法旧值无法迁移：尽量删除旧键，避免每次刷新重解析坏数据。
-      try {
-        storage.removeItem(LEGACY_I18N_STORAGE_KEY);
-      } catch {
-        // ignore
-      }
-      return null;
-    }
-
-    try {
-      storage.setItem(I18N_STORAGE_KEY, JSON.stringify(stored));
-      storage.removeItem(LEGACY_I18N_STORAGE_KEY);
-    } catch {
-      // 写新键失败：不删旧键
-    }
-    return stored;
+    if (raw === null) return null;
+    return parsePersistedLocale(raw);
   } catch {
     return null;
   }

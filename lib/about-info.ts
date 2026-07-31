@@ -36,7 +36,7 @@ function cleanGitUrl(raw: string): string | null {
 }
 
 function isProductPackageName(name: string): boolean {
-  return name === "@henlii/pidance" || name === "@henlii/pi-deck";
+  return name === "@henlii/pidance";
 }
 
 /**
@@ -48,7 +48,7 @@ export function buildAboutInfo(pkg: unknown): AboutInfo {
   const rawName = typeof record.name === "string" && record.name.trim()
     ? record.name.trim()
     : DEFAULT_NAME;
-  // 包名 @henlii/pidance（及历史 @henlii/pi-deck）对外展示统一为 Pidance
+  // 包名 @henlii/pidance 对外展示统一为 Pidance
   const displayName = isProductPackageName(rawName) ? DEFAULT_NAME : rawName;
 
   const version = typeof record.version === "string" && record.version.trim()

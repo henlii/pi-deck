@@ -71,7 +71,7 @@ npm run check && npm run build && npm run release:audit
   - 仅 `bin.pidance`，无 `pi-web`；
   - 无源码/测试/本地治理/密钥/dev cache 等禁入路径；
   - 对清单中每个可扫描文本文件做**完整**有界扫描（单文件与总预算超限、读取失败均 fail closed，禁止截断后通过）；
-  - 拒绝私钥标记、明显 credential 赋值、仓库/HOME 绝对路径、`100.99.31.21`、`192.168.*.*`（公开域名 `deck.namixinxi.cn` 允许）。
+  - 拒绝私钥标记、明显 credential 赋值、仓库/HOME 绝对路径、`100.99.31.21`、`192.168.*.*`（公开域名 `pidance.namixinxi.cn` 允许）。
 
 审计失败会列出具体路径与原因并以非零退出。**此时不要**继续 pack/publish。
 

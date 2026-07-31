@@ -78,53 +78,15 @@ function makeMemoryStorage(initial = {}) {
   };
 }
 
-test("Settings 页迁移：新键优先且不读/不删旧键", async () => {
+test("Settings 页：读取规范键与默认回退", async () => {
   const {
     loadStoredSettingsPage,
     SETTINGS_PAGE_STORAGE_KEY,
-    LEGACY_SETTINGS_PAGE_STORAGE_KEY,
+    DEFAULT_SETTINGS_PAGE,
   } = await jiti.import("./settings-nav.ts");
   const storage = makeMemoryStorage({
     [SETTINGS_PAGE_STORAGE_KEY]: JSON.stringify("models"),
-    [LEGACY_SETTINGS_PAGE_STORAGE_KEY]: JSON.stringify("skills"),
   });
   assert.equal(loadStoredSettingsPage(storage), "models");
-  assert.equal(storage.map.has(LEGACY_SETTINGS_PAGE_STORAGE_KEY), true);
-});
-
-test("Settings 页迁移：成功迁移后删除旧键", async () => {
-  const {
-    loadStoredSettingsPage,
-    SETTINGS_PAGE_STORAGE_KEY,
-    LEGACY_SETTINGS_PAGE_STORAGE_KEY,
-  } = await jiti.import("./settings-nav.ts");
-  const storage = makeMemoryStorage({
-    [LEGACY_SETTINGS_PAGE_STORAGE_KEY]: JSON.stringify("plugins"),
-  });
-  assert.equal(loadStoredSettingsPage(storage), "plugins");
-  assert.equal(storage.map.has(LEGACY_SETTINGS_PAGE_STORAGE_KEY), false);
-  assert.equal(storage.map.get(SETTINGS_PAGE_STORAGE_KEY), JSON.stringify("plugins"));
-});
-
-test("Settings 页迁移：写新键失败不删旧键", async () => {
-  const {
-    loadStoredSettingsPage,
-    SETTINGS_PAGE_STORAGE_KEY,
-    LEGACY_SETTINGS_PAGE_STORAGE_KEY,
-  } = await jiti.import("./settings-nav.ts");
-  const map = new Map([[LEGACY_SETTINGS_PAGE_STORAGE_KEY, JSON.stringify("memory")]]);
-  const storage = {
-    getItem(key) {
-      return map.has(key) ? map.get(key) : null;
-    },
-    setItem() {
-      throw new Error("quota");
-    },
-    removeItem(key) {
-      map.delete(key);
-    },
-  };
-  assert.equal(loadStoredSettingsPage(storage), "memory");
-  assert.equal(map.has(LEGACY_SETTINGS_PAGE_STORAGE_KEY), true);
-  assert.equal(map.has(SETTINGS_PAGE_STORAGE_KEY), false);
+  assert.equal(loadStoredSettingsPage(makeMemoryStorage()), DEFAULT_SETTINGS_PAGE);
 });

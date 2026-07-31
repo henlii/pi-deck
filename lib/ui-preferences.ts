@@ -49,7 +49,6 @@ export const DEFAULT_SIDEBAR_PREFERENCES: SidebarPreferences = {
 };
 
 export const STORAGE_KEY = "pidance:sidebar-preferences";
-export const LEGACY_STORAGE_KEY = "pi-deck:sidebar-preferences";
 
 /** 可注入 storage，便于迁移单测。 */
 export type StorageLike = {
@@ -121,39 +120,17 @@ export function serializeSidebarPreferences(prefs: SidebarPreferences): string {
 }
 
 /**
- * 从 storage 加载侧栏偏好：新键存在则只读新键；否则一次性迁移旧键。
- * 仅在新键写入成功后删除旧键；写入失败保留旧键。
+ * 从 storage 加载侧栏偏好：仅读规范键；损坏输入安全回退默认。
  */
 export function loadSidebarPreferencesFromStorage(storage: StorageLike): SidebarPreferences {
   try {
-    // 新键存在（含空串）时绝不读/删旧键。
     const raw = storage.getItem(STORAGE_KEY);
-    if (raw !== null) {
-      try {
-        return parseSidebarPreferences(JSON.parse(raw) as unknown);
-      } catch {
-        return parseSidebarPreferences(null);
-      }
-    }
-
-    const legacy = storage.getItem(LEGACY_STORAGE_KEY);
-    if (legacy === null) return parseSidebarPreferences(null);
-
-    // 旧值损坏时落到规范默认，仍尝试迁移以免反复读坏数据。
-    let prefs: SidebarPreferences;
+    if (raw === null) return parseSidebarPreferences(null);
     try {
-      prefs = parseSidebarPreferences(JSON.parse(legacy) as unknown);
+      return parseSidebarPreferences(JSON.parse(raw) as unknown);
     } catch {
-      prefs = parseSidebarPreferences(null);
+      return parseSidebarPreferences(null);
     }
-
-    try {
-      storage.setItem(STORAGE_KEY, serializeSidebarPreferences(prefs));
-      storage.removeItem(LEGACY_STORAGE_KEY);
-    } catch {
-      // 写新键失败：不删旧键，仍返回已解析值
-    }
-    return prefs;
   } catch {
     return parseSidebarPreferences(null);
   }

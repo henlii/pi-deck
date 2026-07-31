@@ -411,8 +411,9 @@ export function ChatWindow({ session, newSessionCwd, newSessionIntentId, onAgent
     </div>
   );
 
-  // 观察与反思：无有效 om 时不渲染；放在 Todo 下方。
-  const omPanelElement = !observationalMemory?.hasData ? null : (
+  // 观察与反思：已有会话完成首轮加载后保留低权重入口；放在 Todo 下方。
+  // null 也可能表示当前分支没有可读投影，不能推断扩展未安装或数据不存在。
+  const omPanelElement = loading || !session ? null : (
     <div
       style={{
         flexShrink: 0,
