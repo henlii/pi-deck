@@ -166,7 +166,7 @@ npm view @henlii/pidance@0.1.0 version --registry https://registry.npmjs.org/
 ## 本地脚本对照
 
 | 脚本 | 作用 | 是否允许自动 publish |
-|------|------|----------------------|
+| ------ | ------ | ---------------------- |
 | `release:audit` | **生成前** dry-run 清单 + 完整文本扫描 | 否 |
 | `release:audit:tgz -- <tgz>` | **生成后** 解析真实 tgz 审计 | 否 |
 | `release:check` | check + build + pre-pack 审计（隔离 checkout） | 否 |
@@ -178,3 +178,42 @@ npm view @henlii/pidance@0.1.0 version --registry https://registry.npmjs.org/
 
 - 对象存储 / R2 分发（后续议题）。
 - 开发机日常工作区直接 `npm run build` / `npm publish`。
+
+## 本地部署到正式位（不发 npm 包）
+
+不发公网包时，可将已审计 tgz 部署到正式安装位（/opt/pidance，31415）：
+
+```bash
+# 1. 隔离 checkout（勿用日常工作区）
+git worktree add --detach /tmp/pidance-release-build HEAD
+cd /tmp/pidance-release-build
+npm ci --no-audit --no-fund --include=dev   # 本机 npm 全局 omit=dev，必须显式 --include=dev
+# 2. 质量门禁 + 构建 + 生成前审计
+node_modules/.bin/next build --webpack
+PIDANCE_RELEASE_SOURCE_ROOT=/root/works/open/pidance npm run release:audit
+# 3. 打包 + 生成后审计 + 哈希
+npm pack --ignore-scripts
+PIDANCE_RELEASE_SOURCE_ROOT=/root/works/open/pidance node scripts/audit-release-package.mjs --tgz henlii-pidance-0.1.0.tgz
+sha256sum henlii-pidance-0.1.0.tgz
+# 4. 归档 + 安装正式位
+VER=0.1.0-local-<commit8>-<sha8>
+cp henlii-pidance-0.1.0.tgz /opt/pidance/artifacts/pidance-$VER.tgz
+sha256sum /opt/pidance/artifacts/pidance-$VER.tgz > /opt/pidance/artifacts/pidance-$VER.tgz.sha256
+mkdir -p /opt/pidance/releases/$VER && cd /opt/pidance/releases/$VER
+# package.json：{"name": "$VER", "dependencies": {"@henlii/pidance": "file:../../artifacts/pidance-$VER.tgz"}}
+npm install --omit=dev
+ln -sfn /opt/pidance/releases/$VER /opt/pidance/current
+systemctl restart pidance.service
+# 5. 冒烟验收
+curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:31415/api/home   # 200
+curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:31415/api/sessions  # 200
+ls /opt/pidance/current/node_modules/.bin/   # 仅 pidance，无 pi-web
+```
+
+### 已部署记录
+
+| 版本 | tgz sha256（前 8） | 部署日期 | 内容 | 验收 |
+|------|--------------------|----------|------|------|
+| `0.1.0-local-1695fb3-d025b378` | d025b378 | 2026-08-01 | OpenChamber 交互改造批次（问题块内联/工具卡片/会话栏/子代理状态/引导页/命令面板/撤回坞等全部功能） | home/sessions/models 200，bin 仅 pidance |
+
+陷阱：本机 shell 环境残留 `PORT=30141`（上游 pi-web 变量），裸跑 `pidance` CLI 会读取它而启动到 30141；systemd unit 显式 `--port 31415` 不受影响。
