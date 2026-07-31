@@ -13,6 +13,10 @@ const notoSansMono = Noto_Sans_Mono({
 export const metadata: Metadata = {
   title: "Pidance",
   description: "Open-source web client for the Pi coding agent",
+  icons: {
+    icon: "/brand/pidance-logo.png",
+    apple: "/brand/pidance-logo.png",
+  },
 };
 
 export default function RootLayout({
