@@ -40,6 +40,7 @@ export type BrowseGitInfo = {
 
 export type BrowseResult = {
 	path: string;
+	parentPath: string | null;
 	entries: BrowseEntry[];
 	git: BrowseGitInfo;
 };
@@ -54,6 +55,13 @@ export function expandHome(input: string): string | null {
 		return path.join(home, trimmed.slice(2));
 	}
 	return path.isAbsolute(trimmed) ? trimmed : null;
+}
+
+/** 上级目录（根目录返回 null；上游 parentPath 语义）。 */
+export function getBrowseParentPath(abs: string): string | null {
+	const normalized = path.normalize(abs);
+	const parent = path.dirname(normalized);
+	return parent === normalized ? null : parent;
 }
 
 /** 输入路径的"浏览目录"：尾随 / 则本身，否则取父目录（OpenChamber getBrowseDirectoryPath）。 */
@@ -71,16 +79,6 @@ export function getBrowseLeafSegment(input: string): string {
 	if (trimmed.endsWith("/")) return "";
 	const lastSep = trimmed.lastIndexOf("/");
 	return lastSep < 0 ? trimmed : trimmed.slice(lastSep + 1);
-}
-
-/** 输入路径的上级目录（.. 导航用）。 */
-export function getBrowseParentPath(input: string): string | null {
-	const trimmed = input.trim().replace(/\/+$/, "");
-	if (!trimmed || trimmed === "/") return null;
-	const lastSep = trimmed.lastIndexOf("/");
-	if (lastSep < 0) return null;
-	if (lastSep === 0) return "/";
-	return trimmed.slice(0, lastSep + 1);
 }
 
 async function detectGit(dir: string): Promise<BrowseGitInfo> {
@@ -137,14 +135,24 @@ export async function browseDirectory(
 	const entries: BrowseEntry[] = [];
 	for (const d of dirents) {
 		if (BROWSE_IGNORED_NAMES.has(d.name)) continue;
-		if (!d.isDirectory()) continue;
 		const full = path.join(abs, d.name);
-		// 符号链接目录也允许进入（stat 已在上层校验存在性）；这里不做额外展开。
-		entries.push({ name: d.name, path: full });
+		if (d.isDirectory()) {
+			entries.push({ name: d.name, path: full });
+		} else if (d.isSymbolicLink()) {
+			// 对齐上游 0.8.6：符号链接目录经 realpath + stat 校验后跟随列出
+			try {
+				const real = fs.realpathSync(full);
+				if (fs.statSync(real).isDirectory()) {
+					entries.push({ name: d.name, path: full });
+				}
+			} catch {
+				// broken symlink：跳过
+			}
+		}
 		if (entries.length >= MAX_ENTRIES) break;
 	}
 	entries.sort((a, b) => a.name.localeCompare(b.name));
 
 	const git = await detectGit(abs);
-	return { path: abs, entries, git };
+	return { path: abs, parentPath: getBrowseParentPath(abs), entries, git };
 }

@@ -44,7 +44,22 @@ export async function GET(
       // Send initial connected event
       encode({ type: "connected", sessionId: id });
 
+      // 对齐上游 0.8.6 事件流瘦身：丢弃 turn_start/turn_end/tool_execution_update（客户端
+      // 不消费），message_update 去掉 assistantMessageEvent 大字段，agent_end 简化为 {type}。
+      const DROPPED_EVENT_TYPES = new Set(["turn_start", "turn_end", "tool_execution_update"]);
       const unsubscribe = session.onEvent((event) => {
+        const type = (event as { type?: string }).type;
+        if (!type || DROPPED_EVENT_TYPES.has(type)) return;
+        if (type === "message_update") {
+          const slim = { ...event } as Record<string, unknown>;
+          delete slim.assistantMessageEvent;
+          encode(slim);
+          return;
+        }
+        if (type === "agent_end") {
+          encode({ type: "agent_end" });
+          return;
+        }
         encode(event);
       });
 

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { homedir } from "os";
 import { browseDirectory, expandHome } from "@/lib/cwd-browse";
 
 export const dynamic = "force-dynamic";
@@ -8,7 +9,8 @@ export const dynamic = "force-dynamic";
 export async function GET(req: Request) {
 	try {
 		const url = new URL(req.url);
-		const raw = url.searchParams.get("path") ?? "";
+		// 缺省浏览家目录（对齐上游 0.8.1 cwd/browse 语义）
+		const raw = url.searchParams.get("path")?.trim() || homedir();
 		const abs = expandHome(raw);
 		if (!abs) {
 			return NextResponse.json({ error: "Invalid path" }, { status: 400 });
