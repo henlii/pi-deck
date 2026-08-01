@@ -37,8 +37,6 @@ interface Props {
   onAgentEnd?: () => void;
   onSessionCreated?: (session: SessionInfo, intentId?: string | null) => void;
   onSessionForked?: (newSessionId: string) => void;
-  /** 空态引导页选择项目/工作树 → 在该 cwd 创建新会话。 */
-  onGuideNewSession?: (cwd: string) => void;
   modelsRefreshKey?: number;
   chatInputRef?: React.RefObject<ChatInputHandle | null>;
   onBranchDataChange?: (tree: SessionTreeNode[], activeLeafId: string | null, onLeafChange: (leafId: string | null) => void, actions: BranchActions) => void;
@@ -112,13 +110,36 @@ export function ProcessDetailsGroup({ messageCount, toolCallCount, children, t }
   );
 }
 
-export function ChatWindow({ session, newSessionCwd, newSessionIntentId, onAgentEnd, onSessionCreated, onSessionForked, modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSessionStatsChange, onSessionStatsPanelOpen, onContextUsageChange, onOpenFile, onOpenSubagentSession, onGuideNewSession }: Props) {
+export function ChatWindow({ session, newSessionCwd, newSessionIntentId, onAgentEnd, onSessionCreated, onSessionForked, modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSessionStatsChange, onSessionStatsPanelOpen, onContextUsageChange, onOpenFile, onOpenSubagentSession }: Props) {
   const { t } = useI18n();
   const { soundEnabled, onSoundToggle, playDoneSound, unlockAudio } = useAudio();
   const isMobile = useIsMobile();
   // 只读（subagent 持久化）会话：历史正常读，一切写入口关闭，编辑器换成只读提示。
   const isReadOnly = session?.readOnly === true;
 
+  // OpenChamber draft-target 语义：空态引导页选中的目标 cwd（项目根或工作树路径）。
+  // 持久化到 localStorage（对应 OpenChamber oc.chatInput.lastDraftTarget），
+  // 选择不触发跳转/创建——仅覆盖新会话的创建目录，发送第一条消息才真正建会话。
+  const [draftTargetCwd, setDraftTargetCwd] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem("pidance.draftTargetCwd");
+    } catch {
+      return null;
+    }
+  });
+  const handleDraftTargetChange = useCallback((cwd: string | null) => {
+    setDraftTargetCwd(cwd);
+    try {
+      if (cwd) {
+        localStorage.setItem("pidance.draftTargetCwd", cwd);
+      } else {
+        localStorage.removeItem("pidance.draftTargetCwd");
+      }
+    } catch {
+      // localStorage 不可用时仅内存生效
+    }
+  }, []);
+  const effectiveNewSessionCwd = draftTargetCwd ?? newSessionCwd;
   // Wrap onAgentEnd to play the completion sound. This is more reliable than
   // wrapping handleAgentEventRef because useAgentSession overwrites that ref
   // on every render (it syncs the latest callback), which would blow away an
@@ -163,7 +184,7 @@ export function ChatWindow({ session, newSessionCwd, newSessionIntentId, onAgent
     branchBusy,
     retractedMessages, handleRetractMessage, handleRestoreMessage,
   } = useAgentSession({
-    session, newSessionCwd, newSessionIntentId, onAgentEnd: wrappedOnAgentEnd, onSessionCreated, onSessionForked,
+    session, newSessionCwd: effectiveNewSessionCwd, newSessionIntentId, onAgentEnd: wrappedOnAgentEnd, onSessionCreated, onSessionForked,
     modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSessionStatsPanelOpen,
     isMobile,
   });
@@ -174,8 +195,7 @@ export function ChatWindow({ session, newSessionCwd, newSessionIntentId, onAgent
   const [whActing, setWhActing] = useState(false);
   const [expiredInlineRequestId, setExpiredInlineRequestId] = useState<string | null>(null);
   const inlineExtensionCardRef = useRef<HTMLDivElement>(null);
-  const todoCollapseScope = session?.id ?? (newSessionCwd ? `new:${newSessionCwd}` : "new-session");
-
+  const todoCollapseScope = session?.id ?? (effectiveNewSessionCwd ? `new:${effectiveNewSessionCwd}` : "new-session");
   // Todo / om / wh 展开状态只属于当前聊天视图；切换会话后恢复默认折叠。
   useEffect(() => {
     setTodosCollapsed(true);
@@ -345,8 +365,7 @@ export function ChatWindow({ session, newSessionCwd, newSessionIntentId, onAgent
   const messageRefs = useMessageRefs(visibleMessages.length);
 
   const isEmptyNew = isNew && messages.length === 0 && !streamState.isStreaming && !sessionBusy;
-  const messageCwd = session?.cwd ?? newSessionCwd ?? undefined;
-
+  const messageCwd = session?.cwd ?? effectiveNewSessionCwd ?? undefined;
   const availableThinkingLevels = displayModelValue
     ? (modelThinkingLevels[`${displayModelValue.provider}:${displayModelValue.modelId}`] ?? null)
     : null;
@@ -402,8 +421,8 @@ export function ChatWindow({ session, newSessionCwd, newSessionIntentId, onAgent
       soundEnabled={soundEnabled}
       onSoundToggle={onSoundToggle}
       onAudioUnlock={unlockAudio}
-      draftKey={session?.id ?? (newSessionCwd ? `new:${newSessionCwd}` : undefined)}
-      cwd={session?.cwd ?? newSessionCwd}
+      draftKey={session?.id ?? (effectiveNewSessionCwd ? `new:${effectiveNewSessionCwd}` : undefined)}
+      cwd={session?.cwd ?? effectiveNewSessionCwd}
     />
       )}
     </>
@@ -477,7 +496,7 @@ export function ChatWindow({ session, newSessionCwd, newSessionIntentId, onAgent
           onUndo={isReadOnly ? undefined : () => runWhAction(handleWorkspaceUndo)}
           onRedo={isReadOnly ? undefined : () => runWhAction(handleWorkspaceRedo)}
           onCheckpoint={isReadOnly ? undefined : (label) => runWhAction(() => handleWorkspaceCheckpoint(label))}
-          cwd={session?.cwd ?? newSessionCwd}
+          cwd={session?.cwd ?? effectiveNewSessionCwd}
           sessionId={session?.id ?? sessionIdRef.current}
         />
       </div>
@@ -571,11 +590,12 @@ export function ChatWindow({ session, newSessionCwd, newSessionIntentId, onAgent
             </div>
             <NoticeShelf notices={notices} align="right" />
 
-            {onGuideNewSession && (
-              <div className="mb-4">
-                <NewSessionGuide onPick={onGuideNewSession} />
-              </div>
-            )}
+            <div className="mb-4">
+              <NewSessionGuide
+                targetCwd={draftTargetCwd}
+                onTargetChange={handleDraftTargetChange}
+              />
+            </div>
             {todoPanelElement}
             {omPanelElement}
             {whPanelElement}

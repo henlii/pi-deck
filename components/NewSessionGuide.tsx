@@ -1,28 +1,35 @@
 "use client";
 
 /**
- * 新会话引导（OpenChamber draft-target-selectors 风格）：
- * 输入框上方一行两个紧凑下拉 —— 项目 + 分支（工作树）。
+ * 新会话引导选择器（OpenChamber draft-target-selectors 语义）：
+ * 空态时在输入框上方提供 项目 + 分支 两个紧凑下拉。
+ * - 只选择"目标目录"，不创建会话、不跳转（OpenChamber setNewSessionDraftTarget 语义）
+ * - 发送第一条消息时新会话才在目标目录创建（Pidance 懒创建）
+ * - 选择持久化到 localStorage（ChatWindow 管理），回到空态自动恢复
  * - 项目下拉：/api/sessions 聚合最近 cwd（去重、按最近使用排序）
  * - 分支下拉：选定项目后加载其 git 工作树（主工作树分组 + 工作树分组；/api/worktrees）
- * - 选中分支 → onPick(path)（进入该目录新会话）；非 git 项目 → 选项目即进入
+ * - 非 git 项目：无分支选择器，选项目即设为目标（OpenChamber 语义）
  */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Folder, GitBranch } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
 
 type WorktreeInfo = { path: string; branch?: string; isMain?: boolean };
 
 type Props = {
-  onPick: (cwd: string) => void;
+  /** 当前新会话目标目录（项目根或工作树路径）；null = 未选择 */
+  targetCwd: string | null;
+  /** 选择目标（OpenChamber setNewSessionDraftTarget：仅记录，不创建/不跳转） */
+  onTargetChange: (cwd: string | null) => void;
 };
 
-export function NewSessionGuide({ onPick }: Props) {
+export function NewSessionGuide({ targetCwd, onTargetChange }: Props) {
   const { t } = useI18n();
   const [projects, setProjects] = useState<
     Array<{ cwd: string; count: number; latest: number }>
   >([]);
   const [loadingProjects, setLoadingProjects] = useState(true);
+  /** 项目级选择（驱动分支加载） */
   const [selectedCwd, setSelectedCwd] = useState<string | null>(null);
   const [worktrees, setWorktrees] = useState<WorktreeInfo[] | null>(null);
   const [loadingWorktrees, setLoadingWorktrees] = useState(false);
@@ -56,7 +63,26 @@ export function NewSessionGuide({ onPick }: Props) {
           .map(([cwd, v]) => ({ cwd, count: v.count, latest: v.latest }))
           .sort((a, b) => b.latest - a.latest)
           .slice(0, 12);
-        if (!cancelled) setProjects(sorted);
+        if (!cancelled) {
+          setProjects(sorted);
+          // 恢复持久化目标：targetCwd 匹配项目根 → 自动选中该项目并加载分支。
+          // （工作树路径用最长项目前缀匹配其归属项目。）
+          if (targetCwd) {
+            const exact = sorted.find((p) => p.cwd === targetCwd);
+            if (exact) {
+              setSelectedCwd(exact.cwd);
+              void loadWorktreesRef.current(exact.cwd);
+            } else {
+              const parent = sorted
+                .filter((p) => targetCwd.startsWith(p.cwd + "/"))
+                .sort((a, b) => b.cwd.length - a.cwd.length)[0];
+              if (parent) {
+                setSelectedCwd(parent.cwd);
+                void loadWorktreesRef.current(parent.cwd);
+              }
+            }
+          }
+        }
       } catch {
         // 拉取失败：引导页保持空列表
       } finally {
@@ -66,6 +92,8 @@ export function NewSessionGuide({ onPick }: Props) {
     return () => {
       cancelled = true;
     };
+    // 仅 mount 时执行（targetCwd 的后续变化由分支选择链路处理）
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const loadWorktrees = useCallback(
@@ -82,23 +110,23 @@ export function NewSessionGuide({ onPick }: Props) {
         };
         const wts = data.worktrees ?? [];
         setWorktrees(wts);
-        // OpenChamber 语义：非 git 项目没有分支选择器，选项目即进入该目录。
-        if (wts.length === 0 && !data.isGit) {
-          onPick(cwd);
-        }
       } catch {
         setWorktrees([]);
-        onPick(cwd);
-      } finally {
         setLoadingWorktrees(false);
       }
     },
-    [onPick],
+    [],
   );
+  const loadWorktreesRef = useRef(loadWorktrees);
+  loadWorktreesRef.current = loadWorktrees;
 
   const main = worktrees?.find((w) => w.isMain) ?? null;
   const branches = worktrees?.filter((w) => !w.isMain) ?? [];
   const isGit = worktrees !== null && worktrees.length > 0;
+
+  // 分支下拉受控值：targetCwd 在工作树列表内则显示它，否则占位。
+  const branchValue =
+    targetCwd && worktrees?.some((w) => w.path === targetCwd) ? targetCwd : "";
 
   return (
     <div className="guide-selectors">
@@ -111,7 +139,12 @@ export function NewSessionGuide({ onPick }: Props) {
           disabled={loadingProjects || projects.length === 0}
           onChange={(e) => {
             const cwd = e.target.value;
-            if (cwd) void loadWorktrees(cwd);
+            if (cwd) {
+              // OpenChamber handleDraftProjectChange：选项目即把目标重置为项目根，
+              // 清除旧的分支目标（随后可选分支覆盖）。
+              onTargetChange(cwd);
+              void loadWorktrees(cwd);
+            }
           }}
           aria-label={t("guide_projectTitle")}
         >
@@ -136,11 +169,11 @@ export function NewSessionGuide({ onPick }: Props) {
           <GitBranch size={12} className="guide-selector-icon" aria-hidden />
           <select
             className="guide-select"
-            value=""
+            value={branchValue}
             disabled={!selectedCwd || loadingWorktrees || worktrees === null}
             onChange={(e) => {
               const path = e.target.value;
-              if (path) onPick(path);
+              if (path) onTargetChange(path);
             }}
             aria-label={t("guide_worktreeTitle")}
           >
@@ -149,9 +182,7 @@ export function NewSessionGuide({ onPick }: Props) {
             </option>
             {main && (
               <optgroup label={t("guide_mainWorktree")}>
-                <option value={main.path}>
-                  {main.branch ?? main.path}
-                </option>
+                <option value={main.path}>{main.branch ?? main.path}</option>
               </optgroup>
             )}
             {branches.length > 0 && (
