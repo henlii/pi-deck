@@ -338,7 +338,8 @@ export const zhCN: Record<TranslationKey, string> = {
   guide_noProjects: '还没有项目——从侧栏开始新会话。',
   guide_noWorktrees: '该项目不是 git 仓库；可直接在此新建会话。',
   guide_worktreeUnavailable: '该项目的工作树列表不可用。',
-
+  guide_projectPlaceholder: '选择项目…',
+  guide_branchPlaceholder: '选择分支…',
   // 命令面板（Ctrl/Cmd+K，OpenChamber CommandPalette 风格）
   palette_title: '命令面板',
   palette_placeholder: '搜索会话、文件、操作…',

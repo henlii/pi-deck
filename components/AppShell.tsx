@@ -115,6 +115,8 @@ function AppShellInner() {
   }, []);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsInitialPage, setSettingsInitialPage] = useState<SettingsPageId | null>(null);
+  // 引导页一次性：用户从引导页选过项目/分支后，本次会话流程内不再显示。
+  const [guidePicked, setGuidePicked] = useState(false);
   /** Ctrl/Cmd+K 命令面板 */
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
@@ -545,6 +547,8 @@ function AppShellInner() {
     }
     // 本路径已建立 intent + remount；跳过 identity watcher 的二次 intent。
     suppressSessionResetRef.current = true;
+
+    suppressSessionResetRef.current = true;
     invalidateHydrate();
     newSessionIntentGenerationRef.current += 1;
     const intent = createNewSessionIntent(cwd, newSessionIntentGenerationRef.current);
@@ -562,6 +566,14 @@ function AppShellInner() {
     router.replace("/", { scroll: false });
   }, [router, isMobile, getIdentitySnapshot, setIdentity, invalidateHydrate]);
 
+  // 引导页选择回调：先标记一次性消费，再走标准新建会话流程。
+  const handleGuidePick = useCallback(
+    (cwd: string) => {
+      setGuidePicked(true);
+      handleNewSession(cwd);
+    },
+    [handleNewSession],
+  );
   // Global keyboard shortcuts (handles Esc, Ctrl+Alt+N etc.)
   useGlobalKeyboardShortcuts({
     onNewSession: () => handleNewSession(),
@@ -1811,7 +1823,7 @@ function AppShellInner() {
                 onContextUsageChange={handleContextUsageChange}
                 onOpenFile={handleOpenLinkedFile}
                 onOpenSubagentSession={handleOpenSubagentSession}
-                onGuideNewSession={handleNewSession}
+                onGuideNewSession={guidePicked ? undefined : handleGuidePick}
               />
             ) : initialCwdStatus === "validating" ? (
               <div role="status" style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, padding: 24, color: "var(--text-muted)", textAlign: "center" }}>

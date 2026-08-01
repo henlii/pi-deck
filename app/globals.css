@@ -913,6 +913,7 @@ span.linenumber {
 }
 .sidebar-icon-btn:disabled {
   color: var(--text-dim);
+}
 
 /* ── 扩展卡片文字按钮（OpenChamber 风格：Submit/Cancel） ── */
 .extension-card-btn {
@@ -938,9 +939,52 @@ span.linenumber {
   cursor: not-allowed;
   opacity: 0.55;
 }
-  cursor: not-allowed;
-  opacity: 0.55;
+/* ── 新会话引导选择器（OpenChamber draft-target-selectors 风格） ── */
+.guide-selectors {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 10px;
 }
+.guide-selector {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 6px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  transition: background 0.12s, border-color 0.12s;
+}
+.guide-selector:hover {
+  background: var(--bg-hover);
+}
+.guide-selector:focus-within {
+  background: var(--bg-hover);
+  border-color: var(--accent);
+}
+.guide-selector-icon {
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+.guide-select {
+  max-width: min(260px, 34vw);
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5;
+  outline: none;
+  cursor: pointer;
+  text-overflow: ellipsis;
+}
+.guide-select:disabled {
+  color: var(--text-dim);
+  cursor: default;
+}
+
 /* toggle 开启态（搜索/菜单展开） */
 .sidebar-icon-btn--active,
 .sidebar-icon-btn--active:hover:not(:disabled) {

@@ -338,7 +338,8 @@ export const en = {
   guide_noProjects: 'No projects yet — start a session from the sidebar.',
   guide_noWorktrees: 'This project is not a git repository; start a session here directly.',
   guide_worktreeUnavailable: 'Worktree list unavailable for this project.',
-
+  guide_projectPlaceholder: 'Select a project…',
+  guide_branchPlaceholder: 'Select a branch…',
   // 命令面板（Ctrl/Cmd+K，OpenChamber CommandPalette 风格）
   palette_title: 'Command palette',
   palette_placeholder: 'Search sessions, files, actions…',
