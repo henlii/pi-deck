@@ -489,6 +489,11 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   const [customPathError, setCustomPathError] = useState<string | null>(null);
   const [customPathValidating, setCustomPathValidating] = useState(false);
   const customPathInputRef = useRef<HTMLInputElement>(null);
+  // 目录预览（OpenChamber DirectoryExplorerDialog 语义：输入路径实时列子目录 + git 状态）
+  const [browseEntries, setBrowseEntries] = useState<Array<{ name: string; path: string }>>([]);
+  const [browseGit, setBrowseGit] = useState<{ isRepo: boolean; branch: string | null } | null>(null);
+  const [browseLoading, setBrowseLoading] = useState(false);
+  const [browseMissing, setBrowseMissing] = useState(false);
   // 桌面端原生目录选择器可用性（仅客户端探测，避免 SSR 水合不一致）
   const [desktopPickerAvailable, setDesktopPickerAvailable] = useState(false);
   // 项目行三点菜单：同一时刻仅一个打开（root 标识）
@@ -964,6 +969,82 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
       : prev);
   }, [updatePrefs]);
 
+  // 输入路径变化 → debounce 250ms → 目录预览（OpenChamber DirectoryExplorerDialog 语义）
+  useEffect(() => {
+    if (!customPathOpen) return;
+    const handle = setTimeout(() => {
+      const raw = customPathValue.trim();
+      if (!raw) {
+        setBrowseEntries([]);
+        setBrowseGit(null);
+        setBrowseMissing(false);
+        return;
+      }
+      // OpenChamber getBrowseDirectoryPath：浏览"目录部分"（尾随 / 则本身，
+      // 否则父目录），叶子段由前端过滤。
+      const dirPart = raw.endsWith("/")
+        ? raw
+        : raw.lastIndexOf("/") >= 0
+          ? raw.slice(0, raw.lastIndexOf("/") + 1)
+          : "";
+      let cancelled = false;
+      setBrowseLoading(true);
+      void (async () => {
+        try {
+          const res = await fetch(`/api/cwd/browse?path=${encodeURIComponent(dirPart)}`);
+          if (cancelled) return;
+          if (!res.ok) {
+            setBrowseEntries([]);
+            setBrowseGit(null);
+            setBrowseMissing(true);
+            return;
+          }
+          const data = (await res.json()) as {
+            entries?: Array<{ name: string; path: string }>;
+            git?: { isRepo: boolean; branch: string | null };
+          };
+          setBrowseEntries(data.entries ?? []);
+          setBrowseGit(data.git ?? null);
+          setBrowseMissing(false);
+        } catch {
+          if (!cancelled) {
+            setBrowseEntries([]);
+            setBrowseGit(null);
+            setBrowseMissing(true);
+          }
+        } finally {
+          if (!cancelled) setBrowseLoading(false);
+        }
+      })();
+      return () => {
+        cancelled = true;
+      };
+    }, 250);
+    return () => clearTimeout(handle);
+  }, [customPathOpen, customPathValue]);
+
+  /** 叶子段过滤（OpenChamber browseFilterQuery：输入未尾随 / 时按叶子过滤列表） */
+  const browseLeaf = useMemo(() => {
+    const raw = customPathValue.trim();
+    if (raw.endsWith("/")) return "";
+    const lastSep = raw.lastIndexOf("/");
+    return lastSep < 0 ? raw : raw.slice(lastSep + 1);
+  }, [customPathValue]);
+  const filteredBrowseEntries = useMemo(() => {
+    const leaf = browseLeaf.toLowerCase();
+    if (!leaf) return browseEntries;
+    return browseEntries.filter((e) => e.name.toLowerCase().startsWith(leaf));
+  }, [browseLeaf, browseEntries]);
+  /** 上级目录（.. 导航；OpenChamber canNavigateUp） */
+  const browseParent = useMemo(() => {
+    const raw = customPathValue.trim();
+    if (!raw) return null;
+    const t = raw.replace(/\/+$/, "");
+    if (!t || t === "/") return null;
+    const lastSep = t.lastIndexOf("/");
+    if (lastSep < 0) return null;
+    return lastSep === 0 ? "/" : t.slice(0, lastSep + 1);
+  }, [customPathValue]);
   const commitCustomPath = useCallback(async (candidate?: string) => {
     const path = (candidate ?? customPathValue).trim();
     if (!path || customPathValidating) return;
@@ -1906,6 +1987,118 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
               </DialogButton>
             )}
           </div>
+          {/* 目录预览（OpenChamber DirectoryExplorerDialog：实时子目录列表 + git 状态） */}
+          {customPathValue.trim() && (
+            <div style={{ marginTop: 10 }}>
+              {browseLoading && (
+                <div style={{ fontSize: 11, color: "var(--text-dim)" }}>{t("sidebar_browseLoading")}</div>
+              )}
+              {!browseLoading && browseMissing && (
+                <div style={{ fontSize: 11, color: "var(--text-dim)" }}>{t("sidebar_browseMissing")}</div>
+              )}
+              {!browseLoading && !browseMissing && browseGit && (
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                    fontSize: 11,
+                    marginBottom: 6,
+                    color: browseGit.isRepo ? "var(--text-muted)" : "var(--text-dim)",
+                  }}
+                >
+                  {browseGit.isRepo ? (
+                    <>
+                      <span style={{ color: "var(--accent)", fontWeight: 600 }}>{t("sidebar_browseGitRepo")}</span>
+                      {browseGit.branch && (
+                        <span style={{ fontFamily: "var(--font-mono)", fontSize: 10.5 }}>{browseGit.branch}</span>
+                      )}
+                    </>
+                  ) : (
+                    <span>{t("sidebar_browseNotGit")}</span>
+                  )}
+                </div>
+              )}
+              {!browseLoading && !browseMissing && (
+                <div
+                  style={{
+                    maxHeight: 150,
+                    overflowY: "auto",
+                    border: "1px solid var(--border)",
+                    borderRadius: 7,
+                    background: "var(--bg-panel)",
+                    padding: 4,
+                  }}
+                >
+                  {browseParent && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCustomPathValue(browseParent);
+                        setCustomPathError(null);
+                      }}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 6,
+                        width: "100%",
+                        padding: "4px 8px",
+                        border: "none",
+                        background: "transparent",
+                        color: "var(--text-muted)",
+                        fontSize: 12,
+                        cursor: "pointer",
+                        borderRadius: 5,
+                        fontFamily: "var(--font-mono)",
+                      }}
+                      onMouseEnter={(e) => (e.currentTarget.style.background = "var(--bg-hover)")}
+                      onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+                    >
+                      ..
+                    </button>
+                  )}
+                  {filteredBrowseEntries.length === 0 ? (
+                    <div style={{ padding: "6px 8px", fontSize: 11, color: "var(--text-dim)" }}>
+                      {t("sidebar_browseEmpty")}
+                    </div>
+                  ) : (
+                    filteredBrowseEntries.map((entry) => (
+                      <button
+                        key={entry.path}
+                        type="button"
+                        onClick={() => {
+                          setCustomPathValue(`${entry.path}/`);
+                          setCustomPathError(null);
+                        }}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 6,
+                          width: "100%",
+                          padding: "4px 8px",
+                          border: "none",
+                          background: "transparent",
+                          color: "var(--text)",
+                          fontSize: 12,
+                          cursor: "pointer",
+                          borderRadius: 5,
+                          textAlign: "left",
+                          fontFamily: "var(--font-mono)",
+                        }}
+                        onMouseEnter={(e) => (e.currentTarget.style.background = "var(--bg-hover)")}
+                        onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+                      >
+                        <span style={{ color: "var(--text-dim)", fontSize: 10.5 }}>▸</span>
+                        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {entry.name}
+                        </span>
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+          )}
           {customPathError && (
             <div role="alert" style={{ marginTop: 8, color: "#dc2626", fontSize: 12, lineHeight: 1.45, overflowWrap: "anywhere" }}>
               {customPathError}
