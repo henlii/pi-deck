@@ -340,6 +340,10 @@ export const en = {
   guide_worktreeUnavailable: 'Worktree list unavailable for this project.',
   guide_projectPlaceholder: 'Select a project…',
   guide_branchPlaceholder: 'Select a branch…',
+  guide_newWorktree: 'New worktree',
+  guide_newWorktreePlaceholder: 'Branch name…',
+  guide_creatingWorktree: 'Creating…',
+  guide_createWorktree: 'Create',
   // 命令面板（Ctrl/Cmd+K，OpenChamber CommandPalette 风格）
   palette_title: 'Command palette',
   palette_placeholder: 'Search sessions, files, actions…',

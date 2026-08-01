@@ -340,6 +340,10 @@ export const zhCN: Record<TranslationKey, string> = {
   guide_worktreeUnavailable: '该项目的工作树列表不可用。',
   guide_projectPlaceholder: '选择项目…',
   guide_branchPlaceholder: '选择分支…',
+  guide_newWorktree: '新建工作树',
+  guide_newWorktreePlaceholder: '分支名…',
+  guide_creatingWorktree: '创建中…',
+  guide_createWorktree: '创建',
   // 命令面板（Ctrl/Cmd+K，OpenChamber CommandPalette 风格）
   palette_title: '命令面板',
   palette_placeholder: '搜索会话、文件、操作…',

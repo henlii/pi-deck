@@ -11,7 +11,7 @@
  * - 非 git 项目：无分支选择器，选项目即设为目标（OpenChamber 语义）
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Folder, GitBranch } from "lucide-react";
+import { Folder, GitBranch, Plus } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
 
 type WorktreeInfo = { path: string; branch?: string; isMain?: boolean };
@@ -112,6 +112,7 @@ export function NewSessionGuide({ targetCwd, onTargetChange }: Props) {
         setWorktrees(wts);
       } catch {
         setWorktrees([]);
+      } finally {
         setLoadingWorktrees(false);
       }
     },
@@ -128,6 +129,46 @@ export function NewSessionGuide({ targetCwd, onTargetChange }: Props) {
   const branchValue =
     targetCwd && worktrees?.some((w) => w.path === targetCwd) ? targetCwd : "";
 
+  // ── 新建工作树（OpenChamber createInstantWorktreeDraft 语义）──
+  const [showWorktreeForm, setShowWorktreeForm] = useState(false);
+  const [worktreeName, setWorktreeName] = useState("");
+  const [creatingWorktree, setCreatingWorktree] = useState(false);
+  const [worktreeError, setWorktreeError] = useState<string | null>(null);
+  const worktreeInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (showWorktreeForm) worktreeInputRef.current?.focus();
+  }, [showWorktreeForm]);
+
+  const createWorktree = useCallback(async () => {
+    const branch = worktreeName.trim();
+    if (!branch || !selectedCwd || creatingWorktree) return;
+    setCreatingWorktree(true);
+    setWorktreeError(null);
+    try {
+      // pending 期间分支下拉保持禁用（OpenChamber pendingWorktreeRequestId 锁定）
+      const res = await fetch("/api/worktrees", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cwd: selectedCwd, branch }),
+      });
+      const data = (await res.json()) as { path?: string; error?: string };
+      if (!res.ok || !data.path) {
+        setWorktreeError(data.error ?? `HTTP ${res.status}`);
+        return;
+      }
+      // 创建成功：目标直接指向新工作树（bootstrapPendingDirectory 语义），
+      // 并刷新分支列表让新条目出现。
+      onTargetChange(data.path);
+      setShowWorktreeForm(false);
+      setWorktreeName("");
+      await loadWorktrees(selectedCwd);
+    } catch (e) {
+      setWorktreeError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setCreatingWorktree(false);
+    }
+  }, [worktreeName, selectedCwd, creatingWorktree, onTargetChange, loadWorktrees]);
   return (
     <div className="guide-selectors">
       {/* ── 项目下拉 ── */}
@@ -195,6 +236,67 @@ export function NewSessionGuide({ targetCwd, onTargetChange }: Props) {
               </optgroup>
             )}
           </select>
+          {/* 新建工作树入口（OpenChamber worktreeNew：仅 git 项目可用） */}
+          {!creatingWorktree && !showWorktreeForm && (
+            <button
+              type="button"
+              className="guide-new-worktree-btn"
+              title={t("guide_newWorktree")}
+              aria-label={t("guide_newWorktree")}
+              disabled={!selectedCwd || loadingWorktrees}
+              onClick={() => {
+                setWorktreeError(null);
+                setShowWorktreeForm(true);
+              }}
+            >
+              <Plus size={12} />
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* 新建工作树表单（创建中锁定分支下拉，OpenChamber pending 语义） */}
+      {isGit && showWorktreeForm && (
+        <div className="guide-worktree-form">
+          <input
+            ref={worktreeInputRef}
+            className="guide-worktree-input"
+            value={worktreeName}
+            placeholder={t("guide_newWorktreePlaceholder")}
+            disabled={creatingWorktree}
+            onChange={(e) => setWorktreeName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) void createWorktree();
+              if (e.key === "Escape") {
+                setShowWorktreeForm(false);
+                setWorktreeName("");
+                setWorktreeError(null);
+              }
+            }}
+          />
+          <button
+            type="button"
+            className="extension-card-btn"
+            disabled={creatingWorktree || !worktreeName.trim()}
+            onClick={() => void createWorktree()}
+          >
+            {creatingWorktree ? t("guide_creatingWorktree") : t("guide_createWorktree")}
+          </button>
+          <button
+            type="button"
+            className="extension-card-btn"
+            disabled={creatingWorktree}
+            onClick={() => {
+              setShowWorktreeForm(false);
+              setWorktreeName("");
+              setWorktreeError(null);
+            }}
+          >
+            {t("extension_cancel")}
+          </button>
+          {worktreeError && (
+            <span className="guide-worktree-error">{worktreeError}</span>
+          )}
         </div>
       )}
     </div>
