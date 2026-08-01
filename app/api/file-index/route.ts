@@ -29,7 +29,7 @@ const GIT_HARD_CAP = 200_000;
 const WALK_HARD_CAP = 50_000;
 const MAX_WALK_DEPTH = 8;
 const MAX_QUERY_LENGTH = 500;
-const CACHE_TTL_MS = 10_000;
+const CACHE_TTL_MS = 60_000;
 const CACHE_MAX_ENTRIES = 20;
 
 interface FileListing {

@@ -7,7 +7,17 @@ import {
 import { closeSync, openSync, readSync, statSync } from "fs";
 import { normalize as normalizePath } from "path";
 import type { AgentMessage, SessionEntry, SessionHeader, SessionInfo, SessionContext } from "./types";
-import type { SessionEntry as PiSessionEntry, SessionInfo as PiSessionInfo } from "@earendil-works/pi-coding-agent";
+import {
+  scanSessionFiles,
+  scanSessionFileFast,
+  loadSessionMetadataCache,
+  scheduleSessionMetadataCacheSave,
+  type CachedSessionInfo,
+  type CachedDiscoveredChild,
+  type SessionCacheRecord,
+  type DiscoveryCacheRecord,
+} from "./session-metadata-cache";
+import type { SessionEntry as PiSessionEntry } from "@earendil-works/pi-coding-agent";
 import { normalizeToolCalls } from "./normalize";
 import {
   PIDANCE_ACTIVITY_CUSTOM_TYPE,
@@ -23,7 +33,7 @@ export { getAgentDir };
 
 export function markExistingSubagentRelation(
   session: SessionInfo,
-  child: import("./subagent-sessions").DiscoveredSubagent,
+  child: CachedDiscoveredChild,
 ): SessionInfo {
   session.subagent = {
     parentSessionId: child.parentSessionId,
@@ -36,7 +46,66 @@ export function markExistingSubagentRelation(
 }
 
 async function loadAllSessions(): Promise<SessionInfo[]> {
-  const piSessions: PiSessionInfo[] = await SessionManager.listAll();
+  // 磁盘元数据缓存（OpenChamber persist-cache 语义的服务端对应）：
+  // 顶层会话文件按 (path, mtimeMs, size) 键控，命中则免读免解析；
+  // 只有变更/新增文件走轻量流式扫描（scanSessionFileFast）。
+  const files = await scanSessionFiles();
+  const diskCache = loadSessionMetadataCache();
+  const sessionRecords = new Map<string, SessionCacheRecord>();
+  if (diskCache) {
+    for (const [path, record] of Object.entries(diskCache.sessions)) {
+      sessionRecords.set(path, record);
+    }
+  }
+
+  const changedFiles = files.filter((f) => {
+    const record = sessionRecords.get(f.path);
+    return !record || record.m !== f.mtimeMs || record.s !== f.size;
+  });
+  let cacheDirty = changedFiles.length > 0;
+
+  // 并发轻量扫描变更文件（readline 流式，不整读；大文件不阻塞事件循环）。
+  const freshInfos = new Map<string, CachedSessionInfo>();
+  await Promise.all(
+    changedFiles.map(async (f) => {
+      const info = await scanSessionFileFast(f.path, f);
+      if (info) freshInfos.set(f.path, info);
+    }),
+  );
+  for (const f of changedFiles) {
+    const info = freshInfos.get(f.path);
+    if (!info) {
+      // 非会话文件（header 缺失/损坏）不再缓存，避免重复扫描
+      sessionRecords.delete(f.path);
+      continue;
+    }
+    sessionRecords.set(f.path, { m: f.mtimeMs, s: f.size, i: info });
+  }
+  // 磁盘上有而磁盘中已删除的文件：从记录中剔除
+  const livePaths = new Set(files.map((f) => f.path));
+  let removed = 0;
+  for (const path of [...sessionRecords.keys()]) {
+    if (!livePaths.has(path)) {
+      sessionRecords.delete(path);
+      removed++;
+    }
+  }
+  if (removed > 0) cacheDirty = true;
+
+  const piSessions: Array<{
+    path: string;
+    id: string;
+    cwd: string;
+    name?: string;
+    parentSessionPath?: string;
+    created: string;
+    modified: string;
+    messageCount: number;
+    firstMessage: string;
+  }> = [...sessionRecords.entries()]
+    .map(([path, record]) => ({ path, ...record.i }))
+    .filter((info): info is (typeof info & { path: string; id: string }) => Boolean(info && info.id));
+
   const pathToId = new Map<string, string>();
   const idToPath = new Map<string, string>();
   for (const s of piSessions) {
@@ -46,8 +115,6 @@ async function loadAllSessions(): Promise<SessionInfo[]> {
       idToPath.set(s.id, path);
     }
   }
-  const resultPaths = new Set<string>();
-  const resultIds = new Set<string>();
 
   // Resolve each unique cwd to its project root (main repo shared by all
   // worktrees). resolveProject caches per-cwd, so this is cheap after warmup.
@@ -57,44 +124,66 @@ async function loadAllSessions(): Promise<SessionInfo[]> {
     projectByCwd.set(cwd, await resolveProject(cwd));
   }));
 
-  const sessions: SessionInfo[] = piSessions.flatMap((s): SessionInfo[] => {
-    const path = normalizePath(s.path);
-    if (resultPaths.has(path) || resultIds.has(s.id)) return [];
-    resultPaths.add(path); resultIds.add(s.id);
-    cacheSessionPath(s.id, s.path);
-    const project = s.cwd ? projectByCwd.get(s.cwd) : undefined;
-    return [{
-      path: s.path,
-      id: s.id,
-      cwd: s.cwd,
-      name: s.name,
-      created: s.created instanceof Date ? s.created.toISOString() : String(s.created),
-      modified: s.modified instanceof Date ? s.modified.toISOString() : String(s.modified),
-      messageCount: s.messageCount,
-      firstMessage: s.firstMessage || "(no messages)",
-      parentSessionId: s.parentSessionPath ? pathToId.get(normalizePath(s.parentSessionPath)) : undefined,
-      projectRoot: project?.projectRoot ?? s.cwd,
-      ...(project?.isWorktree && project.branch ? { worktreeBranch: project.branch } : {}),
-    }];
-  });
+  const resultPaths = new Set<string>();
+  const resultIds = new Set<string>();
+  const sessions: SessionInfo[] = piSessions
+    .sort((a, b) => (a.modified < b.modified ? 1 : a.modified > b.modified ? -1 : 0))
+    .flatMap((s): SessionInfo[] => {
+      const path = normalizePath(s.path);
+      if (resultPaths.has(path) || resultIds.has(s.id)) return [];
+      resultPaths.add(path); resultIds.add(s.id);
+      cacheSessionPath(s.id, s.path);
+      const project = s.cwd ? projectByCwd.get(s.cwd) : undefined;
+      return [{
+        path: s.path,
+        id: s.id,
+        cwd: s.cwd,
+        name: s.name,
+        created: s.created,
+        modified: s.modified,
+        messageCount: s.messageCount,
+        firstMessage: s.firstMessage || "(no messages)",
+        parentSessionId: s.parentSessionPath ? pathToId.get(normalizePath(s.parentSessionPath)) : undefined,
+        projectRoot: project?.projectRoot ?? s.cwd,
+        ...(project?.isWorktree && project.branch ? { worktreeBranch: project.branch } : {}),
+      }];
+    });
 
   const existingByPath = new Map(sessions.map((session) => [normalizePath(session.path), session]));
   const existingById = new Map(sessions.map((session) => [session.id, session]));
   const acceptedChildPaths = new Set<string>();
   const acceptedChildIds = new Set<string>();
-  const subagents: Array<{ child: import("./subagent-sessions").DiscoveredSubagent }> = [];
+  const subagents: Array<{ child: CachedDiscoveredChild }> = [];
+  const discoveryRecords = new Map<string, DiscoveryCacheRecord>();
+  if (diskCache) {
+    for (const [path, record] of Object.entries(diskCache.discovery)) {
+      discoveryRecords.set(path, record);
+    }
+  }
   const queue = sessions.map((parent) => ({ parent, depth: 0 }));
   while (queue.length && acceptedChildIds.size < 256) {
     const current = queue.shift()!;
     if (current.depth >= 16) continue;
-    const children = discoverSubagentSessions(current.parent.path, current.parent.id);
+    const children = getCachedDiscovery(current.parent.path, current.parent.id, discoveryRecords, sessionRecords, (path, id) => {
+      cacheDirty = true;
+      return discoverSubagentSessions(path, id).map((c) => ({
+        path: c.path,
+        id: c.header.id,
+        cwd: c.header.cwd,
+        timestamp: c.header.timestamp,
+        parentSessionId: c.parentSessionId,
+        runId: c.runId,
+        runIndex: c.runIndex,
+        ...(c.agent ? { agent: c.agent } : {}),
+      }));
+    });
     for (const child of children) {
       const path = normalizePath(child.path);
-      if (acceptedChildPaths.has(path) || acceptedChildIds.has(child.header.id)) continue;
-      acceptedChildPaths.add(path); acceptedChildIds.add(child.header.id);
+      if (acceptedChildPaths.has(path) || acceptedChildIds.has(child.id)) continue;
+      acceptedChildPaths.add(path); acceptedChildIds.add(child.id);
       const existingByPathEntry = existingByPath.get(path);
-      const existingByIdEntry = existingById.get(child.header.id);
-      if ((existingByPathEntry && existingByPathEntry.id !== child.header.id) ||
+      const existingByIdEntry = existingById.get(child.id);
+      if ((existingByPathEntry && existingByPathEntry.id !== child.id) ||
         (existingByIdEntry && normalizePath(existingByIdEntry.path) !== path)) continue;
       const existing = existingByPathEntry ?? existingByIdEntry;
       if (existing) {
@@ -102,37 +191,70 @@ async function loadAllSessions(): Promise<SessionInfo[]> {
         queue.push({ parent: existing, depth: current.depth + 1 });
         continue;
       }
-      if (resultPaths.has(path) || resultIds.has(child.header.id)) continue;
+      if (resultPaths.has(path) || resultIds.has(child.id)) continue;
       resultPaths.add(path);
-      resultIds.add(child.header.id);
-      pathToId.set(path, child.header.id);
+      resultIds.add(child.id);
+      pathToId.set(path, child.id);
       subagents.push({ child });
       queue.push({ parent: {
-        path: child.path, id: child.header.id, cwd: child.header.cwd, created: child.header.timestamp,
-        modified: child.header.timestamp, messageCount: 0, firstMessage: "(no messages)", projectRoot: child.header.cwd,
+        path: child.path, id: child.id, cwd: child.cwd, created: child.timestamp,
+        modified: child.timestamp, messageCount: 0, firstMessage: "(no messages)", projectRoot: child.cwd,
       }, depth: current.depth + 1 });
     }
   }
   const childInfos = await Promise.all(subagents.map(async ({ child }) => {
-    const project = await resolveProject(child.header.cwd);
-    let modified = child.header.timestamp;
+    const project = await resolveProject(child.cwd);
+    let modified = child.timestamp;
     try { modified = statSync(child.path).mtime.toISOString(); } catch { /* 使用 header 时间 */ }
-    cacheSessionPath(child.header.id, child.path);
+    cacheSessionPath(child.id, child.path);
     return {
       path: child.path,
-      id: child.header.id,
-      cwd: child.header.cwd,
-      created: child.header.timestamp,
+      id: child.id,
+      cwd: child.cwd,
+      created: child.timestamp,
       modified,
       messageCount: 0,
       firstMessage: "(no messages)",
-      projectRoot: project?.projectRoot ?? child.header.cwd,
+      projectRoot: project?.projectRoot ?? child.cwd,
       ...(project?.isWorktree && project.branch ? { worktreeBranch: project.branch } : {}),
       subagent: { parentSessionId: child.parentSessionId, runId: child.runId, runIndex: child.runIndex, ...(child.agent ? { agent: child.agent } : {}) },
       readOnly: true as const,
     } satisfies SessionInfo;
   }));
+
+  if (cacheDirty) {
+    scheduleSessionMetadataCacheSave(sessionRecords, discoveryRecords);
+  }
   return [...sessions, ...childInfos];
+}
+
+/**
+ * subagent 发现的磁盘缓存：子会话文件不在顶层扫描里，但同样按
+ * (path, mtimeMs, size) 键控，避免每次列表扫描都对每个 parent 重新
+ * 读文件/扫目录（之前 ~400ms 全量成本的主要来源之一）。
+ */
+function getCachedDiscovery(
+  parentPath: string,
+  parentId: string,
+  discoveryRecords: Map<string, DiscoveryCacheRecord>,
+  sessionRecords: Map<string, SessionCacheRecord>,
+  discover: (path: string, id: string) => CachedDiscoveredChild[],
+): CachedDiscoveredChild[] {
+  try {
+    const st = statSync(parentPath);
+    const record = discoveryRecords.get(parentPath);
+    if (record && record.m === st.mtimeMs && record.s === st.size) {
+      return record.c;
+    }
+    // 父文件变更/新增：重新发现并更新缓存记录（含 mtime/size 锚）
+    const children = discover(parentPath, parentId);
+    discoveryRecords.set(parentPath, { m: st.mtimeMs, s: st.size, c: children });
+    return children;
+  } catch {
+    // 父文件不可 stat（已删除）：清掉缓存记录，返回空
+    discoveryRecords.delete(parentPath);
+    return [];
+  }
 }
 
 export async function listAllSessions(): Promise<SessionInfo[]> {

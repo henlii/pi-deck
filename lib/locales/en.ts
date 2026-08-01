@@ -109,6 +109,8 @@ export const en = {
   sidebar_projectPath: 'Project path',
   sidebar_selectDirectory: 'Select directory',
   sidebar_browseLoading: 'Loading…',
+  sidebar_browseGo: 'Go',
+  sidebar_browseOpenBeforeSelect: 'Open before selecting',
   sidebar_browseMissing: 'Directory does not exist',
   sidebar_browseGitRepo: 'Git repository',
   sidebar_browseNotGit: 'Not a Git repository',

@@ -109,6 +109,8 @@ export const zhCN: Record<TranslationKey, string> = {
   sidebar_projectPath: '项目路径',
   sidebar_selectDirectory: '选择目录',
   sidebar_browseLoading: '加载中…',
+  sidebar_browseGo: '前往',
+  sidebar_browseOpenBeforeSelect: '先打开再选择',
   sidebar_browseMissing: '目录不存在',
   sidebar_browseGitRepo: 'Git 仓库',
   sidebar_browseNotGit: '非 Git 目录',

@@ -27,6 +27,7 @@ import {
   type SidebarDisplayMode,
   type SidebarPreferences,
 } from "@/lib/ui-preferences";
+import { loadCachedSessionList, saveCachedSessionList } from "@/lib/session-list-cache";
 import {
   GROUP_VISIBLE_PAGE_SIZE,
   bumpGroupVisibleCount,
@@ -489,11 +490,16 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   const [customPathError, setCustomPathError] = useState<string | null>(null);
   const [customPathValidating, setCustomPathValidating] = useState(false);
   const customPathInputRef = useRef<HTMLInputElement>(null);
-  // 目录预览（OpenChamber DirectoryExplorerDialog 语义：输入路径实时列子目录 + git 状态）
+  // 目录选择（对齐上游 pi-web 0.8.6 directory-picker：手动 Go/Enter 浏览、
+  // Select 只选已浏览路径；保留 OpenChamber 式 git 状态徽标）
   const [browseEntries, setBrowseEntries] = useState<Array<{ name: string; path: string }>>([]);
   const [browseGit, setBrowseGit] = useState<{ isRepo: boolean; branch: string | null } | null>(null);
   const [browseLoading, setBrowseLoading] = useState(false);
   const [browseMissing, setBrowseMissing] = useState(false);
+  /** 已浏览确认的路径（服务器 browse 响应的 path）；Select 只允许提交它 */
+  const [browsePath, setBrowsePath] = useState<string | null>(null);
+  /** 服务器返回的 parentPath（.. 导航目标；根目录为 null） */
+  const [browseParentPath, setBrowseParentPath] = useState<string | null>(null);
   // 桌面端原生目录选择器可用性（仅客户端探测，避免 SSR 水合不一致）
   const [desktopPickerAvailable, setDesktopPickerAvailable] = useState(false);
   // 项目行三点菜单：同一时刻仅一个打开（root 标识）
@@ -587,8 +593,19 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
 
   const loadSessions = useCallback(async (showLoading = false) => {
     const gen = ++sessionListFetchGenRef.current;
+    // OpenChamber SWR：首次冷启动先用本地缓存秒渲染侧栏（stale-while-
+    // revalidate），服务器刷新成功后覆盖；fetch 失败时缓存内容保持可见。
+    if (showLoading && serverSessionsRef.current.length === 0) {
+      const cached = loadCachedSessionList();
+      if (cached && cached.length > 0) {
+        if (!mountedRef.current || !shouldApplySessionListResponse(gen, sessionListFetchGenRef.current)) return;
+        setServerSessions(cached);
+        serverSessionsRef.current = cached;
+        setLoading(false);
+      }
+    }
     try {
-      if (showLoading) setLoading(true);
+      if (showLoading && serverSessionsRef.current.length === 0) setLoading(true);
       const res = await fetch("/api/sessions");
       // 仅最新代际可写 serverSessions / loading / error / refresh done / unread 清理。
       // 卸载后不得 setState。
@@ -598,6 +615,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
       if (!mountedRef.current || !shouldApplySessionListResponse(gen, sessionListFetchGenRef.current)) return;
       setServerSessions(data.sessions);
       serverSessionsRef.current = data.sessions;
+      saveCachedSessionList(data.sessions);
       setPendingIds((prev) => reconcilePendingSessionIds(prev, data.sessions));
       setPendingById((prev) => {
         if (prev.size === 0) return prev;
@@ -648,7 +666,6 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
       }
     }
   }, []);
-
   const initialLoadDone = useRef(false);
   useEffect(() => {
     const isFirst = !initialLoadDone.current;
@@ -969,84 +986,59 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
       : prev);
   }, [updatePrefs]);
 
-  // 输入路径变化 → debounce 250ms → 目录预览（OpenChamber DirectoryExplorerDialog 语义）
-  useEffect(() => {
-    if (!customPathOpen) return;
-    const handle = setTimeout(() => {
-      const raw = customPathValue.trim();
-      if (!raw) {
+  /** 手动浏览目录（对齐上游 directory-picker：Go/Enter/目录点击/.. 触发）。
+   *  空路径 → 服务器默认 homedir（上游打开弹窗即浏览 home）。 */
+  const browseDirectory = useCallback(async (rawPath: string) => {
+    const cancelled = { current: false };
+    setBrowseLoading(true);
+    setBrowseMissing(false);
+    setCustomPathError(null);
+    try {
+      const res = await fetch(`/api/cwd/browse?path=${encodeURIComponent(rawPath)}`);
+      if (cancelled.current) return;
+      if (!res.ok) {
         setBrowseEntries([]);
         setBrowseGit(null);
-        setBrowseMissing(false);
+        setBrowseMissing(true);
+        setBrowsePath(null);
+        setBrowseParentPath(null);
         return;
       }
-      // OpenChamber getBrowseDirectoryPath：浏览"目录部分"（尾随 / 则本身，
-      // 否则父目录），叶子段由前端过滤。
-      const dirPart = raw.endsWith("/")
-        ? raw
-        : raw.lastIndexOf("/") >= 0
-          ? raw.slice(0, raw.lastIndexOf("/") + 1)
-          : "";
-      let cancelled = false;
-      setBrowseLoading(true);
-      void (async () => {
-        try {
-          const res = await fetch(`/api/cwd/browse?path=${encodeURIComponent(dirPart)}`);
-          if (cancelled) return;
-          if (!res.ok) {
-            setBrowseEntries([]);
-            setBrowseGit(null);
-            setBrowseMissing(true);
-            return;
-          }
-          const data = (await res.json()) as {
-            entries?: Array<{ name: string; path: string }>;
-            git?: { isRepo: boolean; branch: string | null };
-          };
-          setBrowseEntries(data.entries ?? []);
-          setBrowseGit(data.git ?? null);
-          setBrowseMissing(false);
-        } catch {
-          if (!cancelled) {
-            setBrowseEntries([]);
-            setBrowseGit(null);
-            setBrowseMissing(true);
-          }
-        } finally {
-          if (!cancelled) setBrowseLoading(false);
-        }
-      })();
-      return () => {
-        cancelled = true;
+      const data = (await res.json()) as {
+        path?: string;
+        parentPath?: string | null;
+        entries?: Array<{ name: string; path: string }>;
+        git?: { isRepo: boolean; branch: string | null };
       };
-    }, 250);
-    return () => clearTimeout(handle);
-  }, [customPathOpen, customPathValue]);
+      if (cancelled.current) return;
+      setCustomPathValue(data.path ?? rawPath);
+      setBrowsePath(data.path ?? rawPath);
+      setBrowseParentPath(data.parentPath ?? null);
+      setBrowseEntries(data.entries ?? []);
+      setBrowseGit(data.git ?? null);
+      setBrowseMissing(false);
+    } catch {
+      if (!cancelled.current) {
+        setBrowseEntries([]);
+        setBrowseGit(null);
+        setBrowseMissing(true);
+        setBrowsePath(null);
+        setBrowseParentPath(null);
+      }
+    } finally {
+      if (!cancelled.current) setBrowseLoading(false);
+    }
+    // 竞态防护：本次浏览完成后若已有更新的请求，不覆盖其状态。
+    return () => {
+      cancelled.current = true;
+    };
+  }, []);
 
-  /** 叶子段过滤（OpenChamber browseFilterQuery：输入未尾随 / 时按叶子过滤列表） */
-  const browseLeaf = useMemo(() => {
-    const raw = customPathValue.trim();
-    if (raw.endsWith("/")) return "";
-    const lastSep = raw.lastIndexOf("/");
-    return lastSep < 0 ? raw : raw.slice(lastSep + 1);
-  }, [customPathValue]);
-  const filteredBrowseEntries = useMemo(() => {
-    const leaf = browseLeaf.toLowerCase();
-    if (!leaf) return browseEntries;
-    return browseEntries.filter((e) => e.name.toLowerCase().startsWith(leaf));
-  }, [browseLeaf, browseEntries]);
-  /** 上级目录（.. 导航；OpenChamber canNavigateUp） */
-  const browseParent = useMemo(() => {
-    const raw = customPathValue.trim();
-    if (!raw) return null;
-    const t = raw.replace(/\/+$/, "");
-    if (!t || t === "/") return null;
-    const lastSep = t.lastIndexOf("/");
-    if (lastSep < 0) return null;
-    return lastSep === 0 ? "/" : t.slice(0, lastSep + 1);
-  }, [customPathValue]);
+  /** 上级目录（.. 导航）：直接取服务器返回的 parentPath（0.8.6 对齐） */
+  const browseParent = browseParentPath;
   const commitCustomPath = useCallback(async (candidate?: string) => {
-    const path = (candidate ?? customPathValue).trim();
+    // 上游语义：Select 提交"已浏览"的路径；候选为空时用已浏览路径
+    const path = (candidate ?? browsePath ?? customPathValue).trim();
     if (!path || customPathValidating) return;
 
     setCustomPathValidating(true);
@@ -1073,13 +1065,21 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     } finally {
       setCustomPathValidating(false);
     }
-  }, [customPathValue, customPathValidating, projectRootFor, restoreClosedProject, selectCwd, closeCustomPathPanel]);
+  }, [browsePath, customPathValue, customPathValidating, projectRootFor, restoreClosedProject, selectCwd, closeCustomPathPanel]);
 
   /** 添加项目按钮：总是打开弹窗，不直接拉起原生目录选择器。 */
   const openAddProjectDialog = useCallback(() => {
     setCustomPathError(null);
+    setCustomPathValue("");
+    setBrowsePath(null);
+    setBrowseParentPath(null);
+    setBrowseEntries([]);
+    setBrowseGit(null);
+    setBrowseMissing(false);
     setCustomPathOpen(true);
-  }, []);
+    // 上游 directory-picker：打开即浏览默认（home）目录
+    void browseDirectory("");
+  }, [browseDirectory]);
 
   /** 弹窗内「选择目录」：仅调用原生选择器填充输入框，不直接提交。 */
   const handlePickDirectory = useCallback(async () => {
@@ -1088,11 +1088,14 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     try {
       setCustomPathError(null);
       const path = await desktop.selectDirectory();
-      if (path !== null) setCustomPathValue(path);
+      if (path !== null) {
+        setCustomPathValue(path);
+        void browseDirectory(path);
+      }
     } catch (e) {
       setCustomPathError(e instanceof Error ? e.message : String(e));
     }
-  }, []);
+  }, [browseDirectory]);
 
   const handleDefaultCwd = useCallback(async () => {
     if (customPathValidating) return;
@@ -1931,20 +1934,33 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
         actions={
           <>
             <DialogButton onClick={closeCustomPathPanel}>{t("sidebar_cancel")}</DialogButton>
-            <DialogButton
-              primary
-              disabled={customPathValidating || !customPathValue.trim()}
-              onClick={() => void commitCustomPath()}
+            {/* 上游 directory-picker：Select 只允许已浏览的路径（输入与浏览
+                不一致时 disabled，title 提示先打开/浏览） */}
+            <span
+              title={
+                !browsePath || customPathValue.trim() !== browsePath
+                  ? t("sidebar_browseOpenBeforeSelect")
+                  : undefined
+              }
             >
-              {customPathValidating ? t("sidebar_validating") : t("sidebar_add")}
-            </DialogButton>
+              <DialogButton
+                primary
+                disabled={customPathValidating || !browsePath || customPathValue.trim() !== browsePath}
+                onClick={() => void commitCustomPath()}
+              >
+                {customPathValidating ? t("sidebar_validating") : t("sidebar_add")}
+              </DialogButton>
+            </span>
           </>
         }
       >
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            void commitCustomPath();
+            // 上游 directory-picker：Enter = 浏览输入路径；只有 Select 按钮提交
+            const raw = customPathValue.trim();
+            if (!raw || raw === browsePath) return;
+            void browseDirectory(raw);
           }}
         >
           <label
@@ -1961,6 +1977,13 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
               onChange={(e) => {
                 setCustomPathValue(e.target.value);
                 setCustomPathError(null);
+              }}
+              onKeyDown={(e) => {
+                // Enter 走 form onSubmit（浏览）；仅 Esc 快速关闭
+                if (e.key === "Escape" && !customPathValidating) {
+                  e.preventDefault();
+                  closeCustomPathPanel();
+                }
               }}
               placeholder="/path/to/project"
               aria-label={t("sidebar_projectPath")}
@@ -1981,14 +2004,20 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                 boxSizing: "border-box",
               }}
             />
+            <DialogButton
+              disabled={browseLoading || !customPathValue.trim()}
+              onClick={() => void browseDirectory(customPathValue.trim())}
+            >
+              {browseLoading ? t("sidebar_browseLoading") : t("sidebar_browseGo")}
+            </DialogButton>
             {desktopPickerAvailable && (
               <DialogButton onClick={() => void handlePickDirectory()}>
                 {t("sidebar_selectDirectory")}
               </DialogButton>
             )}
           </div>
-          {/* 目录预览（OpenChamber DirectoryExplorerDialog：实时子目录列表 + git 状态） */}
-          {customPathValue.trim() && (
+          {/* 目录列表（上游 directory-picker：浏览结果区；git 徽标保留） */}
+          {browsePath && (
             <div style={{ marginTop: 10 }}>
               {browseLoading && (
                 <div style={{ fontSize: 11, color: "var(--text-dim)" }}>{t("sidebar_browseLoading")}</div>
@@ -2033,9 +2062,9 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                   {browseParent && (
                     <button
                       type="button"
+                      disabled={browseLoading}
                       onClick={() => {
-                        setCustomPathValue(browseParent);
-                        setCustomPathError(null);
+                        void browseDirectory(browseParent);
                       }}
                       style={{
                         display: "flex",
@@ -2057,18 +2086,18 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                       ..
                     </button>
                   )}
-                  {filteredBrowseEntries.length === 0 ? (
+                  {browseEntries.length === 0 ? (
                     <div style={{ padding: "6px 8px", fontSize: 11, color: "var(--text-dim)" }}>
                       {t("sidebar_browseEmpty")}
                     </div>
                   ) : (
-                    filteredBrowseEntries.map((entry) => (
+                    browseEntries.map((entry) => (
                       <button
                         key={entry.path}
                         type="button"
+                        disabled={browseLoading}
                         onClick={() => {
-                          setCustomPathValue(`${entry.path}/`);
-                          setCustomPathError(null);
+                          void browseDirectory(entry.path);
                         }}
                         style={{
                           display: "flex",
