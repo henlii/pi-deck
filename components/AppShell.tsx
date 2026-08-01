@@ -85,6 +85,8 @@ function AppShellInner() {
   const [newSessionIntent, setNewSessionIntent] = useState<NewSessionIntent | null>(null);
   const newSessionIntentRef = useRef<NewSessionIntent | null>(null);
   const newSessionIntentGenerationRef = useRef(0);
+  /** 新会话引导页的默认目标项目（本次入口解析的目标 cwd；null = 回落 localStorage 上次项目） */
+  const [guideDefaultCwd, setGuideDefaultCwd] = useState<string | null>(null);
   const selectedSessionIdRef = useRef<string | null>(null);
   const hydrateAbortRef = useRef<AbortController | null>(null);
   /**
@@ -541,6 +543,8 @@ function AppShellInner() {
     // worktree 数据权威修正），保证 lazy 新会话落到正确项目。
     const cwd = targetCwd ?? getIdentitySnapshot().cwd;
     if (!cwd) return;
+    // 引导页默认选中本次入口的目标项目（顶部新建 = 当前选中项目；项目行 = 对应项目）
+    setGuideDefaultCwd(cwd);
     if (getIdentitySnapshot().cwd !== cwd) {
       setIdentity({ cwd, status: "ready", error: null });
     }
@@ -1802,6 +1806,7 @@ function AppShellInner() {
                 session={selectedSession}
                 newSessionCwd={effectiveNewSessionCwd}
                 newSessionIntentId={newSessionIntent?.id ?? null}
+                guideDefaultCwd={guideDefaultCwd}
                 onAgentEnd={handleAgentEnd}
                 onSessionCreated={handleSessionCreated}
                 onSessionForked={handleSessionForked}

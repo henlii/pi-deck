@@ -34,6 +34,8 @@ interface Props {
   newSessionCwd: string | null;
   /** 新建意图 id，透传 useAgentSession 供 onSessionCreated 门禁。 */
   newSessionIntentId?: string | null;
+  /** 新会话引导页默认目标项目（入口解析的 cwd；null = 回落 localStorage 上次项目） */
+  guideDefaultCwd?: string | null;
   onAgentEnd?: () => void;
   onSessionCreated?: (session: SessionInfo, intentId?: string | null) => void;
   onSessionForked?: (newSessionId: string) => void;
@@ -110,7 +112,7 @@ export function ProcessDetailsGroup({ messageCount, toolCallCount, children, t }
   );
 }
 
-export function ChatWindow({ session, newSessionCwd, newSessionIntentId, onAgentEnd, onSessionCreated, onSessionForked, modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSessionStatsChange, onSessionStatsPanelOpen, onContextUsageChange, onOpenFile, onOpenSubagentSession }: Props) {
+export function ChatWindow({ session, newSessionCwd, newSessionIntentId, guideDefaultCwd, onAgentEnd, onSessionCreated, onSessionForked, modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSessionStatsChange, onSessionStatsPanelOpen, onContextUsageChange, onOpenFile, onOpenSubagentSession }: Props) {
   const { t } = useI18n();
   const { soundEnabled, onSoundToggle, playDoneSound, unlockAudio } = useAudio();
   const isMobile = useIsMobile();
@@ -121,6 +123,9 @@ export function ChatWindow({ session, newSessionCwd, newSessionIntentId, onAgent
   // 持久化到 localStorage（对应 OpenChamber oc.chatInput.lastDraftTarget），
   // 选择不触发跳转/创建——仅覆盖新会话的创建目录，发送第一条消息才真正建会话。
   const [draftTargetCwd, setDraftTargetCwd] = useState<string | null>(() => {
+    // 新意图显式目标优先（顶部新建 = 当前选中项目；项目行 = 对应项目）；
+    // 否则回落 localStorage 上次项目（刷新恢复）。
+    if (guideDefaultCwd) return guideDefaultCwd;
     try {
       return localStorage.getItem("pidance.draftTargetCwd");
     } catch {
@@ -139,6 +144,11 @@ export function ChatWindow({ session, newSessionCwd, newSessionIntentId, onAgent
       // localStorage 不可用时仅内存生效
     }
   }, []);
+  // 入口显式目标（顶部新建 = 当前选中项目 / 项目行 = 对应项目）同步进 localStorage，
+  // 保证刷新后仍恢复为"上次的项目"（OpenChamber persistDraftTarget 语义）。
+  useEffect(() => {
+    if (guideDefaultCwd) handleDraftTargetChange(guideDefaultCwd);
+  }, [guideDefaultCwd, handleDraftTargetChange]);
   const effectiveNewSessionCwd = draftTargetCwd ?? newSessionCwd;
   // Wrap onAgentEnd to play the completion sound. This is more reliable than
   // wrapping handleAgentEventRef because useAgentSession overwrites that ref
