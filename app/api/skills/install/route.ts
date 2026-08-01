@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { runNpx } from "@/lib/npx";
+import { resolveProjectTrustedForSession } from "@/lib/project-trust";
 
 export const dynamic = "force-dynamic";
 
@@ -12,6 +13,19 @@ export async function POST(req: Request) {
     if (!pkg?.trim()) return NextResponse.json({ error: "package required" }, { status: 400 });
 
     const isGlobal = scope !== "project";
+    // 对齐上游 0.8.2：项目级安装要求目标项目已信任（否则拒绝写项目资源）
+    if (!isGlobal) {
+      const projectCwd = cwd?.trim();
+      if (!projectCwd) {
+        return NextResponse.json({ error: "cwd required for project install" }, { status: 400 });
+      }
+      if (!resolveProjectTrustedForSession(projectCwd)) {
+        return NextResponse.json(
+          { error: "Project resources must be trusted before installing project skills" },
+          { status: 403 },
+        );
+      }
+    }
     const args = ["skills", "add", pkg.trim(), "-y", "--agent", "pi"];
     if (isGlobal) args.push("-g");
 

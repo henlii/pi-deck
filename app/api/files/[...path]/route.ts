@@ -152,8 +152,21 @@ export async function POST(
       return NextResponse.json({ error: "Invalid conflict strategy" }, { status: 400 });
     }
 
+    // 对齐上游 0.8.1：上传大小限制（单文件 25MB、总计 100MB；content-length 预检）
+    const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
+    const MAX_TOTAL_UPLOAD_BYTES = 100 * 1024 * 1024;
+    const contentLength = Number(request.headers.get("content-length"));
+    if (Number.isFinite(contentLength) && contentLength > MAX_TOTAL_UPLOAD_BYTES + 5 * 1024 * 1024) {
+      return NextResponse.json({ error: "Uploads must total 100MB or less" }, { status: 413 });
+    }
     const formData = await request.formData();
     const files = formData.getAll("files").filter((entry): entry is File => typeof entry !== "string");
+    if (files.some((file) => file.size > MAX_UPLOAD_BYTES)) {
+      return NextResponse.json({ error: "Each upload must be 25MB or smaller" }, { status: 413 });
+    }
+    if (files.reduce((sum, file) => sum + file.size, 0) > MAX_TOTAL_UPLOAD_BYTES) {
+      return NextResponse.json({ error: "Uploads must total 100MB or less" }, { status: 413 });
+    }
     const fileNames = files.map((file) => file.name);
     const validationError = validateUploadFileNames(fileNames);
     if (validationError) {

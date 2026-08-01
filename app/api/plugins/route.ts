@@ -9,6 +9,7 @@ import {
   type ResolvedPaths,
   type ResolvedResource,
 } from "@earendil-works/pi-coding-agent";
+import { resolveProjectTrustedForSession } from "@/lib/project-trust";
 import type {
   PluginDiagnostic,
   PluginPackageInfo,
@@ -298,6 +299,13 @@ export async function POST(req: Request) {
     });
     const source = body.source?.trim();
     const local = readScope(body.scope) === "project";
+    // 对齐上游 0.8.2：项目级插件写操作要求目标项目已信任
+    if (local && !resolveProjectTrustedForSession(body.cwd)) {
+      return NextResponse.json(
+        { error: "Project resources must be trusted before modifying project plugins" },
+        { status: 403 },
+      );
+    }
 
     if (body.action === "install") {
       if (!source) return NextResponse.json({ error: "source required" }, { status: 400 });
