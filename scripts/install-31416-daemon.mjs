@@ -121,13 +121,18 @@ function buildUnitContent(nodeBin, nextCli) {
 		`Environment=PI_CODING_AGENT_DIR=/root/.pi/agent`,
 		`Environment=PATH=/root/.pi/agent/bin:/root/.local/bin:/usr/local/bin:/usr/bin:/bin`,
 		`Environment=NODE_OPTIONS=--max-old-space-size=3072`,
+		`Environment=PIDANCE_DIST_DIR=.next-public`,
 		`WorkingDirectory=${repository}`,
-		// 绝对稳定路径：仓库内 Next CLI；Turbopack dev 反复 HMR 后耗尽 V8 堆，固定 --webpack
-		`ExecStart=${nodeBin} ${nextCli} dev --webpack -H ${host} -p ${String(port)}`,
-		// 崩溃（异常退出）自动拉起；systemctl stop 正常停止不触发重启
+		// 绝对稳定路径：仓库内 Next CLI；生产模式（next start）避免 dev 按需
+		// 编译抖动与 V8 堆膨胀；PIDANCE_DIST_DIR 隔离产物，不污染 dev 的 .next
+		`ExecStartPre=-${nodeBin} ${nextCli} build --webpack`,
+		`ExecStart=${nodeBin} ${nextCli} start -H ${host} -p ${String(port)}`,
+		// ExecStartPre 构建失败不阻塞启动（用旧产物），崩溃自动拉起；systemctl stop 正常停止不触发重启
 		"Restart=always",
 		"RestartSec=3",
 		"KillMode=control-group",
+		// 首次/增量 build 需要数分钟，放宽启动超时（ExecStartPre 构建）
+		"TimeoutStartSec=600",
 		"TimeoutStopSec=30",
 		"LimitNOFILE=65536",
 		`MemoryHigh=${memoryHigh}`,
