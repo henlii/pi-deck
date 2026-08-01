@@ -219,5 +219,6 @@ ls /opt/pidance/current/node_modules/.bin/   # 仅 pidance，无 pi-web
 | `0.1.0-local-cd2139e-3d2c2d97` | 3d2c2d97 | 2026-08-01 | OpenChamber 风格双下拉新会话引导 + globals.css 闭合修复 | 全路由 200（含 logo/worktrees/file-index/subagent-runs），bin 仅 pidance |
 | `0.1.0-local-8a67862-f8900ef5` | f8900ef5 | 2026-08-01 | 引导页对齐 OpenChamber draft-target 语义（选择不创建、localStorage 持久化恢复） | 全路由 200，bin 仅 pidance |
 | `0.1.0-local-1c8cf55-a8ad10bc` | a8ad10bc | 2026-08-01 | 工作区选择器对齐 OpenChamber worktreeNew（引导页内新建工作树 + finally 修复） | 全路由 200，bin 仅 pidance |
+| `0.1.0-local-71e2ab8-b49c7e12` | b49c7e12 | 2026-08-01 | 添加项目弹窗目录预览（OpenChamber DirectoryExplorerDialog 语义：实时子目录列表 + git 仓库/分支检测，/api/cwd/browse） | 全路由 200（含 browse），bin 仅 pidance（无 pi-web） |
 
 陷阱：本机 shell 环境残留 `PORT=30141`（上游 pi-web 变量），裸跑 `pidance` CLI 会读取它而启动到 30141；systemd unit 显式 `--port 31415` 不受影响。
