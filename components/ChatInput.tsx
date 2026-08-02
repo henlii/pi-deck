@@ -304,6 +304,20 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
         ta.style.height = `${Math.min(ta.scrollHeight, 200)}px`;
       });
     },
+    replaceText(text: string) {
+      // 分支 / 新会话预填：整体替换当前草稿（对齐 OC revert/fork 的 pendingInputText replace）。
+      const ta = textareaRef.current;
+      setValue(text);
+      setAtQuery(null);
+      requestAnimationFrame(() => {
+        if (!ta) return;
+        ta.focus();
+        const pos = text.length;
+        ta.setSelectionRange(pos, pos);
+        ta.style.height = "auto";
+        ta.style.height = `${Math.min(ta.scrollHeight, 200)}px`;
+      });
+    },
     insertText(text: string) {
       const ta = textareaRef.current;
       if (!ta) {

@@ -190,7 +190,8 @@ export interface UseAgentSessionOptions {
   newSessionIntentId?: string | null;
   onAgentEnd?: () => void;
   onSessionCreated?: (session: SessionInfo, intentId?: string | null) => void;
-  onSessionForked?: (newSessionId: string) => void;
+  /** fork/新会话成功后切换会话；prefill 为预填到新会话输入框的文本（draft 注入）。 */
+  onSessionForked?: (newSessionId: string, prefill?: string) => void;
   modelsRefreshKey?: number;
   chatInputRef?: React.RefObject<ChatInputHandle | null>;
   onBranchDataChange?: (tree: SessionTreeNode[], activeLeafId: string | null, onLeafChange: (leafId: string | null) => void, actions: BranchActions) => void;
@@ -446,6 +447,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const pendingSendPinRef = useRef(false);
   /** 分支导航成功应用新 context 后，下一次消息提交 effect 做 instant 钉底（与 send 分离，避免普通增长误触发）。 */
   const pendingResetPinRef = useRef(false);
+  /** agent 执行结束后的会话整体替换（流式形态 → 文件最终形态）完成时钉底一次；仅 following 时生效，released 阅读不拉回。 */
+  const pendingEndPinRef = useRef(false);
   const lastScrollTopRef = useRef(0);
   const externalWriteUntilRef = useRef(0);
   const programmaticSmoothUntilRef = useRef(0);
@@ -639,6 +642,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     includeState = false,
     reportSuccess = false,
     resetBranchFollow = false,
+    onMessagesReplaced?: () => void,
   ) => {
     let messagesLoaded = false;
     try {
@@ -666,6 +670,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       setData(d);
       setActiveLeafId(d.leafId);
       setMessages(d.context.messages);
+      // 整体替换完成：调用方（agent_end 收尾）可在此延长 settle 窗口 / 标记 end-pin，
+      // 覆盖异步返回晚于 settle 窗口时的高度突变（流式占位消失 → 钳位跳变）。
+      onMessagesReplaced?.();
       setEntryIds(d.context.entryIds ?? []);
       setObservationalMemory(d.observationalMemory ?? null);
       setWorkspaceHistory(d.workspaceHistory ?? null);
@@ -1085,7 +1092,13 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         setRetryInfo(null);
         dispatch({ type: "end" });
         if (sessionIdRef.current) {
-          loadSession(sessionIdRef.current);
+          loadSession(sessionIdRef.current, false, false, false, false, () => {
+            // 整体替换可能在 settle 窗口（RUN_SETTLE_MS）外完成：流式形态与文件最终形态
+            // 的高度差会让视口跳动。延长 settle 让 paint 前的 ResizeObserver 钉底，
+            // 并标记 end-pin 由 messages effect 兜底（released 阅读不会被拉回）。
+            runSettleUntilRef.current = Date.now() + RUN_SETTLE_MS;
+            pendingEndPinRef.current = true;
+          });
           fetch(`/api/agent/${encodeURIComponent(sessionIdRef.current)}`)
             .then((r) => r.json())
             .then((d: { state?: AgentStateResponse }) => {
@@ -1409,23 +1422,25 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     await loadContext(sid, entryId);
   }, [isReadOnly, loadContext]);
 
-  const refreshRetracted = useCallback(async () => {
-    const sid = sessionIdRef.current;
-    if (!sid || isReadOnly) {
-      setRetractedMessages([]);
-      return;
-    }
-    try {
-      const res = await sendAgentCommand<{ retracted?: RetractedRecord[] }>(sid, { type: "list_retracted" });
-      setRetractedMessages(res?.retracted ?? []);
-    } catch {
-      // 未持久化会话等场景无此命令：静默保持空坞。
-    }
-  }, [isReadOnly]);
+  // REFACTOR-DEAD: 回退坞下线后 refreshRetracted 不再被调用（保留实现待统一清理）。
+  // const refreshRetracted = useCallback(async () => {
+  //   const sid = sessionIdRef.current;
+  //   if (!sid || isReadOnly) {
+  //     setRetractedMessages([]);
+  //     return;
+  //   }
+  //   try {
+  //     const res = await sendAgentCommand<{ retracted?: RetractedRecord[] }>(sid, { type: "list_retracted" });
+  //     setRetractedMessages(res?.retracted ?? []);
+  //   } catch {
+  //     // 未持久化会话等场景无此命令：静默保持空坞。
+  //   }
+  // }, [isReadOnly]);
 
-  useEffect(() => {
-    void refreshRetracted();
-  }, [session?.id, refreshRetracted]);
+  // REFACTOR-DEAD: 回退坞已下线（P0a 产品决策）：不再在挂载时拉取撤回列表。
+  // useEffect(() => {
+  //   void refreshRetracted();
+  // }, [session?.id, refreshRetracted]);
 
   /**
    * 撤回消息 M：navigate_tree(M.parentId)（Pi 原生分支语义，文件保留）。
@@ -1493,11 +1508,143 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     const sid = sessionIdRef.current;
     if (!sid) return;
     await loadContext(sid, leafId);
-    // 只读会话不持久化分支位置（navigate_tree 会写会话状态）。
+    // 只读会话不持久化分支位置（select_leaf_exact 会写会话状态）。
     if (leafId && !isReadOnly) {
-      sendAgentCommand(sid, { type: "navigate_tree", targetId: leafId }).catch(() => {});
+      // 分支树点选 = 精确 leaf（user 叶也停在该 entry，不触发 Pi 的 user 编辑语义）
+      sendAgentCommand(sid, { type: "select_leaf_exact", entryId: leafId }).catch(() => {});
     }
   }, [isReadOnly, loadContext]);
+
+  // ── P0a：分支 / 新会话（线性会话模型，对齐 Oracle 审核）──────────────────
+
+  /**
+   * 用户「从此处分支」：await navigate_tree(user)（Pi 编辑语义：leaf=parent + editorText）。
+   * cancelled（扩展拒绝）则完全不改 UI；成功才 replace 预填并刷新当前路径。
+   * 真正分叉 = 用户随后发送新消息（在当前 leaf 下 append）。
+   */
+  const handleBranchHere = useCallback(async (entryId: string) => {
+    const gate = gateBranchAction({
+      readOnly: isReadOnly,
+      busy: agentRunningRef.current || bashRunningRef.current || branchBusyRef.current,
+    });
+    if (!gate.allowed) return;
+    const sid = sessionIdRef.current;
+    if (!sid) return;
+    branchBusyRef.current = true;
+    setBranchBusy(true);
+    try {
+      const result = await sendAgentCommand<{ cancelled?: boolean; editorText?: string }>(sid, {
+        type: "navigate_tree",
+        targetId: entryId,
+        summarize: false,
+      });
+      if (result?.cancelled) return;
+      if (typeof result?.editorText === "string") {
+        opts.chatInputRef?.current?.replaceText(result.editorText);
+      }
+      await loadSession(sid, false, false, true, true);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      addNotice({ type: "error", message });
+    } finally {
+      branchBusyRef.current = false;
+      setBranchBusy(false);
+    }
+  }, [addNotice, isReadOnly, loadSession, opts.chatInputRef]);
+
+  /**
+   * Assistant「基于此回答分支」（选项 B）：服务端计算 turnEnd（至下一条 user 前最后 entry），
+   * navigateTree(turnEnd) 精确设 leaf（turnEnd 恒非 user）。不预填。发送后长新枝。
+   */
+  const handleBranchFromAssistant = useCallback(async (entryId: string) => {
+    const gate = gateBranchAction({
+      readOnly: isReadOnly,
+      busy: agentRunningRef.current || bashRunningRef.current || branchBusyRef.current,
+    });
+    if (!gate.allowed) return;
+    const sid = sessionIdRef.current;
+    if (!sid) return;
+    branchBusyRef.current = true;
+    setBranchBusy(true);
+    try {
+      const result = await sendAgentCommand<{ cancelled?: boolean }>(sid, {
+        type: "branch_from_assistant",
+        assistantEntryId: entryId,
+      });
+      if (result?.cancelled) return;
+      await loadSession(sid, false, false, true, true);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      addNotice({ type: "error", message });
+    } finally {
+      branchBusyRef.current = false;
+      setBranchBusy(false);
+    }
+  }, [addNotice, isReadOnly, loadSession]);
+
+  /**
+   * 用户「从此处开始新会话」：fork（SDK before-entry：createBranchedSession(user.parentId)）
+   * 创建线性新会话（不含该 user 及其后、不含其他分支），切换会话并预填该用户消息。
+   */
+  const handleNewSessionFromHere = useCallback(async (entryId: string, text: string) => {
+    const gate = gateBranchAction({
+      readOnly: isReadOnly,
+      busy: agentRunningRef.current || bashRunningRef.current || branchBusyRef.current,
+    });
+    if (!gate.allowed) return;
+    const sid = sessionIdRef.current;
+    if (!sid) return;
+    branchBusyRef.current = true;
+    setBranchBusy(true);
+    try {
+      const result = await sendAgentCommand<{ cancelled?: boolean; newSessionId?: string }>(sid, {
+        type: "fork",
+        entryId,
+      });
+      const { cancelled, newSessionId } = result ?? {};
+      if (!cancelled && newSessionId) {
+        onSessionForked?.(newSessionId, text);
+      }
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      addNotice({ type: "error", message });
+    } finally {
+      branchBusyRef.current = false;
+      setBranchBusy(false);
+    }
+  }, [addNotice, isReadOnly, onSessionForked]);
+
+  /**
+   * Assistant「基于此回答开始新会话」：create_session_from_leaf（SDK through-entry：
+   * 含轮末 turnEnd 的路径克隆），切换新会话；不预填输入框。
+   */
+  const handleNewSessionFromAnswer = useCallback(async (entryId: string) => {
+    const gate = gateBranchAction({
+      readOnly: isReadOnly,
+      busy: agentRunningRef.current || bashRunningRef.current || branchBusyRef.current,
+    });
+    if (!gate.allowed) return;
+    const sid = sessionIdRef.current;
+    if (!sid) return;
+    branchBusyRef.current = true;
+    setBranchBusy(true);
+    try {
+      const result = await sendAgentCommand<{ cancelled?: boolean; newSessionId?: string }>(sid, {
+        type: "create_session_from_leaf",
+        entryId,
+      });
+      const { cancelled, newSessionId } = result ?? {};
+      if (!cancelled && newSessionId) {
+        onSessionForked?.(newSessionId);
+      }
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      addNotice({ type: "error", message });
+    } finally {
+      branchBusyRef.current = false;
+      setBranchBusy(false);
+    }
+  }, [addNotice, isReadOnly, onSessionForked]);
 
   /**
    * 带选项的分支切换（D3）：直接 / 默认摘要 / 自定义焦点。
@@ -2106,11 +2253,13 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   useEffect(() => {
     if (messages.length === 0) return;
     if (!scrollContainerRef.current) return;
-    if (pendingSendPinRef.current || pendingResetPinRef.current) {
+    if (pendingSendPinRef.current || pendingResetPinRef.current || pendingEndPinRef.current) {
       pendingSendPinRef.current = false;
       pendingResetPinRef.current = false;
+      pendingEndPinRef.current = false;
       initialScrollDoneRef.current = true;
-      pinToBottom("instant");
+      // end-pin 尊重 released：执行结束后用户若已向上阅读，绝不强行拉回底部。
+      if (autoFollowModeRef.current === "following") pinToBottom("instant");
     } else if (!initialScrollDoneRef.current) {
       initialScrollDoneRef.current = true;
       const now = Date.now();
@@ -2202,6 +2351,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     // Workspace History（仅 type:prompt 派发到扩展）
     handleWorkspaceUndo, handleWorkspaceRedo, handleWorkspaceCheckpoint,
     retractedMessages, handleRetractMessage, handleRestoreMessage,
+    handleBranchHere, handleBranchFromAssistant, handleNewSessionFromHere, handleNewSessionFromAnswer,
     // 分支书签与带选项切换（D3）
     branchBusy, branchActions, navigateBranch, setBranchLabel,
     // Subscriptions

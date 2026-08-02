@@ -18,6 +18,7 @@ import { LensDiagnosticsPanel } from "./LensDiagnosticsPanel";
 import { useTheme } from "@/hooks/useTheme";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { copyText } from "@/lib/clipboard";
+import { setDraft } from "@/lib/draft-store";
 import { encodeFilePathForApi, getFileName } from "@/lib/file-paths";
 import {
   EMPTY_FILE_EDITOR_STATE,
@@ -730,7 +731,11 @@ function AppShellInner() {
     setAutoNameStatus({ kind: "idle" });
   }, [selectedSession?.id]);
 
-  const handleSessionForked = useCallback((newSessionId: string) => {
+  const handleSessionForked = useCallback((newSessionId: string, prefill?: string) => {
+    // fork/新会话成功后切换：预填文本直接注入新会话 draft（新 ChatWindow 挂载时同步读取）。
+    if (prefill !== undefined) {
+      setDraft(newSessionId, { value: prefill, images: [] });
+    }
     invalidateHydrate();
     setNewSessionIntent(null);
     newSessionIntentRef.current = null;

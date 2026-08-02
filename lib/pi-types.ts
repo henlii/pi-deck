@@ -80,6 +80,11 @@ interface ExtensionRunnerLike {
     sourceInfo: SlashCommandInfo["sourceInfo"];
   }>;
   setUIContext?(uiContext?: unknown, mode?: "tui" | "rpc" | "json" | "print"): void;
+  /**
+   * 通用扩展事件发射（运行时存在，SDK 类型未暴露）。
+   * select_leaf_exact 用它触发 session_before_tree / session_tree，保证扩展生命周期不被绕过。
+   */
+  emit?(event: unknown): Promise<{ cancel?: boolean } | undefined>;
 }
 
 type DialogOptionsLike = {
@@ -133,7 +138,7 @@ export interface AgentSessionLike {
   readonly modelRuntime: { getModel: (provider: string, modelId: string) => ModelLike | undefined };
   readonly sessionManager: SessionManager;
   readonly settingsManager: SettingsManager;
-  readonly agent: { state?: { systemPrompt?: string; thinkingLevel?: string } };
+  readonly agent: { state?: { systemPrompt?: string; thinkingLevel?: string; messages?: unknown[] } };
   readonly extensionRunner: ExtensionRunnerLike;
   readonly promptTemplates: readonly PromptTemplateLike[];
   readonly resourceLoader: ResourceLoaderLike;

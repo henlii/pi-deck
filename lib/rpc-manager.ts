@@ -1,4 +1,4 @@
-import { createAgentSessionFromServices, createAgentSessionServices, getAgentDir, initTheme, SessionManager, SettingsManager, Theme } from "@earendil-works/pi-coding-agent";
+import { collectEntriesForBranchSummary, createAgentSessionFromServices, createAgentSessionServices, getAgentDir, initTheme, SessionManager, SettingsManager, Theme } from "@earendil-works/pi-coding-agent";
 import { resolveProjectTrustedForSession } from "./project-trust";
 import { KeybindingsManager as TuiKeybindingsManager, TUI_KEYBINDINGS } from "@earendil-works/pi-tui";
 import { randomUUID } from "crypto";
@@ -32,6 +32,7 @@ import {
   removeRetracted,
   type RetractedRecord,
 } from "./retract-stack";
+import { computeTurnEnd } from "./turn-end";
 
 // ============================================================================
 // Types
@@ -599,6 +600,106 @@ export class AgentSessionWrapper {
         } finally {
           invalidateSessionListCache();
         }
+      }
+
+      // P0a：分支树精确 leaf 切换（user 叶也停在该 entry，不触发 Pi 的 user 编辑语义）。
+      // 与 navigate_tree 的差异：navigateTree(userId) 会退到 parent；此处对任意 entry 精确 branch。
+      // 扩展生命周期保留：session_before_tree（可取消）/ session_tree 均手动触发，不绕过扩展。
+      case "select_leaf_exact": {
+        if (this.inner.isBashRunning) {
+          throw new Error("Cannot switch branch while a shell command is running");
+        }
+        const rawEntryId = command.entryId;
+        if (typeof rawEntryId !== "string" || rawEntryId.trim() === "") {
+          throw new Error("entryId is required");
+        }
+        const entryId = rawEntryId.trim();
+        const sessionManager = this.inner.sessionManager;
+        const oldLeafId = sessionManager.getLeafId();
+        if (entryId === oldLeafId) return { cancelled: false };
+        const targetEntry = sessionManager.getEntry(entryId);
+        if (!targetEntry) throw new Error(`Entry ${entryId} not found`);
+        const extensionRunner = this.inner.extensionRunner;
+        try {
+          if (extensionRunner?.emit) {
+            const { entries, commonAncestorId } = collectEntriesForBranchSummary(sessionManager, oldLeafId, entryId);
+            const beforeResult = await extensionRunner.emit({
+              type: "session_before_tree",
+              preparation: {
+                targetId: entryId,
+                oldLeafId,
+                commonAncestorId,
+                entriesToSummarize: entries,
+                userWantsSummary: false,
+              },
+            });
+            if (beforeResult?.cancel) return { cancelled: true };
+          }
+          // 精确 leaf：与 navigateTree 的唯一差异——user 目标也停在自身
+          sessionManager.branch(entryId);
+          const sessionContext = sessionManager.buildSessionContext();
+          if (this.inner.agent.state) {
+            this.inner.agent.state.messages = sessionContext.messages as unknown[];
+          }
+          await extensionRunner?.emit?.({ type: "session_tree", newLeafId: entryId, oldLeafId });
+          return { cancelled: false };
+        } finally {
+          invalidateSessionListCache();
+        }
+      }
+
+      // P0a：assistant 轮末分支锚点。
+      // 计算 turnEnd（选项 B：该 assistant 至下一条 user 前最后 entry），再 navigateTree(turnEnd)。
+      // turnEnd 恒为非 user，navigateTree 走精确 leaf 语义。
+      case "branch_from_assistant": {
+        if (this.inner.isBashRunning) {
+          throw new Error("Cannot branch while a shell command is running");
+        }
+        const rawEntryId = command.assistantEntryId;
+        if (typeof rawEntryId !== "string" || rawEntryId.trim() === "") {
+          throw new Error("assistantEntryId is required");
+        }
+        const assistantEntryId = rawEntryId.trim();
+        const sessionManager = this.inner.sessionManager;
+        const leafId = sessionManager.getLeafId();
+        if (!leafId) throw new Error("Session has no leaf");
+        const path = sessionManager.getBranch(leafId);
+        const targetEntry = sessionManager.getEntry(assistantEntryId);
+        if (!targetEntry) throw new Error("Entry not found");
+        if (targetEntry.type !== "message" || targetEntry.message?.role !== "assistant") {
+          throw new Error("Only assistant messages can be branched from");
+        }
+        const turnEnd = computeTurnEnd(path, assistantEntryId);
+        try {
+          const result = await this.inner.navigateTree(turnEnd, { summarize: false });
+          return result;
+        } finally {
+          invalidateSessionListCache();
+        }
+      }
+
+      // P0a：through-entry 线性新会话（assistant「基于此回答开始新会话」）。
+      // SDK createBranchedSession(leafId) 语义 = 含该 leaf 的 root→leaf 路径克隆（through）。
+      case "create_session_from_leaf": {
+        const rawEntryId = command.entryId;
+        if (typeof rawEntryId !== "string" || rawEntryId.trim() === "") {
+          throw new Error("entryId is required");
+        }
+        const entryId = rawEntryId.trim();
+        const sessionManager = this.inner.sessionManager;
+        const currentSessionFile = this.inner.sessionFile;
+        if (!currentSessionFile) throw new Error("Session is not persisted");
+        const entry = sessionManager.getEntry(entryId);
+        if (!entry) throw new Error("Invalid entry ID");
+        const sessionDir = sessionManager.getSessionDir();
+        const sourceManager = SessionManager.open(currentSessionFile, sessionDir);
+        const newSessionFile = sourceManager.createBranchedSession(entryId);
+        if (!newSessionFile) throw new Error("Failed to create session");
+        const newSessionId = SessionManager.open(newSessionFile, sessionDir).getSessionId();
+        cacheSessionPath(newSessionId, newSessionFile);
+        invalidateSessionListCache();
+        this.destroy();
+        return { cancelled: false, newSessionId };
       }
 
       case "retract_message": {

@@ -41,6 +41,8 @@ export interface ChatInputHandle {
   insertText: (text: string) => void;
   insertIfEmpty: (text: string) => void;
   prependText: (text: string) => void;
+  /** 整体替换输入框内容（分支/新会话预填语义，对齐 OC replace）。 */
+  replaceText: (text: string) => void;
   addImages: (files: File[]) => void;
 }
 

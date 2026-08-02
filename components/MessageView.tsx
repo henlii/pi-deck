@@ -73,13 +73,15 @@ interface Props {
   /** 打开 subagent 结果卡片中的只读子会话（按会话文件路径解析）。 */
   onOpenSubagentSession?: (sessionFile: string) => void;
   entryId?: string;
-  onFork?: (entryId: string) => void;
+  /** 用户「从此处分支」：回到该消息之前（发送后形成新分支）。 */
+  onBranchHere?: (entryId: string) => void;
+  /** 用户「从此处开始新会话」：线性拷贝此前历史到新会话并预填。 */
+  onNewSessionFromHere?: (entryId: string, text: string) => void;
+  /** Assistant「基于此回答分支」：轮末锚点（选项 B），发送后长新枝。 */
+  onBranchFromAssistant?: (entryId: string) => void;
+  /** Assistant「基于此回答开始新会话」：through 轮末线性拷贝，不预填。 */
+  onNewSessionFromAnswer?: (entryId: string) => void;
   forking?: boolean;
-  onNavigate?: (entryId: string) => void;
-  prevAssistantEntryId?: string;
-  onEditContent?: (content: string) => void;
-  /** 撤回该条用户消息（含其回复链；navigate_tree 语义，文件保留）。 */
-  onRetract?: (entryId: string) => void;
   showTimestamp?: boolean;
   prevTimestamp?: number;
   sessionId?: string;
@@ -112,12 +114,12 @@ function haveSameRelevantToolResults(
   return true;
 }
 
-export const MessageView = memo(function MessageView({ message, isStreaming, toolResults, modelNames, cwd, onOpenFile, onOpenSubagentSession, entryId, onFork, forking, onNavigate, prevAssistantEntryId, onEditContent, showTimestamp, prevTimestamp, sessionId, onRetract }: Props) {
+export const MessageView = memo(function MessageView({ message, isStreaming, toolResults, modelNames, cwd, onOpenFile, onOpenSubagentSession, entryId, onBranchHere, onNewSessionFromHere, onBranchFromAssistant, onNewSessionFromAnswer, forking, showTimestamp, prevTimestamp, sessionId }: Props) {
   if (message.role === "user") {
-    return <UserMessageView message={message as UserMessage} cwd={cwd} onOpenFile={onOpenFile} entryId={entryId} onFork={onFork} forking={forking} onNavigate={onNavigate} prevAssistantEntryId={prevAssistantEntryId} onEditContent={onEditContent} onRetract={onRetract} />;
+    return <UserMessageView message={message as UserMessage} cwd={cwd} onOpenFile={onOpenFile} entryId={entryId} onBranchHere={onBranchHere} onNewSessionFromHere={onNewSessionFromHere} forking={forking} />;
   }
   if (message.role === "assistant") {
-    return <AssistantMessageView message={message as AssistantMessage} isStreaming={isStreaming} toolResults={toolResults} modelNames={modelNames} cwd={cwd} onOpenFile={onOpenFile} onOpenSubagentSession={onOpenSubagentSession} showTimestamp={showTimestamp} prevTimestamp={prevTimestamp} sessionId={sessionId} entryId={entryId} />;
+    return <AssistantMessageView message={message as AssistantMessage} isStreaming={isStreaming} toolResults={toolResults} modelNames={modelNames} cwd={cwd} onOpenFile={onOpenFile} onOpenSubagentSession={onOpenSubagentSession} showTimestamp={showTimestamp} prevTimestamp={prevTimestamp} sessionId={sessionId} entryId={entryId} onBranchFromAssistant={onBranchFromAssistant} onNewSessionFromAnswer={onNewSessionFromAnswer} />;
   }
   if (message.role === "toolResult") {
     // Rendered inline under its toolCall — skip standalone rendering if paired
@@ -152,28 +154,24 @@ export const MessageView = memo(function MessageView({ message, isStreaming, too
     && prev.onOpenFile === next.onOpenFile
     && prev.onOpenSubagentSession === next.onOpenSubagentSession
     && prev.entryId === next.entryId
-    && prev.onFork === next.onFork
+    && prev.onBranchHere === next.onBranchHere
+    && prev.onNewSessionFromHere === next.onNewSessionFromHere
+    && prev.onBranchFromAssistant === next.onBranchFromAssistant
+    && prev.onNewSessionFromAnswer === next.onNewSessionFromAnswer
     && prev.forking === next.forking
-    && prev.onNavigate === next.onNavigate
-    && prev.prevAssistantEntryId === next.prevAssistantEntryId
-    && prev.onEditContent === next.onEditContent
     && prev.showTimestamp === next.showTimestamp
     && prev.prevTimestamp === next.prevTimestamp
-    && prev.sessionId === next.sessionId
-    && prev.onRetract === next.onRetract;
+    && prev.sessionId === next.sessionId;
 });
 
-function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, onNavigate, prevAssistantEntryId, onEditContent, onRetract }: {
+function UserMessageView({ message, cwd, onOpenFile, entryId, onBranchHere, onNewSessionFromHere, forking }: {
   message: UserMessage;
   cwd?: string;
   onOpenFile?: (filePath: string) => void;
   entryId?: string;
-  onFork?: (entryId: string) => void;
+  onBranchHere?: (entryId: string) => void;
+  onNewSessionFromHere?: (entryId: string, text: string) => void;
   forking?: boolean;
-  onNavigate?: (entryId: string) => void;
-  prevAssistantEntryId?: string;
-  onEditContent?: (content: string) => void;
-  onRetract?: (entryId: string) => void;
 }) {
   const { t } = useI18n();
   const [hovered, setHovered] = useState(false);
@@ -193,10 +191,8 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
       : message.content.filter((b): b is ImageContent => b.type === "image");
 
   const time = formatTime(message.timestamp);
-  const canFork = !!entryId && !!onFork;
-  const canNavigate = !!prevAssistantEntryId && !!onNavigate;
-  // 撤回条件与「从此处编辑」一致：有前驱 assistant 节点且持有 handler。
-  const canRetract = !!entryId && !!prevAssistantEntryId && !!onRetract;
+  const canBranchHere = !!entryId && !!onBranchHere;
+  const canNewSession = !!entryId && !!onNewSessionFromHere;
 
   const copyContent = () => {
     copyText(content).then(() => {
@@ -257,7 +253,7 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
       </div>
 
       {/* Bottom row: action buttons + timestamp */}
-      {(time || canFork || canNavigate || true) && (
+      {(time || canBranchHere || canNewSession || true) && (
         <div style={{
           display: "flex", alignItems: "center", justifyContent: "flex-end",
           gap: 6, marginTop: 3,
@@ -287,17 +283,17 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
               {copied ? <Check size={11} strokeWidth={1.8} /> : <Copy size={11} strokeWidth={1.8} />}
             </button>
           </div>
-          {(canFork || canNavigate || canRetract) && (
+          {(canBranchHere || canNewSession) && (
             <div style={{
               display: "flex", gap: 3,
               opacity: (hovered || forking) ? 1 : 0,
               pointerEvents: (hovered || forking) ? "auto" : "none",
               transition: "opacity 0.12s",
             }}>
-              {canRetract && (
+              {canBranchHere && (
                 <button
-                  onClick={() => { onRetract!(entryId!); }}
-                  title={t("message_retractTooltip")}
+                  onClick={() => { onBranchHere!(entryId!); }}
+                  title={t("message_branchHereTooltip")}
                   style={{
                     display: "flex", alignItems: "center", gap: 4,
                     padding: "3px 8px", height: 22,
@@ -313,42 +309,19 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
                   onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-dim)"; }}
                 >
                   <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                    <polyline points="1 4 1 10 7 10" />
-                    <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
+                    <line x1="6" y1="3" x2="6" y2="15" />
+                    <circle cx="18" cy="6" r="3" />
+                    <circle cx="6" cy="18" r="3" />
+                    <path d="M18 9a9 9 0 0 1-9 9" />
                   </svg>
-                  {t("message_retract")}
+                  {t("message_branchHere")}
                 </button>
               )}
-              {canNavigate && (
+              {canNewSession && (
                 <button
-                  onClick={() => { onNavigate!(prevAssistantEntryId!); onEditContent?.(content); }}
-                  title={t("message_editFromHereTooltip")}
-                  style={{
-                    display: "flex", alignItems: "center", gap: 4,
-                    padding: "3px 8px", height: 22,
-                    background: "none", border: "none",
-                    borderRadius: 5,
-                    color: "var(--text-dim)",
-                    cursor: "pointer",
-                    fontSize: 11, fontWeight: 400,
-                    whiteSpace: "nowrap",
-                    transition: "color 0.12s",
-                  }}
-                  onMouseEnter={(e) => { e.currentTarget.style.color = "var(--accent)"; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-dim)"; }}
-                >
-                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                    <polyline points="15 10 20 15 15 20" />
-                    <path d="M4 4v7a4 4 0 0 0 4 4h12" />
-                  </svg>
-                  {t("message_editFromHere")}
-                </button>
-              )}
-              {canFork && (
-                <button
-                  onClick={() => { onFork!(entryId!); }}
+                  onClick={() => { onNewSessionFromHere!(entryId!, content); }}
                   disabled={forking}
-                  title={forking ? t("message_creating") : t("message_newSessionTooltip")}
+                  title={forking ? t("message_creating") : t("message_newSessionFromHereTooltip")}
                   style={{
                     display: "flex", alignItems: "center", gap: 4,
                     padding: "3px 8px", height: 22,
@@ -364,12 +337,11 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
                   onMouseLeave={(e) => { if (!forking) e.currentTarget.style.color = "var(--text-dim)"; }}
                 >
                   <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                    <line x1="6" y1="3" x2="6" y2="15" />
-                    <circle cx="18" cy="6" r="3" />
-                    <circle cx="6" cy="18" r="3" />
-                    <path d="M18 9a9 9 0 0 1-9 9" />
+                    <path d="M12 3v12" />
+                    <path d="m7 10 5 5 5-5" />
+                    <path d="M5 21h14" />
                   </svg>
-                  {forking ? t("message_creating") : t("message_newSession")}
+                  {forking ? t("message_creating") : t("message_newSessionFromHere")}
                 </button>
               )}
             </div>
@@ -393,6 +365,8 @@ function AssistantMessageView({
   prevTimestamp,
   sessionId,
   entryId,
+  onBranchFromAssistant,
+  onNewSessionFromAnswer,
 }: {
   message: AssistantMessage;
   isStreaming?: boolean;
@@ -405,6 +379,8 @@ function AssistantMessageView({
   prevTimestamp?: number;
   sessionId?: string;
   entryId?: string;
+  onBranchFromAssistant?: (entryId: string) => void;
+  onNewSessionFromAnswer?: (entryId: string) => void;
 }) {
   const { t } = useI18n();
   const time = showTimestamp ? formatTime(message.timestamp) : null;
@@ -588,15 +564,17 @@ function AssistantMessageView({
         {textContent && !isStreaming && (
           <button
             onClick={copyContent}
-            title={t("message_copy")}
-            aria-label={t("message_copy")}
+            title={t("message_copyAnswer")}
+            aria-label={t("message_copyAnswer")}
             style={{
-              display: "flex", alignItems: "center", justifyContent: "center",
-              padding: "3px 6px", height: 22,
+              display: "flex", alignItems: "center", gap: 4,
+              padding: "3px 8px", height: 22,
               background: "none", border: "none",
               borderRadius: 5,
               color: copied ? "var(--accent)" : "var(--text-dim)",
               cursor: "pointer",
+              fontSize: 11, fontWeight: 400,
+              whiteSpace: "nowrap",
               opacity: hovered ? 1 : 0,
               pointerEvents: hovered ? "auto" : "none",
               transition: "opacity 0.12s, color 0.12s",
@@ -605,6 +583,64 @@ function AssistantMessageView({
             onMouseLeave={(e) => { if (!copied) e.currentTarget.style.color = "var(--text-dim)"; }}
           >
             {copied ? <Check size={11} strokeWidth={1.8} /> : <Copy size={11} strokeWidth={1.8} />}
+            <span>{t("message_copyAnswer")}</span>
+          </button>
+        )}
+        {entryId && !isStreaming && onBranchFromAssistant && (
+          <button
+            onClick={() => { onBranchFromAssistant!(entryId); }}
+            title={t("message_branchFromAnswerTooltip")}
+            style={{
+              display: "flex", alignItems: "center", gap: 4,
+              padding: "3px 8px", height: 22,
+              background: "none", border: "none",
+              borderRadius: 5,
+              color: "var(--text-dim)",
+              cursor: "pointer",
+              fontSize: 11, fontWeight: 400,
+              whiteSpace: "nowrap",
+              opacity: hovered ? 1 : 0,
+              pointerEvents: hovered ? "auto" : "none",
+              transition: "opacity 0.12s, color 0.12s",
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.color = "var(--accent)"; }}
+            onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-dim)"; }}
+          >
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="6" y1="3" x2="6" y2="15" />
+              <circle cx="18" cy="6" r="3" />
+              <circle cx="6" cy="18" r="3" />
+              <path d="M18 9a9 9 0 0 1-9 9" />
+            </svg>
+            {t("message_branchFromAnswer")}
+          </button>
+        )}
+        {entryId && !isStreaming && onNewSessionFromAnswer && (
+          <button
+            onClick={() => { onNewSessionFromAnswer!(entryId); }}
+            title={t("message_newSessionFromAnswerTooltip")}
+            style={{
+              display: "flex", alignItems: "center", gap: 4,
+              padding: "3px 8px", height: 22,
+              background: "none", border: "none",
+              borderRadius: 5,
+              color: "var(--text-dim)",
+              cursor: "pointer",
+              fontSize: 11, fontWeight: 400,
+              whiteSpace: "nowrap",
+              opacity: hovered ? 1 : 0,
+              pointerEvents: hovered ? "auto" : "none",
+              transition: "opacity 0.12s, color 0.12s",
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.color = "var(--accent)"; }}
+            onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-dim)"; }}
+          >
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 3v12" />
+              <path d="m7 10 5 5 5-5" />
+              <path d="M5 21h14" />
+            </svg>
+            {t("message_newSessionFromAnswer")}
           </button>
         )}
         {time && !isStreaming && (

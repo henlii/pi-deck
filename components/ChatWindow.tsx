@@ -8,7 +8,8 @@ import { asBracketedPaste, toTerminalKeyData } from "@/lib/terminal-input";
 import { composeChatPlan, type ChatRenderItem } from "@/lib/chat-compositor";
 import { MessageView } from "./MessageView";
 import { ChatInput, type ChatInputHandle } from "./ChatInput";
-import { RetractedMessagesDock } from "./RetractedMessagesDock";
+// REFACTOR-DEAD: 撤回坞已下线（P0a 产品决策）；import 保留注释待统一清理。
+// import { RetractedMessagesDock } from "./RetractedMessagesDock";
 import { ChatMinimap, useMessageRefs } from "./ChatMinimap";
 import { InlineExtensionCard } from "./InlineExtensionCard";
 import { NewSessionGuide } from "./NewSessionGuide";
@@ -38,7 +39,8 @@ interface Props {
   guideDefaultCwd?: string | null;
   onAgentEnd?: () => void;
   onSessionCreated?: (session: SessionInfo, intentId?: string | null) => void;
-  onSessionForked?: (newSessionId: string) => void;
+  /** fork/新会话成功后切换会话；prefill 为预填到新会话输入框的文本（draft 注入）。 */
+  onSessionForked?: (newSessionId: string, prefill?: string) => void;
   modelsRefreshKey?: number;
   chatInputRef?: React.RefObject<ChatInputHandle | null>;
   onBranchDataChange?: (tree: SessionTreeNode[], activeLeafId: string | null, onLeafChange: (leafId: string | null) => void, actions: BranchActions) => void;
@@ -165,10 +167,10 @@ export function ChatWindow({ session, newSessionCwd, newSessionIntentId, guideDe
     onAgentEnd?.();
   }, [onAgentEnd]);
 
-  // 稳定化 onEditContent 引用，配合 React.memo 防止历史消息重渲染
-  const handleEditContent = useCallback((content: string) => {
-    chatInputRef?.current?.insertIfEmpty(content);
-  }, [chatInputRef]);
+  // REFACTOR-DEAD: 「从此处编辑」入口已下线（P0a 三键替代）；回调保留注释防误引用。
+  // const handleEditContent = useCallback((content: string) => {
+  //   chatInputRef?.current?.insertIfEmpty(content);
+  // }, [chatInputRef]);
 
   const {
     loading, error, messages, entryIds, streamState,
@@ -185,14 +187,15 @@ export function ChatWindow({ session, newSessionCwd, newSessionIntentId, guideDe
     isNew,
     sessionIdRef, scrollContainerRef,
     jumpButtonVisible, jumpToBottom, markExternalScrollWrite, notifyProgrammaticSmooth,
-    handleSend, handleAbort, handleFork, handleNavigate, handleModelChange,
+    handleSend, handleAbort, handleModelChange,
     handleCompact, handleSteer, handleFollowUp, handlePromptWithStreamingBehavior, handleAbortCompaction,
     handleRecallQueue,
     handleBuiltinSlashCommand,
     handleToolPresetChange, handleThinkingLevelChange, loadSlashCommands,
     handleWorkspaceUndo, handleWorkspaceRedo, handleWorkspaceCheckpoint,
     branchBusy,
-    retractedMessages, handleRetractMessage, handleRestoreMessage,
+    // REFACTOR-DEAD: 撤回坞下线后不再消费 retractedMessages / handleRetractMessage / handleRestoreMessage。
+    handleBranchHere, handleBranchFromAssistant, handleNewSessionFromHere, handleNewSessionFromAnswer,
   } = useAgentSession({
     session, newSessionCwd: effectiveNewSessionCwd, newSessionIntentId, onAgentEnd: wrappedOnAgentEnd, onSessionCreated, onSessionForked,
     modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSessionStatsPanelOpen,
@@ -386,14 +389,10 @@ export function ChatWindow({ session, newSessionCwd, newSessionIntentId, guideDe
 
   const chatInputElement = (
     <>
-      {/* 消息撤回坞：输入框上方折叠卡片（OpenChamber 风格）；只读会话不显示。 */}
+      {/* REFACTOR-DEAD: 回退坞已下线（P0a 产品决策：旁支恢复只通过分支树）。
       {!isReadOnly && (
-        <RetractedMessagesDock
-          records={retractedMessages}
-          busy={sessionBusy || branchBusy}
-          onRestore={handleRestoreMessage}
-        />
-      )}
+        <RetractedMessagesDock records={retractedMessages} busy={sessionBusy || branchBusy} onRestore={handleRestoreMessage} />
+      )} */}
       {isReadOnly && session ? (
         <ReadOnlySessionBar session={session} isMobile={isMobile} />
       ) : (
@@ -665,10 +664,6 @@ export function ChatWindow({ session, newSessionCwd, newSessionIntentId, guideDe
               const renderMessage = (item: ChatRenderItem): ReactNode => {
                 const idx = item.messageIndex;
                 const msg = item.messageOverride ?? messages[idx];
-                const prevAssistantEntryId =
-                  msg.role === "user" && idx > 0 && messages[idx - 1].role === "assistant"
-                    ? entryIds[idx - 1]
-                    : undefined;
                 const isVisible = msg.role === "user" || msg.role === "assistant";
                 const currentRefIdx = visibleRefIndexByMessage.get(idx);
                 const view = (
@@ -681,16 +676,15 @@ export function ChatWindow({ session, newSessionCwd, newSessionIntentId, guideDe
                     onOpenFile={onOpenFile}
                     onOpenSubagentSession={onOpenSubagentSession}
                     entryId={entryIds[idx]}
-                    // 只读会话：Fork/Continue 等写入口一律不下发（hook 侧另有 guard）。
-                    onFork={sessionBusy || isNew || isReadOnly || (idx === 0 && msg.role === "user") ? undefined : handleFork}
+                    // 只读/忙碌：分支与新会话写入口一律不下发（hook 侧另有 guard）。
+                    onBranchHere={sessionBusy || isNew || isReadOnly ? undefined : handleBranchHere}
+                    onNewSessionFromHere={sessionBusy || isNew || isReadOnly || !entryIds[idx] ? undefined : handleNewSessionFromHere}
+                    onBranchFromAssistant={sessionBusy || isNew || isReadOnly ? undefined : handleBranchFromAssistant}
+                    onNewSessionFromAnswer={sessionBusy || isNew || isReadOnly ? undefined : handleNewSessionFromAnswer}
                     forking={forkingEntryId === entryIds[idx]}
-                    onNavigate={sessionBusy || isReadOnly ? undefined : handleNavigate}
-                    prevAssistantEntryId={sessionBusy || isReadOnly ? undefined : prevAssistantEntryId}
-                    onEditContent={isReadOnly ? undefined : handleEditContent}
                     showTimestamp={item.showTimestamp}
                     prevTimestamp={idx > 0 ? (messages[idx - 1] as AgentMessage & { timestamp?: number }).timestamp : undefined}
                     sessionId={session?.id ?? sessionIdRef.current ?? undefined}
-                    onRetract={sessionBusy || isReadOnly ? undefined : handleRetractMessage}
                   />
                 );
                 if (!isVisible || !item.attachRef || currentRefIdx === undefined) return view;
