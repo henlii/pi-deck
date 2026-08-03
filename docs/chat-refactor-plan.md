@@ -20,8 +20,14 @@
 
 ### 0.2 Package
 
-保留：子代理侧栏展开、Todo（输入上方）、问答卡、btw 弹窗。  
-去掉：坞、Om/WH、顶栏诊断/runs/标题、tool preset。
+保留：子代理侧栏展开、Todo（输入上方）、问答卡。  
+去掉：坞、Om/WH、顶栏诊断/runs/标题、tool preset、btw 自定义弹窗协议。
+
+> **决策（P4，2026-08-03）**：btw 无协议基础，跳过自定义实现。外部研究确认 Pi 官方
+> 扩展 UI 协议（select/confirm/input/editor/notify/setStatus/setWidget/setTitle）与
+> 上游 pi-web 均无 `btw` method；社区 `/btw` 扩展经标准 setWidget/setStatus 展示，
+> Pidance 已原生支持（extensionWidgets/extensionStatuses）。不新增私有协议，YAGNI；
+> 真实 btw 扩展出现后再按需设计。
 
 ### 0.3 阶段
 
@@ -32,7 +38,7 @@ P0c  顶栏/package/tool 运行时不收窄
 P1   左右分屏
 P2   滚动
 P3   流式同构 + hooks
-P4   块渲染 · 实时输出 · 实命令 · 耗时 · btw
+P4   块渲染 · 实时输出 · 实命令 · 耗时（btw 已决策跳过，见 §0.2）
 P5   回归 · REFACTOR-DEAD
 ```
 
@@ -156,7 +162,7 @@ following/released；runState 以 SSE 为准；透传 tool_execution_update；�
 
 ## 6–10. 输入 / 扩展 / 导出
 
-btw 弹窗；短扩展内联；导出在会话信息 Tab。
+短扩展内联；导出在会话信息 Tab。（btw 弹窗已决策跳过：无上游协议、标准 widget/status 已覆盖，见 §0.2）
 
 复制到新会话的内容 = 路径上 Pi entry（message/tool/compaction/model…）。  
 **不**复制：running 态、队列、usage 快照、未落盘 stream、pending extension UI。  
