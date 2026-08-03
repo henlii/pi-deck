@@ -15,14 +15,7 @@ import type { ObservationalMemoryView } from "@/lib/om-ledger";
 import type { WorkspaceHistoryView } from "@/lib/workspace-history";
 import { normalizeToolCalls } from "@/lib/normalize";
 import { sendAgentCommand } from "@/lib/agent-client";
-import {
-  buildBranchSwitchCommand,
-  buildSetBranchLabelCommand,
-  gateBranchAction,
-  type BranchActions,
-  type BranchActionResult,
-  type BranchSwitchChoice,
-} from "@/lib/branch-bookmarks";
+import type { BranchActions } from "@/lib/branch-bookmarks";
 import type { ToolEntry } from "@/lib/tool-presets";
 import { createEventStreamManager, EventStreamConnectionError, type EventStreamManager, type EventStreamConnectionResult } from "@/lib/event-stream-manager";
 import type { SessionStatsInfo } from "@/lib/pi-types";
@@ -37,6 +30,7 @@ import {
 import type { ExtensionUiInlineRequest, ExtensionUiBlockingRequest } from "@/lib/extension-ui-bridge";
 import { parseTodos } from "@/lib/todo-parser";
 import { getSessionCapabilities } from "@/components/session-capabilities";
+import { useSessionCommands } from "@/hooks/useSessionCommands";
 import {
   PROGRAMMATIC_SMOOTH_IGNORE_MS,
   RUN_SETTLE_MS,
@@ -926,6 +920,39 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     });
   }, []);
 
+  // ── P3a：分支 / 新会话命令迁出至 useSessionCommands（纯逻辑见该文件）─────
+  // 显式注入依赖；branchBusyRef / branchBusy / setBranchBusy 仍是同一门禁，
+  // state 所有权保留在本 hook（handleSend / executeBash / dispatchWorkspaceHistoryPrompt 共用）。
+  const {
+    handleFork,
+    handleNavigate,
+    handleLeafChange,
+    handleBranchHere,
+    handleBranchFromAssistant,
+    handleNewSessionFromHere,
+    handleNewSessionFromAnswer,
+    navigateBranch,
+    setBranchLabel,
+    branchActions,
+  } = useSessionCommands({
+    sessionIdRef,
+    isReadOnly,
+    canWrite: capabilities.canSendSessionCommands,
+    agentRunningRef,
+    bashRunningRef,
+    branchBusyRef,
+    branchBusy,
+    setBranchBusy,
+    setForkingEntryId,
+    setActiveLeafId,
+    sendAgentCommand,
+    loadSession,
+    loadContext,
+    addNotice,
+    chatInputRef: opts.chatInputRef,
+    onSessionForked,
+  });
+
   const handleExtensionUiRequest = useCallback((request: ExtensionUiRequest) => {
     const result = applyExtensionUiRequest(extensionUiStateRef.current, request);
     commitExtensionUiState(result.state);
@@ -1406,276 +1433,6 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       console.error("Failed to abort:", e);
     }
   }, [isReadOnly]);
-
-  const handleFork = useCallback(async (entryId: string) => {
-    // 只读会话：fork 会创建新 session 文件，拦截。
-    if (isReadOnly) return;
-    if (bashRunningRef.current) return;
-    const sid = sessionIdRef.current;
-    if (!sid) return;
-    setForkingEntryId(entryId);
-    try {
-      const result = await sendAgentCommand<{ cancelled?: boolean; newSessionId?: string }>(sid, {
-        type: "fork",
-        entryId,
-      });
-      const { cancelled, newSessionId } = result ?? {};
-      if (!cancelled && newSessionId) {
-        onSessionForked?.(newSessionId);
-      }
-    } catch (e) {
-      console.error("Fork failed:", e);
-    } finally {
-      setForkingEntryId(null);
-    }
-  }, [isReadOnly, onSessionForked]);
-
-  const handleNavigate = useCallback(async (entryId: string) => {
-    if (bashRunningRef.current || branchBusyRef.current) return;
-    const sid = sessionIdRef.current;
-    if (!sid) return;
-    if (isReadOnly) {
-      // 只读降级：分支切换只发纯 GET context，不发 navigate_tree 写命令。
-      setActiveLeafId(entryId);
-      await loadContext(sid, entryId);
-      return;
-    }
-    sendAgentCommand(sid, { type: "navigate_tree", targetId: entryId }).catch(() => {});
-    setActiveLeafId(entryId);
-    await loadContext(sid, entryId);
-  }, [isReadOnly, loadContext]);
-
-  const handleLeafChange = useCallback(async (leafId: string | null) => {
-    if (bashRunningRef.current || branchBusyRef.current) return;
-    setActiveLeafId(leafId);
-    const sid = sessionIdRef.current;
-    if (!sid) return;
-    await loadContext(sid, leafId);
-    // 只读会话不持久化分支位置（select_leaf_exact 会写会话状态）。
-    if (leafId && !isReadOnly) {
-      // 分支树点选 = 精确 leaf（user 叶也停在该 entry，不触发 Pi 的 user 编辑语义）
-      sendAgentCommand(sid, { type: "select_leaf_exact", entryId: leafId }).catch(() => {});
-    }
-  }, [isReadOnly, loadContext]);
-
-  // ── P0a：分支 / 新会话（线性会话模型，对齐 Oracle 审核）──────────────────
-
-  /**
-   * 用户「从此处分支」：await navigate_tree(user)（Pi 编辑语义：leaf=parent + editorText）。
-   * cancelled（扩展拒绝）则完全不改 UI；成功才 replace 预填并刷新当前路径。
-   * 真正分叉 = 用户随后发送新消息（在当前 leaf 下 append）。
-   */
-  const handleBranchHere = useCallback(async (entryId: string) => {
-    const gate = gateBranchAction({
-      readOnly: isReadOnly,
-      busy: agentRunningRef.current || bashRunningRef.current || branchBusyRef.current,
-    });
-    if (!gate.allowed) return;
-    const sid = sessionIdRef.current;
-    if (!sid) return;
-    branchBusyRef.current = true;
-    setBranchBusy(true);
-    try {
-      const result = await sendAgentCommand<{ cancelled?: boolean; editorText?: string }>(sid, {
-        type: "navigate_tree",
-        targetId: entryId,
-        summarize: false,
-      });
-      if (result?.cancelled) return;
-      if (typeof result?.editorText === "string") {
-        opts.chatInputRef?.current?.replaceText(result.editorText);
-      }
-      await loadSession(sid, false, false, true, true);
-    } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
-      addNotice({ type: "error", message });
-    } finally {
-      branchBusyRef.current = false;
-      setBranchBusy(false);
-    }
-  }, [addNotice, isReadOnly, loadSession, opts.chatInputRef]);
-
-  /**
-   * Assistant「基于此回答分支」（选项 B）：服务端计算 turnEnd（至下一条 user 前最后 entry），
-   * navigateTree(turnEnd) 精确设 leaf（turnEnd 恒非 user）。不预填。发送后长新枝。
-   */
-  const handleBranchFromAssistant = useCallback(async (entryId: string) => {
-    const gate = gateBranchAction({
-      readOnly: isReadOnly,
-      busy: agentRunningRef.current || bashRunningRef.current || branchBusyRef.current,
-    });
-    if (!gate.allowed) return;
-    const sid = sessionIdRef.current;
-    if (!sid) return;
-    branchBusyRef.current = true;
-    setBranchBusy(true);
-    try {
-      const result = await sendAgentCommand<{ cancelled?: boolean }>(sid, {
-        type: "branch_from_assistant",
-        assistantEntryId: entryId,
-      });
-      if (result?.cancelled) return;
-      await loadSession(sid, false, false, true, true);
-    } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
-      addNotice({ type: "error", message });
-    } finally {
-      branchBusyRef.current = false;
-      setBranchBusy(false);
-    }
-  }, [addNotice, isReadOnly, loadSession]);
-
-  /**
-   * 用户「从此处开始新会话」：fork（SDK before-entry：createBranchedSession(user.parentId)）
-   * 创建线性新会话（不含该 user 及其后、不含其他分支），切换会话并预填该用户消息。
-   */
-  const handleNewSessionFromHere = useCallback(async (entryId: string, text: string) => {
-    const gate = gateBranchAction({
-      readOnly: isReadOnly,
-      busy: agentRunningRef.current || bashRunningRef.current || branchBusyRef.current,
-    });
-    if (!gate.allowed) return;
-    const sid = sessionIdRef.current;
-    if (!sid) return;
-    branchBusyRef.current = true;
-    setBranchBusy(true);
-    try {
-      const result = await sendAgentCommand<{ cancelled?: boolean; newSessionId?: string }>(sid, {
-        type: "fork",
-        entryId,
-      });
-      const { cancelled, newSessionId } = result ?? {};
-      if (!cancelled && newSessionId) {
-        onSessionForked?.(newSessionId, text);
-      }
-    } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
-      addNotice({ type: "error", message });
-    } finally {
-      branchBusyRef.current = false;
-      setBranchBusy(false);
-    }
-  }, [addNotice, isReadOnly, onSessionForked]);
-
-  /**
-   * Assistant「基于此回答开始新会话」：create_session_from_leaf（SDK through-entry：
-   * 含轮末 turnEnd 的路径克隆），切换新会话；不预填输入框。
-   */
-  const handleNewSessionFromAnswer = useCallback(async (entryId: string) => {
-    const gate = gateBranchAction({
-      readOnly: isReadOnly,
-      busy: agentRunningRef.current || bashRunningRef.current || branchBusyRef.current,
-    });
-    if (!gate.allowed) return;
-    const sid = sessionIdRef.current;
-    if (!sid) return;
-    branchBusyRef.current = true;
-    setBranchBusy(true);
-    try {
-      const result = await sendAgentCommand<{ cancelled?: boolean; newSessionId?: string }>(sid, {
-        type: "create_session_from_leaf",
-        entryId,
-      });
-      const { cancelled, newSessionId } = result ?? {};
-      if (!cancelled && newSessionId) {
-        onSessionForked?.(newSessionId);
-      }
-    } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
-      addNotice({ type: "error", message });
-    } finally {
-      branchBusyRef.current = false;
-      setBranchBusy(false);
-    }
-  }, [addNotice, isReadOnly, onSessionForked]);
-
-  /**
-   * 带选项的分支切换（D3）：直接 / 默认摘要 / 自定义焦点。
-   * 取消或中止保留当前 context；成功后整体重新 GET，让 tree/active leaf/context/
-   * branch_summary 即时一致。SDK 导航到 user message 返回的 editorText 回填输入框，
-   * 维持既有「从该处编辑」行为。
-   */
-  const navigateBranch = useCallback(async (targetId: string, choice: BranchSwitchChoice): Promise<BranchActionResult> => {
-    const gate = gateBranchAction({
-      readOnly: isReadOnly,
-      busy: agentRunningRef.current || bashRunningRef.current || branchBusyRef.current,
-    });
-    if (!gate.allowed) return { kind: gate.reason === "busy" ? "busy" : "error" };
-    const command = buildBranchSwitchCommand(targetId, choice);
-    if (!command) return { kind: "error" };
-    const sid = sessionIdRef.current;
-    if (!sid) return { kind: "error" };
-    branchBusyRef.current = true;
-    setBranchBusy(true);
-    try {
-      const result = await sendAgentCommand<{
-        cancelled?: boolean;
-        aborted?: boolean;
-        editorText?: string;
-      }>(sid, command);
-      // 取消/中止：用户主动行为，保留当前 context，静默返回。
-      if (result?.cancelled || result?.aborted) return { kind: "cancelled" };
-      if (typeof result?.editorText === "string" && result.editorText !== "") {
-        opts.chatInputRef?.current?.insertIfEmpty(result.editorText);
-      }
-      const refreshed = await loadSession(sid, false, false, true, true);
-      if (!refreshed) {
-        const message = "Failed to refresh session after switching branches";
-        addNotice({ type: "error", message });
-        return { kind: "error", message };
-      }
-      return { kind: "ok" };
-    } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
-      addNotice({ type: "error", message });
-      return { kind: "error", message };
-    } finally {
-      branchBusyRef.current = false;
-      setBranchBusy(false);
-    }
-  }, [addNotice, isReadOnly, loadSession, opts.chatInputRef]);
-
-  /**
-   * 设置/清除分支书签（D3）：只经 set_branch_label 命令，不直接写会话文件；
-   * 成功后整体刷新，让 tree 上的书签即时一致。rawLabel 传空串表示清除。
-   */
-  const setBranchLabel = useCallback(async (targetId: string, rawLabel: string): Promise<BranchActionResult> => {
-    const gate = gateBranchAction({
-      readOnly: isReadOnly,
-      busy: agentRunningRef.current || bashRunningRef.current || branchBusyRef.current,
-    });
-    if (!gate.allowed) return { kind: gate.reason === "busy" ? "busy" : "error" };
-    const command = buildSetBranchLabelCommand(targetId, rawLabel);
-    if (!command) return { kind: "error" };
-    const sid = sessionIdRef.current;
-    if (!sid) return { kind: "error" };
-    branchBusyRef.current = true;
-    setBranchBusy(true);
-    try {
-      await sendAgentCommand(sid, command);
-      const refreshed = await loadSession(sid, false, false, true);
-      if (!refreshed) {
-        const message = "Failed to refresh session after saving the bookmark";
-        addNotice({ type: "error", message });
-        return { kind: "error", message };
-      }
-      return { kind: "ok" };
-    } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
-      addNotice({ type: "error", message });
-      return { kind: "error", message };
-    } finally {
-      branchBusyRef.current = false;
-      setBranchBusy(false);
-    }
-  }, [addNotice, isReadOnly, loadSession]);
-
-  const branchActions = useMemo<BranchActions>(() => ({
-    canWrite: capabilities.canSendSessionCommands,
-    busy: branchBusy,
-    navigate: navigateBranch,
-    setLabel: setBranchLabel,
-  }), [capabilities.canSendSessionCommands, branchBusy, navigateBranch, setBranchLabel]);
 
   const handleModelChange = useCallback(async (provider: string, modelId: string) => {
     // 只读会话：set_model 会写会话状态，拦截。
