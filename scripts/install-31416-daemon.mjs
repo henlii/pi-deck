@@ -153,7 +153,9 @@ async function waitForHealth() {
 	for (let attempt = 0; attempt < 120; attempt += 1) {
 		try {
 			const response = await fetch(healthUrl);
-			if (response.status >= 200 && response.status < 300) return true;
+			// 启用 PI_WEB_PASSWORD 时，中间件会在应用路由前返回 401；这同样证明
+			// 本仓 Next 服务已监听。unit 来源与工作目录仍由安装流程校验。
+			if ((response.status >= 200 && response.status < 300) || response.status === 401) return true;
 		} catch {
 			/* 等待监听 */
 		}
