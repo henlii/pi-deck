@@ -2,10 +2,12 @@
 
 import { useEffect, useRef, useState, useCallback, useMemo, RefObject } from "react";
 import type { AgentMessage, AssistantMessage, TextContent } from "@/lib/types";
+import { getChatPlanLiveMessage, type ChatRenderPlanItem } from "@/lib/chat-compositor";
 
 interface Props {
   messages: AgentMessage[];
-  streamingMessage: Partial<AgentMessage> | null;
+  /** 统一渲染计划（含 live slot）：live 消息由此投影，删除内部第二套 live 拼接 */
+  plan: ChatRenderPlanItem[];
   scrollContainer: RefObject<HTMLDivElement | null>;
   messageRefs: RefObject<(HTMLDivElement | null)[]>;
 }
@@ -64,7 +66,7 @@ interface NodeInfo {
   index: number;
 }
 
-export function ChatMinimap({ messages, streamingMessage, scrollContainer, messageRefs }: Props) {
+export function ChatMinimap({ messages, plan, scrollContainer, messageRefs }: Props) {
   const [scrollRatio, setScrollRatio] = useState(0);
   const [viewportRatio, setViewportRatio] = useState(1);
   const [visible, setVisible] = useState(false);
@@ -74,10 +76,12 @@ export function ChatMinimap({ messages, streamingMessage, scrollContainer, messa
   const draggingRef = useRef(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  const allMessages = useMemo(
-    () => (streamingMessage ? [...messages, streamingMessage] : messages) as (AgentMessage | Partial<AgentMessage>)[],
-    [messages, streamingMessage]
-  );
+  // P3b：live 来自统一渲染计划（ChatWindow 传入），与磁盘消息同序拼接在末尾；
+  // 不再自行拼接 streamState.streamingMessage（第二套 live 逻辑已消除）。
+  const allMessages = useMemo(() => {
+    const live = getChatPlanLiveMessage(plan);
+    return (live ? [...messages, live] : messages) as (AgentMessage | Partial<AgentMessage>)[];
+  }, [plan, messages]);
   const allMessagesRef = useRef(allMessages);
   allMessagesRef.current = allMessages;
 

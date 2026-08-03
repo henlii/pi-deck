@@ -5,11 +5,17 @@ export interface ChatCompositorInput {
   messages: AgentMessage[];
   isStreaming: boolean;
   agentOrBashRunning: boolean;
+  /** live streaming slot：isActive 且有 message 时作为计划末尾的一个 message item；
+   *  无 liveSlot 时行为与现有完全一致。 */
+  liveSlot?: { message: Partial<AgentMessage> | null; isActive: boolean };
 }
 
 export interface ChatRenderItem {
   kind: "message";
-  messageIndex: number;
+  /** 磁盘消息索引；live 项为 null（组件侧据此关闭分支/新会话写入口） */
+  messageIndex: number | null;
+  /** 消息来源：disk 对应 messages[messageIndex]；live 由 messageOverride 承载流式消息 */
+  source: "disk" | "live";
   messageOverride?: AgentMessage;
   showTimestamp?: boolean;
   keyPrefix: string;
@@ -71,6 +77,7 @@ function timestampFor(messages: AgentMessage[], idx: number, isStreaming: boolea
 function messageItem(messages: AgentMessage[], idx: number, isStreaming: boolean, options: Partial<ChatRenderItem> = {}): ChatRenderItem {
   return {
     kind: "message",
+    source: "disk",
     messageIndex: idx,
     keyPrefix: options.keyPrefix ?? "message",
     attachRef: options.attachRef ?? true,
@@ -80,7 +87,7 @@ function messageItem(messages: AgentMessage[], idx: number, isStreaming: boolean
 }
 
 export function composeChatPlan(input: ChatCompositorInput): ChatRenderPlanItem[] {
-  const { messages, isStreaming, agentOrBashRunning } = input;
+  const { messages, isStreaming, agentOrBashRunning, liveSlot } = input;
   const lastUserIdx = messages.findLastIndex((message) => message.role === "user");
   const plan: ChatRenderPlanItem[] = [];
 
@@ -134,5 +141,29 @@ export function composeChatPlan(input: ChatCompositorInput): ChatRenderPlanItem[
     for (let renderIdx = finalAssistantIdx + 1; renderIdx < endIdx; renderIdx++) plan.push(messageItem(messages, renderIdx, isStreaming));
     idx = endIdx;
   }
+  // live streaming slot：作为计划末尾的独立 message item——不进入 process group /
+  // final answer split（与现有独立渲染等价，live assistant 就是整条消息）；
+  // timestamp 语义与当前 live tail 一致（不重复推导，显式隐藏）。
+  if (liveSlot?.isActive && liveSlot.message) {
+    plan.push({
+      kind: "message",
+      source: "live",
+      messageIndex: null,
+      messageOverride: liveSlot.message as AgentMessage,
+      keyPrefix: "live",
+      attachRef: false,
+      showTimestamp: false,
+    });
+  }
   return plan;
+}
+
+/**
+ * 从渲染计划中提取 live 消息投影（composeChatPlan 保证至多一个且位于计划末尾）。
+ * ChatMinimap 等消费同一计划时用此函数获取 live 消息，消除第二套 live 拼接。
+ */
+export function getChatPlanLiveMessage(plan: ChatRenderPlanItem[]): Partial<AgentMessage> | null {
+  const tail = plan[plan.length - 1];
+  if (tail?.kind === "message" && tail.source === "live") return tail.messageOverride ?? null;
+  return null;
 }

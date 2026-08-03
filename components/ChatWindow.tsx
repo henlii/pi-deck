@@ -357,6 +357,18 @@ export function ChatWindow({ session, newSessionCwd, newSessionIntentId, guideDe
   const visibleMessages = messages.filter((m) => m.role === "user" || m.role === "assistant");
   const messageRefs = useMessageRefs(visibleMessages.length);
 
+  // P3b：live streaming slot 进入统一渲染计划（compositor）——live 与磁盘消息同计划
+  // 渲染，删除计划尾部的独立 MessageView；ChatMinimap 也消费同一计划。
+  const liveSlot = streamState.isStreaming && streamState.streamingMessage
+    ? { message: streamState.streamingMessage, isActive: true }
+    : undefined;
+  const chatPlan = composeChatPlan({
+    messages,
+    isStreaming: streamState.isStreaming,
+    agentOrBashRunning: sessionBusy,
+    liveSlot,
+  });
+
   const isEmptyNew = isNew && messages.length === 0 && !streamState.isStreaming && !sessionBusy;
   const messageCwd = session?.cwd ?? effectiveNewSessionCwd ?? undefined;
   const availableThinkingLevels = displayModelValue
@@ -577,10 +589,11 @@ export function ChatWindow({ session, newSessionCwd, newSessionIntentId, guideDe
               };
 
               const renderMessage = (item: ChatRenderItem): ReactNode => {
-                const idx = item.messageIndex;
+                const isLive = item.source === "live";
+                const idx = isLive ? -1 : (item.messageIndex as number);
                 const msg = item.messageOverride ?? messages[idx];
                 const isVisible = msg.role === "user" || msg.role === "assistant";
-                const currentRefIdx = visibleRefIndexByMessage.get(idx);
+                const currentRefIdx = isLive ? undefined : visibleRefIndexByMessage.get(idx);
                 const view = (
                   <MessageView
                     key={`${item.keyPrefix}-view-${idx}`}
@@ -590,15 +603,17 @@ export function ChatWindow({ session, newSessionCwd, newSessionIntentId, guideDe
                     cwd={messageCwd}
                     onOpenFile={onOpenFile}
                     onOpenSubagentSession={onOpenSubagentSession}
-                    entryId={entryIds[idx]}
-                    // 只读/忙碌：分支与新会话写入口一律不下发（hook 侧另有 guard）。
-                    onBranchHere={sessionBusy || isNew || isReadOnly ? undefined : handleBranchHere}
-                    onNewSessionFromHere={sessionBusy || isNew || isReadOnly || !entryIds[idx] ? undefined : handleNewSessionFromHere}
-                    onBranchFromAssistant={sessionBusy || isNew || isReadOnly ? undefined : handleBranchFromAssistant}
-                    onNewSessionFromAnswer={sessionBusy || isNew || isReadOnly ? undefined : handleNewSessionFromAnswer}
-                    forking={forkingEntryId === entryIds[idx]}
+                    isStreaming={isLive}
+                    entryId={isLive ? undefined : entryIds[idx]}
+                    // 只读/忙碌：分支与新会话写入口一律不下发（hook 侧另有 guard）；
+                    // live 项无 entryId、不参与分支/新会话 action。
+                    onBranchHere={!isLive && !sessionBusy && !isNew && !isReadOnly ? handleBranchHere : undefined}
+                    onNewSessionFromHere={!isLive && !sessionBusy && !isNew && !isReadOnly && entryIds[idx] ? handleNewSessionFromHere : undefined}
+                    onBranchFromAssistant={!isLive && !sessionBusy && !isNew && !isReadOnly ? handleBranchFromAssistant : undefined}
+                    onNewSessionFromAnswer={!isLive && !sessionBusy && !isNew && !isReadOnly ? handleNewSessionFromAnswer : undefined}
+                    forking={!isLive && forkingEntryId === entryIds[idx]}
                     showTimestamp={item.showTimestamp}
-                    prevTimestamp={idx > 0 ? (messages[idx - 1] as AgentMessage & { timestamp?: number }).timestamp : undefined}
+                    prevTimestamp={!isLive && idx > 0 ? (messages[idx - 1] as AgentMessage & { timestamp?: number }).timestamp : undefined}
                     sessionId={session?.id ?? sessionIdRef.current ?? undefined}
                   />
                 );
@@ -611,7 +626,7 @@ export function ChatWindow({ session, newSessionCwd, newSessionIntentId, guideDe
               };
 
               const rendered: ReactNode[] = [];
-              const plan = composeChatPlan({ messages, isStreaming: streamState.isStreaming, agentOrBashRunning: sessionBusy });
+              const plan = chatPlan;
               for (const item of plan) {
                 if (item.kind === "message") {
                   rendered.push(renderMessage(item));
@@ -648,9 +663,6 @@ export function ChatWindow({ session, newSessionCwd, newSessionIntentId, guideDe
                 </>
               );
             })()}
-            {streamState.isStreaming && streamState.streamingMessage && (
-              <MessageView message={streamState.streamingMessage as AgentMessage} isStreaming modelNames={modelNames} cwd={messageCwd} onOpenFile={onOpenFile} onOpenSubagentSession={onOpenSubagentSession} />
-            )}
 
             {agentRunning && !streamState.streamingMessage && (
               <div className="py-2 text-[13px] text-text-muted">
@@ -715,7 +727,7 @@ export function ChatWindow({ session, newSessionCwd, newSessionIntentId, guideDe
         {isMobile ? null : (
           <ChatMinimap
             messages={messages}
-            streamingMessage={streamState.streamingMessage}
+            plan={chatPlan}
             scrollContainer={scrollContainerRef}
             messageRefs={messageRefs}
           />
