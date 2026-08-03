@@ -1,8 +1,13 @@
 import { stat } from "fs/promises";
-import { resolve } from "path";
-import { createAgentSessionServices, getAgentDir, type SettingsManager } from "@earendil-works/pi-coding-agent";
+import { join, resolve } from "path";
+import {
+  createAgentSessionServices,
+  getAgentDir,
+  ModelRuntime,
+  type SettingsManager,
+} from "@earendil-works/pi-coding-agent";
 import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
-import { loadModelsWithCache, type ModelsData } from "@/lib/models-cache";
+import { getOrCreateModelRuntime, loadModelsWithCache, type ModelsData } from "@/lib/models-cache";
 
 export const dynamic = "force-dynamic";
 
@@ -46,7 +51,17 @@ async function loadModels(cwd: string): Promise<ModelsData> {
   const thinkingLevelMaps: Record<string, Record<string, string | null>> = {};
 
   const agentDir = getAgentDir();
-  const services = await createAgentSessionServices({ cwd, agentDir });
+  // 进程级复用 ModelRuntime（按 agentDir 键控）：模型运行时只依赖 agentDir
+  // 下的 auth.json / models.json，与 cwd 无关；settingsManager / resourceLoader
+  // 仍由 SDK 按 cwd 新建（cwd-bound 语义不可省）。配置变更经
+  // invalidateModelsCache() 失效后重建。
+  const modelRuntime = await getOrCreateModelRuntime(agentDir, () =>
+    ModelRuntime.create({
+      authPath: join(agentDir, "auth.json"),
+      modelsPath: join(agentDir, "models.json"),
+    }),
+  );
+  const services = await createAgentSessionServices({ cwd, agentDir, modelRuntime });
   const available = await services.modelRuntime.getAvailable();
   const settings: SettingsManager = services.settingsManager;
   const enabledModels = settings.getEnabledModels();

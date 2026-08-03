@@ -13,8 +13,18 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Folder, GitBranch, Plus } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
-
-type WorktreeInfo = { path: string; branch?: string; isMain?: boolean };
+import { loadCachedSessionList, saveCachedSessionList } from "@/lib/session-list-cache";
+import type { SessionInfo } from "@/lib/types";
+import {
+  aggregateGuideProjects,
+  beginWorktreeLoad,
+  clearWorktreeCache,
+  createWorktreeCache,
+  resolveGuideTargetProject,
+  type GuideProject,
+  type GuideWorktreeInfo,
+  type WorktreeCacheState,
+} from "@/lib/guide-load-cache";
 
 type Props = {
   /** 当前新会话目标目录（项目根或工作树路径）；null = 未选择 */
@@ -25,66 +35,51 @@ type Props = {
 
 export function NewSessionGuide({ targetCwd, onTargetChange }: Props) {
   const { t } = useI18n();
-  const [projects, setProjects] = useState<
-    Array<{ cwd: string; count: number; latest: number }>
-  >([]);
+  const [projects, setProjects] = useState<GuideProject[]>([]);
   const [loadingProjects, setLoadingProjects] = useState(true);
   /** 项目级选择（驱动分支加载） */
   const [selectedCwd, setSelectedCwd] = useState<string | null>(null);
-  const [worktrees, setWorktrees] = useState<WorktreeInfo[] | null>(null);
+  const [worktrees, setWorktrees] = useState<GuideWorktreeInfo[] | null>(null);
   const [loadingWorktrees, setLoadingWorktrees] = useState(false);
+  /** 工作树加载缓存（纯逻辑：in-flight 去重 + stale-while-revalidate） */
+  const worktreeCacheRef = useRef<WorktreeCacheState>(createWorktreeCache());
+  /** 同步当前选中的项目，避免迟到的 worktree 响应覆盖新选中项 */
+  const selectedCwdRef = useRef<string | null>(null);
+
+  // 恢复持久化目标：targetCwd 匹配项目根/最长前缀 → 自动选中该项目并加载分支。
+  const restoreTargetRef = useRef((sorted: GuideProject[]) => {
+    if (!targetCwd) return;
+    const resolved = resolveGuideTargetProject(sorted, targetCwd);
+    if (resolved) {
+      setSelectedCwd(resolved);
+      void loadWorktreesRef.current(resolved);
+    }
+  });
 
   useEffect(() => {
     let cancelled = false;
+    // 先读本地缓存（localStorage，与 SessionSidebar 共享）：秒渲染最近项目，
+    // 后台 fetch 刷新后覆盖（stale-while-revalidate）；拉取失败保留旧列表。
+    const cached = loadCachedSessionList();
+    if (cached && cached.length > 0) {
+      const sorted = aggregateGuideProjects(cached);
+      setProjects(sorted);
+      setLoadingProjects(false);
+      restoreTargetRef.current(sorted);
+    }
     void (async () => {
       try {
         const res = await fetch("/api/sessions");
-        const data = (await res.json()) as {
-          sessions?: Array<{
-            cwd?: string;
-            created?: string;
-            modified?: string;
-          }>;
-        };
-        const byCwd = new Map<string, { count: number; latest: number }>();
-        for (const s of data.sessions ?? []) {
-          if (!s.cwd) continue;
-          const ts = s.modified
-            ? Date.parse(s.modified)
-            : s.created
-              ? Date.parse(s.created)
-              : 0;
-          const entry = byCwd.get(s.cwd) ?? { count: 0, latest: 0 };
-          entry.count += 1;
-          if (ts > entry.latest) entry.latest = ts;
-          byCwd.set(s.cwd, entry);
-        }
-        const sorted = [...byCwd.entries()]
-          .map(([cwd, v]) => ({ cwd, count: v.count, latest: v.latest }))
-          .sort((a, b) => b.latest - a.latest)
-          .slice(0, 12);
+        const data = (await res.json()) as { sessions?: SessionInfo[] };
+        const sessions = data.sessions ?? [];
+        saveCachedSessionList(sessions);
+        const sorted = aggregateGuideProjects(sessions);
         if (!cancelled) {
           setProjects(sorted);
-          // 恢复持久化目标：targetCwd 匹配项目根 → 自动选中该项目并加载分支。
-          // （工作树路径用最长项目前缀匹配其归属项目。）
-          if (targetCwd) {
-            const exact = sorted.find((p) => p.cwd === targetCwd);
-            if (exact) {
-              setSelectedCwd(exact.cwd);
-              void loadWorktreesRef.current(exact.cwd);
-            } else {
-              const parent = sorted
-                .filter((p) => targetCwd.startsWith(p.cwd + "/"))
-                .sort((a, b) => b.cwd.length - a.cwd.length)[0];
-              if (parent) {
-                setSelectedCwd(parent.cwd);
-                void loadWorktreesRef.current(parent.cwd);
-              }
-            }
-          }
+          restoreTargetRef.current(sorted);
         }
       } catch {
-        // 拉取失败：引导页保持空列表
+        // 拉取失败：保留本地缓存渲染的旧列表（无缓存时保持空列表）
       } finally {
         if (!cancelled) setLoadingProjects(false);
       }
@@ -93,31 +88,44 @@ export function NewSessionGuide({ targetCwd, onTargetChange }: Props) {
       cancelled = true;
     };
     // 仅 mount 时执行（targetCwd 的后续变化由分支选择链路处理）
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const loadWorktrees = useCallback(
-    async (cwd: string) => {
-      setSelectedCwd(cwd);
-      setLoadingWorktrees(true);
+  const loadWorktrees = useCallback((cwd: string): Promise<void> => {
+    setSelectedCwd(cwd);
+    selectedCwdRef.current = cwd;
+    const handle = beginWorktreeLoad(worktreeCacheRef.current, cwd, async () => {
+      const params = new URLSearchParams({ cwd });
+      const res = await fetch(`/api/worktrees?${params.toString()}`);
+      const data = (await res.json()) as {
+        worktrees?: GuideWorktreeInfo[];
+        isGit?: boolean;
+      };
+      return data.worktrees ?? [];
+    });
+    if (handle.stale) {
+      // SWR：已有该 cwd 的旧列表 → 立即显示，后台刷新完成后覆盖
+      setWorktrees(handle.stale);
+      setLoadingWorktrees(false);
+    } else {
+      // 该 cwd 首次加载：无数据可显示，进入 loading（切换项目时清空旧项目的分支）
       setWorktrees(null);
-      try {
-        const params = new URLSearchParams({ cwd });
-        const res = await fetch(`/api/worktrees?${params.toString()}`);
-        const data = (await res.json()) as {
-          worktrees?: WorktreeInfo[];
-          isGit?: boolean;
-        };
-        const wts = data.worktrees ?? [];
-        setWorktrees(wts);
-      } catch {
-        setWorktrees([]);
-      } finally {
-        setLoadingWorktrees(false);
-      }
-    },
-    [],
-  );
+      setLoadingWorktrees(true);
+    }
+    return handle.promise
+      .then((wts) => {
+        if (selectedCwdRef.current === cwd) {
+          setWorktrees(wts);
+          setLoadingWorktrees(false);
+        }
+      })
+      .catch(() => {
+        if (selectedCwdRef.current === cwd) {
+          // 失败：保留旧数据（stale 已显示）或空列表
+          setWorktrees((prev) => prev ?? []);
+          setLoadingWorktrees(false);
+        }
+      });
+  }, []);
   const loadWorktreesRef = useRef(loadWorktrees);
   loadWorktreesRef.current = loadWorktrees;
 
@@ -158,10 +166,11 @@ export function NewSessionGuide({ targetCwd, onTargetChange }: Props) {
         return;
       }
       // 创建成功：目标直接指向新工作树（bootstrapPendingDirectory 语义），
-      // 并刷新分支列表让新条目出现。
+      // 使缓存失效并刷新分支列表让新条目出现。
       onTargetChange(data.path);
       setShowWorktreeForm(false);
       setWorktreeName("");
+      clearWorktreeCache(worktreeCacheRef.current, selectedCwd);
       await loadWorktrees(selectedCwd);
     } catch (e) {
       setWorktreeError(e instanceof Error ? e.message : String(e));

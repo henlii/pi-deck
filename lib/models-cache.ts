@@ -1,3 +1,5 @@
+import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
+
 export interface ModelsData {
   models: Record<string, string>;
   modelList: { id: string; name: string; provider: string }[];
@@ -12,8 +14,15 @@ interface ModelsCacheState {
   generation: number;
 }
 
+/** 进程级 ModelRuntime 复用缓存（按 agentDir 键控，见 getOrCreateModelRuntime）。 */
+interface ModelRuntimeCacheState {
+  /** agentDir → 创建中的 Promise（复用中 / 创建失败自动移除） */
+  runtimes: Map<string, Promise<ModelRuntime>>;
+}
+
 declare global {
   var __piModelsCacheState: ModelsCacheState | undefined;
+  var __piModelRuntimeCache: ModelRuntimeCacheState | undefined;
 }
 
 const MODELS_CACHE_TTL_MS = 60_000;
@@ -30,11 +39,51 @@ function getModelsCacheState(): ModelsCacheState {
   return globalThis.__piModelsCacheState;
 }
 
+function getModelRuntimeCacheState(): ModelRuntimeCacheState {
+  if (!globalThis.__piModelRuntimeCache) {
+    globalThis.__piModelRuntimeCache = { runtimes: new Map() };
+  }
+  return globalThis.__piModelRuntimeCache;
+}
+
+/**
+ * 进程级复用 ModelRuntime（按 agentDir 键控）。
+ *
+ * SDK 的 createAgentSessionServices 每次调用都会重建全部服务，其中
+ * ModelRuntime.create + 首次 provider 组合有固定开销；而模型运行时只依赖
+ * agentDir 下的 auth.json / models.json（与 cwd 无关），因此按 agentDir
+ * 复用一份即可。settingsManager / resourceLoader 仍由调用方按 cwd 新建
+ * （SDK cwd-bound 语义不可省）。
+ *
+ * 生命周期：键挂在 globalThis（Next.js 热重载下保留），模型/认证配置变更
+ * 时 invalidateModelsCache() 清空本缓存，下次请求重建；创建失败自动移除
+ * 以便重试；并发请求共享同一个创建 Promise（in-flight 去重）。
+ */
+export function getOrCreateModelRuntime(
+  agentDir: string,
+  create: () => Promise<ModelRuntime>,
+): Promise<ModelRuntime> {
+  const state = getModelRuntimeCacheState();
+  const existing = state.runtimes.get(agentDir);
+  if (existing) return existing;
+
+  const creating = Promise.resolve().then(create);
+  // 只在创建失败时移除（成功保留供复用）；catch 返回的新 Promise 正常 resolve，
+  // 原 creating 的 rejection 仍会传给调用方 await。
+  creating.catch(() => {
+    if (state.runtimes.get(agentDir) === creating) state.runtimes.delete(agentDir);
+  });
+  state.runtimes.set(agentDir, creating);
+  return creating;
+}
+
 export function invalidateModelsCache(): void {
   const state = getModelsCacheState();
   state.generation += 1;
   state.entries.clear();
   state.inFlight.clear();
+  // 模型/认证配置变更：进程级 ModelRuntime 一并失效，下次请求重建。
+  globalThis.__piModelRuntimeCache?.runtimes.clear();
 }
 
 export function loadModelsWithCache(cwd: string, loader: () => Promise<ModelsData>): Promise<ModelsData> {
