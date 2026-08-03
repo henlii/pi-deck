@@ -9,7 +9,7 @@ import { GitPanel } from "./GitPanel";
 import { TabBar, type Tab } from "./TabBar";
 
 interface Props {
-  /** 桌面恒开；移动端控制抽屉显隐。 */
+  /** 桌面控制内容面板显隐；移动端控制整组抽屉显隐。 */
   open: boolean;
   width: number;
   onWidthChange: (width: number) => void;
@@ -44,7 +44,9 @@ function NavigationIcon({ kind }: { kind: Tab["kind"] }) {
   return <svg {...props}><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>;
 }
 
-/** OpenChamber 式右栏：固定图标轨道承载模块导航，内容标题栏承载上下文操作。 */
+const NAVIGATION_RAIL_WIDTH = 44;
+
+/** OpenChamber 式右栏：内容面板在左，固定图标轨道常驻窗口最右缘。 */
 export function RightPanel({ open, width, onWidthChange, onClose, cwd, isMobile, mobileReady, tabs, activeTabId, onSelectTab, onCloseTab, pendingCloseTabLabel, onSaveAndClose, onDiscardAndClose, onCancelClose, fileViewerContent, sessionInfoContent, branchContent, fileRefreshKey, gitRefreshKey, onOpenFile, onAtMention, onAtMentions }: Props) {
   const { t } = useI18n();
   const fileExplorerRef = useRef<FileExplorerHandle>(null);
@@ -104,25 +106,19 @@ export function RightPanel({ open, width, onWidthChange, onClose, cwd, isMobile,
   const activeNavigationId = isFileTabActive ? "files" : activeTabId;
   const contentTitle = fileTabs.find((tab) => tab.id === activeTabId)?.label ?? navigationTabs.find((tab) => tab.id === activeNavigationId)?.label ?? t("panel_ariaLabel");
   const changeCount = gitStatus?.isGitRepository ? gitStatus.files.length : 0;
+  const desktopTotalWidth = NAVIGATION_RAIL_WIDTH + (open ? width : 0);
+  const contentWidth = isMobile ? `calc(100% - ${NAVIGATION_RAIL_WIDTH}px)` : open ? width : 0;
 
   return (
-    <div className={`workspace-container${open ? " workspace-open" : " workspace-closed"}${dragging ? " workspace-dragging" : ""}${mobileReady ? "" : " workspace-mobile-pending"}`} style={{ width: open ? width : 0, minWidth: open ? width : 0, display: "flex", borderLeft: "1px solid var(--border)", background: "var(--bg-panel)", position: "relative", flexShrink: 0, zIndex: 200 }} role="complementary" aria-label={t("panel_ariaLabel")} aria-hidden={!open} inert={!open}>
+    <div className={`workspace-container${open ? " workspace-open" : " workspace-closed"}${dragging ? " workspace-dragging" : ""}${mobileReady ? "" : " workspace-mobile-pending"}`} style={{ width: desktopTotalWidth, minWidth: desktopTotalWidth, display: "flex", borderLeft: open ? "1px solid var(--border)" : "none", background: "var(--bg-panel)", position: "relative", flexShrink: 0, zIndex: 200 }} role="complementary" aria-label={t("panel_ariaLabel")} onKeyDownCapture={(event) => { if (open && event.key === "Escape") { event.preventDefault(); event.stopPropagation(); onClose(); } }}>
       {open && <div className={`workspace-resize-handle${dragging ? " dragging" : ""}`} onPointerDown={handleResizeStart} onPointerMove={handleResizeMove} onPointerUp={handleResizeEnd} onPointerCancel={handleResizeEnd} onDoubleClick={() => onWidthChange(RIGHT_PANEL_WIDTH_DEFAULT)} title={t("workspace_resizeHandle")} aria-hidden="true" />}
-      <div className="workspace-inner" style={{ width, minWidth: width, height: "100%", display: "flex" }}>
-        <nav aria-label={t("panel_ariaLabel")} style={{ width: 44, flex: "0 0 44px", display: "flex", flexDirection: "column", alignItems: "center", gap: 4, padding: "8px 0", borderRight: "1px solid var(--border)", background: "var(--bg)" }}>
-          {navigationTabs.map((tab) => {
-            const active = tab.id === activeNavigationId;
-            const label = tab.kind === "git" && changeCount > 0 ? `${tab.label} (${changeCount > 99 ? "99+" : changeCount})` : tab.label;
-            return <button key={tab.id} type="button" className="sidebar-icon-btn" aria-label={label} title={label} aria-pressed={active} onClick={() => onSelectTab(tab.id)} style={{ width: 34, height: 34, color: active ? "var(--accent)" : "var(--text-muted)", background: active ? "var(--bg-selected)" : "transparent", border: active ? "1px solid color-mix(in srgb, var(--accent) 30%, var(--border))" : "1px solid transparent", position: "relative" }}><NavigationIcon kind={tab.kind}/>{tab.kind === "git" && changeCount > 0 && <span aria-hidden="true" style={{ position: "absolute", right: 3, top: 3, width: 6, height: 6, borderRadius: "50%", background: "var(--accent)", boxShadow: "0 0 0 2px var(--bg)" }}/>}</button>;
-          })}
-        </nav>
-
-        <div style={{ minWidth: 0, flex: 1, height: "100%", display: "flex", flexDirection: "column" }}>
+      <div className="workspace-inner" style={{ width: desktopTotalWidth, minWidth: desktopTotalWidth, height: "100%", display: "flex" }}>
+        <div aria-hidden={!open} inert={!open} style={{ width: contentWidth, minWidth: contentWidth, overflow: "hidden", height: "100%", display: "flex", flexDirection: "column", opacity: open ? 1 : 0, transition: dragging ? "none" : "width 0.2s ease, min-width 0.2s ease, opacity 0.12s ease" }}>
           <div style={{ height: 40, display: "flex", alignItems: "center", gap: 4, padding: "0 8px 0 12px", flexShrink: 0, borderBottom: "1px solid var(--border)" }}>
             <strong title={contentTitle} style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 11.5, fontWeight: 650 }}>{contentTitle}</strong>
             {activeTabId === "files" && <><button type="button" onClick={() => fileExplorerRef.current?.openUploadPicker()} disabled={uploadBusy || !cwd} title={t("workspace_upload")} aria-label={t("workspace_upload")} className="sidebar-icon-btn"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m17 8-5-5-5 5"/><path d="M12 3v12"/></svg></button><button type="button" onClick={() => setFilesRefreshTick((tick) => tick + 1)} title={t("workspace_refreshFiles")} aria-label={t("workspace_refreshFiles")} className="sidebar-icon-btn"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg></button></>}
             {activeTabId === "git" && <button type="button" onClick={() => void fetchGitStatus()} disabled={!cwd} title={t("workspace_refreshGitStatus")} aria-label={t("workspace_refreshGitStatus")} className="sidebar-icon-btn"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg></button>}
-            {isMobile && <button type="button" onClick={onClose} title={t("workspace_close")} aria-label={t("workspace_close")} className="sidebar-icon-btn"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>}
+            <button type="button" onClick={onClose} title={t("workspace_close")} aria-label={t("workspace_close")} className="sidebar-icon-btn"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
           </div>
           {fileTabs.length > 0 && <div style={{ flexShrink: 0, borderBottom: "1px solid var(--border)", overflow: "hidden" }}><TabBar tabs={fileTabs} activeTabId={activeTabId} onSelectTab={onSelectTab} onCloseTab={onCloseTab}/></div>}
           {pendingCloseTabLabel !== null && <div className="file-close-confirm" role="alert"><span className="file-close-confirm__message">{t("app_unsavedChangesIn", { name: pendingCloseTabLabel })}</span><button type="button" className="file-close-confirm__button" onClick={onSaveAndClose}>{t("app_saveAndClose")}</button><button type="button" className="file-close-confirm__button is-danger" onClick={onDiscardAndClose}>{t("app_discardChanges")}</button><button type="button" className="file-close-confirm__button" onClick={onCancelClose}>{t("common_cancel")}</button></div>}
@@ -136,6 +132,13 @@ export function RightPanel({ open, width, onWidthChange, onClose, cwd, isMobile,
             </>}
           </div>
         </div>
+        <nav aria-label={t("panel_ariaLabel")} style={{ width: NAVIGATION_RAIL_WIDTH, flex: `0 0 ${NAVIGATION_RAIL_WIDTH}px`, display: "flex", flexDirection: "column", alignItems: "center", gap: 4, padding: "8px 0", borderLeft: "1px solid var(--border)", background: "var(--bg)" }}>
+          {navigationTabs.map((tab) => {
+            const active = open && tab.id === activeNavigationId;
+            const label = tab.kind === "git" && changeCount > 0 ? `${tab.label} (${changeCount > 99 ? "99+" : changeCount})` : tab.label;
+            return <button key={tab.id} type="button" className="sidebar-icon-btn" aria-label={label} title={label} aria-pressed={active} onClick={() => onSelectTab(tab.id)} style={{ width: 34, height: 34, color: active ? "var(--accent)" : "var(--text-muted)", background: active ? "var(--bg-selected)" : "transparent", border: active ? "1px solid color-mix(in srgb, var(--accent) 30%, var(--border))" : "1px solid transparent", position: "relative" }}><NavigationIcon kind={tab.kind}/>{tab.kind === "git" && changeCount > 0 && <span aria-hidden="true" style={{ position: "absolute", right: 3, top: 3, width: 6, height: 6, borderRadius: "50%", background: "var(--accent)", boxShadow: "0 0 0 2px var(--bg)" }}/>}</button>;
+          })}
+        </nav>
       </div>
     </div>
   );

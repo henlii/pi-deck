@@ -16,7 +16,7 @@ export const SIDEBAR_WIDTH_MIN = 240;
 export const SIDEBAR_WIDTH_MAX = 520;
 export const SIDEBAR_WIDTH_DEFAULT = 300;
 
-/** 右栏（文件/diff/会话信息面板）可调宽边界：窄到不挤压聊天，宽到可读代码。 */
+/** 右侧内容面板可调宽边界；不包含最右侧常驻 44px 图标栏。 */
 export const RIGHT_PANEL_WIDTH_MIN = 320;
 export const RIGHT_PANEL_WIDTH_MAX = 720;
 export const RIGHT_PANEL_WIDTH_DEFAULT = 400;
@@ -56,9 +56,9 @@ export interface SidebarPreferences {
   closedProjectRoots: string[];
   /** 桌面侧栏宽度（px）；损坏/越界值解析时 clamp。 */
   sidebarWidth: number;
-  /** 右栏（文件/diff/会话信息面板）开/关；初装默认关闭，之后记住。 */
+  /** 右侧内容面板开/关；图标栏不受此偏好影响并始终常驻。 */
   rightPanelOpen: boolean;
-  /** 右栏宽度（px）；损坏/越界值解析时 clamp。 */
+  /** 右侧内容面板宽度（px，不含图标栏）；损坏/越界值解析时 clamp。 */
   rightPanelWidth: number;
 }
 

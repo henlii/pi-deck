@@ -114,7 +114,7 @@ function AppShellInner() {
   const [modelsRefreshKey, setModelsRefreshKey] = useState(0);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [mobileSidebarReady, setMobileSidebarReady] = useState(false);
-  // ── 右栏：桌面常驻；移动端用此状态控制抽屉，宽度跨刷新记忆 ──
+  // ── 右侧工具区：图标栏桌面常驻；此状态控制内容面板/移动端整组抽屉 ──
   const [rightPanelOpen, setRightPanelOpen] = useState(false);
   const [rightPanelWidth, setRightPanelWidth] = useState(RIGHT_PANEL_WIDTH_DEFAULT);
   const [mobileWorkspaceReady, setMobileWorkspaceReady] = useState(false);
@@ -177,16 +177,20 @@ function AppShellInner() {
   useEffect(() => {
     const prefs = loadSidebarPreferences();
     setSidebarWidth(prefs.sidebarWidth);
-    // 桌面右栏现为常驻结构；保留旧偏好字段只为移动端兼容，不再让旧关闭值隐藏桌面栏。
-    setRightPanelOpen(true);
+    setRightPanelOpen(prefs.rightPanelOpen);
     setRightPanelWidth(prefs.rightPanelWidth);
   }, []);
 
-  // 右栏宽度的唯一写入口：AppShell 是布局 owner，变更即时落盘。
+  // 右栏内容宽度/桌面开关的唯一写入口：AppShell 是布局 owner，变更即时落盘。
   const applyRightPanelWidth = useCallback((width: number) => {
     const clamped = clampRightPanelWidth(width);
     setRightPanelWidth(clamped);
     saveRightPanelPreferences({ width: clamped });
+  }, []);
+
+  const applyRightPanelOpen = useCallback((open: boolean) => {
+    setRightPanelOpen(open);
+    saveRightPanelPreferences({ open });
   }, []);
 
   // On mobile the sidebar is an overlay drawer; hide it by default so the chat
@@ -196,6 +200,9 @@ function AppShellInner() {
     if (isMobile) {
       setSidebarOpen(false);
       setRightPanelOpen(false);
+    } else {
+      // 从移动断点返回桌面时恢复内容面板偏好；移动抽屉关闭不覆盖桌面选择。
+      setRightPanelOpen(loadSidebarPreferences().rightPanelOpen);
     }
   }, [isMobile]);
   useEffect(() => {
@@ -254,12 +261,14 @@ function AppShellInner() {
       setSidebarOpen(false);
       // 移动端抽屉显隐不落盘（见 isMobile effect 注释）。
       setRightPanelOpen((open) => !open);
+    } else {
+      applyRightPanelOpen(!rightPanelOpen);
     }
-  }, [isMobile]);
+  }, [applyRightPanelOpen, isMobile, rightPanelOpen]);
 
-  // 右栏文件预览 tabs：与固定导航 tab（files/git/info）共用同一活跃态。
+  // 右栏文件预览 tabs：与固定图标导航（branch/info/files/git）共用同一活跃态。
   const [fileTabs, setFileTabs] = useState<Tab[]>([]);
-  /** 右栏活跃 tab："files" | "git" | "info" | `file:<bufferKey>`。 */
+  /** 右栏活跃 tab："branch" | "files" | "git" | "info" | `file:<bufferKey>`。 */
   const [activeRightTabId, setActiveRightTabId] = useState<string>("files");
   const [pendingCloseTabId, setPendingCloseTabId] = useState<string | null>(null);
   const [fileEditorState, dispatchFileEditor] = useReducer(fileEditorReducer, EMPTY_FILE_EDITOR_STATE);
@@ -691,8 +700,10 @@ function AppShellInner() {
     if (isMobile) {
       setSidebarOpen(false);
       setRightPanelOpen(true);
+    } else {
+      applyRightPanelOpen(true);
     }
-  }, [isMobile]);
+  }, [applyRightPanelOpen, isMobile]);
 
   const handleOpenLinkedFile = useCallback((filePath: string) => {
     handleOpenFile(filePath, getFileName(filePath), selectedSession?.id ?? null, Boolean(selectedSession?.id && selectedSession.readOnly !== true));
@@ -740,7 +751,7 @@ function AppShellInner() {
     closeFileTabNow(tab.id, false);
   }, [closeFileTabNow, dispatchFileEditorAction, fileTabs, pendingCloseTabId]);
 
-  // 右栏图标导航在前，文件预览 tab 在后。
+  // 右栏图标导航常驻最右；文件预览 tab 位于其左侧内容面板内。
   const rightTabs = useMemo<Tab[]>(() => [
     { id: "branch", label: t("branches"), filePath: "", kind: "branch" },
     { id: "info", label: t("app_sessionInfo"), filePath: "", kind: "info" },
@@ -753,9 +764,21 @@ function AppShellInner() {
   ], [fileEditorState, fileTabs, t]);
 
   const handleSelectRightTab = useCallback((tabId: string) => {
+    const activeNavigationId = activeRightTabId.startsWith("file:") ? "files" : activeRightTabId;
+    if (rightPanelOpen && tabId === activeNavigationId) {
+      if (isMobile) setRightPanelOpen(false);
+      else applyRightPanelOpen(false);
+      return;
+    }
     setPendingCloseTabId(null);
     setActiveRightTabId(tabId);
-  }, []);
+    if (isMobile) {
+      setSidebarOpen(false);
+      setRightPanelOpen(true);
+    } else {
+      applyRightPanelOpen(true);
+    }
+  }, [activeRightTabId, applyRightPanelOpen, isMobile, rightPanelOpen]);
 
   // 顶栏 stats / ChatWindow /session 命令入口：打开右栏并切到「会话信息」Tab。
   const openSessionInfoTab = useCallback(() => {
@@ -763,11 +786,11 @@ function AppShellInner() {
       setSidebarOpen(false);
       setRightPanelOpen(true);
     } else {
-      setRightPanelOpen(true);
+      applyRightPanelOpen(true);
     }
     setPendingCloseTabId(null);
     setActiveRightTabId("info");
-  }, [isMobile]);
+  }, [applyRightPanelOpen, isMobile]);
 
   // 新会话 cwd 来自 intent 捕获值，不从随后可能变化的 activeCwd 裸推导。
   const effectiveNewSessionCwd =
@@ -1001,7 +1024,7 @@ function AppShellInner() {
             }
             const tooltip = tooltipParts.join("  |  ");
 
-            const infoTabActive = (!isMobile || rightPanelOpen) && activeRightTabId === "info";
+            const infoTabActive = rightPanelOpen && activeRightTabId === "info";
             return (
               <button
                 type="button"
@@ -1167,10 +1190,10 @@ function AppShellInner() {
       />
 
       <RightPanel
-        open={isMobile ? rightPanelOpen : true}
+        open={rightPanelOpen}
         width={rightPanelWidth}
         onWidthChange={applyRightPanelWidth}
-        onClose={() => setRightPanelOpen(false)}
+        onClose={() => isMobile ? setRightPanelOpen(false) : applyRightPanelOpen(false)}
         cwd={activeCwd}
         isMobile={isMobile}
         mobileReady={mobileWorkspaceReady}
