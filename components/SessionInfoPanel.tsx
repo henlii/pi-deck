@@ -5,11 +5,6 @@ import { useI18n } from "@/lib/i18n";
 import { copyText } from "@/lib/clipboard";
 import type { SessionStatsInfo } from "@/lib/pi-types";
 import type { SessionInfo } from "@/lib/types";
-import {
-  buildSessionExportHtmlHref,
-  buildSessionExportJsonlHref,
-  canExportSession,
-} from "./session-export-links";
 
 type SessionCopyField = "file" | "id";
 
@@ -18,16 +13,13 @@ interface Props {
   sessionStats: SessionStatsInfo | null;
   contextUsage: { percent: number | null; contextWindow: number; tokens: number | null } | null;
   systemPrompt: string | null;
-  /** JSONL 导出按当前分支截断；无 leaf 时导出整分支。 */
-  branchActiveLeafId: string | null;
 }
 
 /**
  * 右栏「会话信息」Tab：整合会话 stats（tokens+cost+context usage）、
- * 导出（原生 <a href download>，不读进前端内存）与 system prompt 查看。
- * 顶栏不再保留这三类入口，本面板是唯一入口。
+ * system prompt 查看。导出统一收口到会话行菜单。
  */
-export function SessionInfoPanel({ session, sessionStats, contextUsage, systemPrompt, branchActiveLeafId }: Props) {
+export function SessionInfoPanel({ session, sessionStats, contextUsage, systemPrompt }: Props) {
   const { t } = useI18n();
   const [copiedField, setCopiedField] = useState<SessionCopyField | null>(null);
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -197,76 +189,6 @@ export function SessionInfoPanel({ session, sessionStats, contextUsage, systemPr
                 ]);
               })()}
             </>
-          )}
-
-          {/* 导出：仅已持久化会话（有真实 id）展示；readOnly 子会话同样可导出。
-              两项原生 <a href download>；href 随 branchActiveLeafId 实时重建。 */}
-          {canExportSession(session) && (
-            <div style={{ minWidth: 0 }}>
-              {sectionTitle(t("export_title"))}
-              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                {([
-                  {
-                    key: "html",
-                    href: buildSessionExportHtmlHref(session.id),
-                    label: t("export_htmlLabel"),
-                    desc: t("export_htmlDesc"),
-                    icon: (
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                        <polyline points="16 18 22 12 16 6" />
-                        <polyline points="8 6 2 12 8 18" />
-                      </svg>
-                    ),
-                  },
-                  {
-                    key: "jsonl",
-                    href: buildSessionExportJsonlHref(session.id, branchActiveLeafId),
-                    label: t("export_jsonlLabel"),
-                    desc: t("export_jsonlDesc"),
-                    icon: (
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                        <path d="M8 3H7a2 2 0 0 0-2 2v4a2 2 0 0 1-2 2 2 2 0 0 1 2 2v4a2 2 0 0 0 2 2h1" />
-                        <path d="M16 21h1a2 2 0 0 0 2-2v-4a2 2 0 0 1 2-2 2 2 0 0 1-2-2V5a2 2 0 0 0-2-2h-1" />
-                      </svg>
-                    ),
-                  },
-                ]).map((item) => (
-                  <a
-                    key={item.key}
-                    href={item.href}
-                    download
-                    title={item.desc}
-                    style={{
-                      display: "flex", alignItems: "center", gap: 10,
-                      padding: "8px 10px", borderRadius: 6,
-                      border: "1px solid var(--border)",
-                      background: "none", textDecoration: "none",
-                      color: "var(--text)", cursor: "pointer",
-                      transition: "background 0.12s, border-color 0.12s",
-                    }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.background = "var(--bg-hover)";
-                      e.currentTarget.style.borderColor = "var(--accent)";
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.background = "none";
-                      e.currentTarget.style.borderColor = "var(--border)";
-                    }}
-                  >
-                    <span style={{ color: "var(--accent)", display: "flex", flexShrink: 0 }}>{item.icon}</span>
-                    <span style={{ flex: 1, minWidth: 0 }}>
-                      <span style={{ display: "block", fontSize: 12, fontWeight: 600, lineHeight: 1.4 }}>{item.label}</span>
-                      <span style={{ display: "block", fontSize: 11, color: "var(--text-muted)", lineHeight: 1.4, overflowWrap: "anywhere" }}>{item.desc}</span>
-                    </span>
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ color: "var(--text-dim)", flexShrink: 0 }}>
-                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                      <polyline points="7 10 12 15 17 10" />
-                      <line x1="12" y1="15" x2="12" y2="3" />
-                    </svg>
-                  </a>
-                ))}
-              </div>
-            </div>
           )}
 
           {/* System prompt 查看 */}

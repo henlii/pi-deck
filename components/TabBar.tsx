@@ -10,10 +10,10 @@ export interface Tab {
   filePath: string;
   sourceSessionId?: string | null;
   /**
-   * chat = 会话主 tab（不可关闭、固定在首）；files/git/info = 右栏固定导航 tab
+   * chat = 会话主 tab（不可关闭、固定在首）；branch/files/git/info = 右栏固定导航 tab
    * （不可关闭）；file 或缺省 = 文件预览 tab（可关闭）。
    */
-  kind?: "chat" | "file" | "files" | "git" | "info";
+  kind?: "chat" | "file" | "branch" | "files" | "git" | "info";
   /** 文件 tab 打开时固化的写能力，不能随当前会话切换而变化。 */
   writable?: boolean;
   readOnly?: boolean;
@@ -22,7 +22,7 @@ export interface Tab {
   saving?: boolean;
 }
 
-/** 固定导航 tab（不可关闭）：chat 主 tab 与右栏 files/git/info。 */
+/** 固定导航 tab（不可关闭）：chat 主 tab 与右栏图标导航。 */
 function isFixedTab(tab: Tab): boolean {
   return tab.kind !== undefined && tab.kind !== "file";
 }
@@ -47,6 +47,16 @@ function PanelTabIcon({ kind }: { kind: Tab["kind"] }) {
     );
   }
   if (kind === "git") {
+    return (
+      <svg {...common}>
+        <line x1="6" y1="3" x2="6" y2="15" />
+        <circle cx="18" cy="6" r="3" />
+        <circle cx="6" cy="18" r="3" />
+        <path d="M18 9a9 9 0 0 1-9 9" />
+      </svg>
+    );
+  }
+  if (kind === "branch") {
     return (
       <svg {...common}>
         <line x1="6" y1="3" x2="6" y2="15" />

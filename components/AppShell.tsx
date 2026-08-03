@@ -114,8 +114,7 @@ function AppShellInner() {
   const [modelsRefreshKey, setModelsRefreshKey] = useState(0);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [mobileSidebarReady, setMobileSidebarReady] = useState(false);
-  // ── 右栏（文件/diff/会话信息面板）：初装默认关闭，开/关与宽度跨刷新记忆 ──
-  // 首次客户端渲染必须与 SSR 一致；挂载后再恢复浏览器持久化偏好。
+  // ── 右栏：桌面常驻；移动端用此状态控制抽屉，宽度跨刷新记忆 ──
   const [rightPanelOpen, setRightPanelOpen] = useState(false);
   const [rightPanelWidth, setRightPanelWidth] = useState(RIGHT_PANEL_WIDTH_DEFAULT);
   const [mobileWorkspaceReady, setMobileWorkspaceReady] = useState(false);
@@ -178,20 +177,16 @@ function AppShellInner() {
   useEffect(() => {
     const prefs = loadSidebarPreferences();
     setSidebarWidth(prefs.sidebarWidth);
-    setRightPanelOpen(prefs.rightPanelOpen);
+    // 桌面右栏现为常驻结构；保留旧偏好字段只为移动端兼容，不再让旧关闭值隐藏桌面栏。
+    setRightPanelOpen(true);
     setRightPanelWidth(prefs.rightPanelWidth);
   }, []);
 
-  // 右栏宽度/开关的唯一写入口：AppShell 是布局 owner，变更即时落盘。
+  // 右栏宽度的唯一写入口：AppShell 是布局 owner，变更即时落盘。
   const applyRightPanelWidth = useCallback((width: number) => {
     const clamped = clampRightPanelWidth(width);
     setRightPanelWidth(clamped);
     saveRightPanelPreferences({ width: clamped });
-  }, []);
-
-  const applyRightPanelOpen = useCallback((open: boolean) => {
-    setRightPanelOpen(open);
-    saveRightPanelPreferences({ open });
   }, []);
 
   // On mobile the sidebar is an overlay drawer; hide it by default so the chat
@@ -208,7 +203,6 @@ function AppShellInner() {
     setMobileWorkspaceReady(true);
   }, []);
   const chatInputRef = useRef<ChatInputHandle | null>(null);
-  const topBarRef = useRef<HTMLDivElement>(null);
 
   // Branch navigator state — populated by ChatWindow via onBranchDataChange
   const [branchTree, setBranchTree] = useState<SessionTreeNode[]>([]);
@@ -248,20 +242,8 @@ function AppShellInner() {
     setContextUsage(usage);
   }, []);
 
-  // 顶栏唯一剩余浮层：分支树（导出/系统/会话信息已迁入右栏「会话信息」Tab）。
-  const [activeTopPanel, setActiveTopPanel] = useState<"branches" | null>(null);
-
-  const toggleTopPanel = useCallback((panel: "branches") => {
-    if (isMobile) {
-      setSidebarOpen(false);
-      setRightPanelOpen(false);
-    }
-    setActiveTopPanel((cur) => cur === panel ? null : panel);
-  }, [isMobile]);
-
   const handleSidebarToggle = useCallback(() => {
     if (isMobile) {
-      setActiveTopPanel(null);
       setRightPanelOpen(false);
     }
     setSidebarOpen((open) => !open);
@@ -270,13 +252,10 @@ function AppShellInner() {
   const handleRightPanelToggle = useCallback(() => {
     if (isMobile) {
       setSidebarOpen(false);
-      setActiveTopPanel(null);
       // 移动端抽屉显隐不落盘（见 isMobile effect 注释）。
       setRightPanelOpen((open) => !open);
-    } else {
-      applyRightPanelOpen(!rightPanelOpen);
     }
-  }, [isMobile, rightPanelOpen, applyRightPanelOpen]);
+  }, [isMobile]);
 
   // 右栏文件预览 tabs：与固定导航 tab（files/git/info）共用同一活跃态。
   const [fileTabs, setFileTabs] = useState<Tab[]>([]);
@@ -474,7 +453,6 @@ function AppShellInner() {
     setBranchTree([]);
     setBranchActiveLeafId(null);
     setSystemPrompt(null);
-    setActiveTopPanel(null);
     router.replace("/", { scroll: false });
   }, [identity.cwd, identity.projectRoot, router, selectedSession, invalidateHydrate]);
 
@@ -530,7 +508,6 @@ function AppShellInner() {
     setBranchTree([]);
     setBranchActiveLeafId(null);
     setSystemPrompt(null);
-    setActiveTopPanel(null);
     if (isMobile) setSidebarOpen(false);
     router.replace("/", { scroll: false });
   }, [router, isMobile, getIdentitySnapshot, setIdentity, invalidateHydrate]);
@@ -695,7 +672,6 @@ function AppShellInner() {
       setBranchTree([]);
       setBranchActiveLeafId(null);
       setSystemPrompt(null);
-      setActiveTopPanel(null);
       router.replace("/", { scroll: false });
     }
   }, [selectedSession, router, invalidateHydrate, removeOptimisticPending]);
@@ -715,10 +691,8 @@ function AppShellInner() {
     if (isMobile) {
       setSidebarOpen(false);
       setRightPanelOpen(true);
-    } else {
-      applyRightPanelOpen(true);
     }
-  }, [isMobile, applyRightPanelOpen]);
+  }, [isMobile]);
 
   const handleOpenLinkedFile = useCallback((filePath: string) => {
     handleOpenFile(filePath, getFileName(filePath), selectedSession?.id ?? null, Boolean(selectedSession?.id && selectedSession.readOnly !== true));
@@ -766,11 +740,12 @@ function AppShellInner() {
     closeFileTabNow(tab.id, false);
   }, [closeFileTabNow, dispatchFileEditorAction, fileTabs, pendingCloseTabId]);
 
-  // 右栏 Tab 行：固定导航 tab（files/git/info）在前，文件预览 tab 在后。
+  // 右栏图标导航在前，文件预览 tab 在后。
   const rightTabs = useMemo<Tab[]>(() => [
+    { id: "branch", label: t("branches"), filePath: "", kind: "branch" },
+    { id: "info", label: t("app_sessionInfo"), filePath: "", kind: "info" },
     { id: "files", label: t("workspace_files"), filePath: "", kind: "files" },
     { id: "git", label: t("workspace_gitChanges"), filePath: "", kind: "git" },
-    { id: "info", label: t("app_sessionInfo"), filePath: "", kind: "info" },
     ...fileTabs.map((tab) => {
       const buffer = tab.bufferKey ? getBuffer(fileEditorState, tab.bufferKey) : undefined;
       return { ...tab, dirty: buffer?.dirty, saving: buffer?.saveState === "saving" };
@@ -788,11 +763,11 @@ function AppShellInner() {
       setSidebarOpen(false);
       setRightPanelOpen(true);
     } else {
-      applyRightPanelOpen(true);
+      setRightPanelOpen(true);
     }
     setPendingCloseTabId(null);
     setActiveRightTabId("info");
-  }, [isMobile, applyRightPanelOpen]);
+  }, [isMobile]);
 
   // 新会话 cwd 来自 intent 捕获值，不从随后可能变化的 activeCwd 裸推导。
   const effectiveNewSessionCwd =
@@ -941,7 +916,7 @@ function AppShellInner() {
       {/* Center: chat */}
       <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: 0 }}>
         {/* Top bar with sidebar toggle */}
-        <div ref={topBarRef} style={{ display: "flex", alignItems: "center", flexShrink: 0, borderBottom: "1px solid var(--border)", height: 36, background: "var(--bg-panel)" }}>
+        <div style={{ display: "flex", alignItems: "center", flexShrink: 0, borderBottom: "1px solid var(--border)", height: 36, background: "var(--bg-panel)" }}>
           <button
             onClick={handleSidebarToggle}
             title={sidebarOpen ? t("app_hideSidebar") : t("app_showSidebar")}
@@ -996,23 +971,6 @@ function AppShellInner() {
               </svg>
             )}
           </button>
-          {showChat && (
-            <div style={{ display: "flex", alignItems: "stretch", height: "100%" }}>
-              <BranchNavigator
-                tree={branchTree}
-                activeLeafId={branchActiveLeafId}
-                onLeafChange={handleBranchLeafChange}
-                branchActions={branchActions}
-                inline
-                compact={isMobile}
-                containerRef={topBarRef}
-                open={activeTopPanel === "branches"}
-                onToggle={() => toggleTopPanel("branches")}
-                hasSession
-              />
-              {/* 系统提示词 / 导出 / 会话信息入口已迁入右栏「会话信息」Tab（P1 分屏） */}
-            </div>
-          )}
           {/* Session stats — right-aligned in top bar */}
           {showChat && (sessionStats || contextUsage) && (() => {
             const tokenStats = sessionStats?.tokens;
@@ -1043,7 +1001,7 @@ function AppShellInner() {
             }
             const tooltip = tooltipParts.join("  |  ");
 
-            const infoTabActive = rightPanelOpen && activeRightTabId === "info";
+            const infoTabActive = (!isMobile || rightPanelOpen) && activeRightTabId === "info";
             return (
               <button
                 type="button"
@@ -1114,7 +1072,7 @@ function AppShellInner() {
             );
           })()}
           {/* 右栏（文件/diff/会话信息面板）开关；stats 按钮缺省时自身右对齐 */}
-          <button
+          {isMobile && <button
             type="button"
             onClick={handleRightPanelToggle}
             title={rightPanelOpen ? t("app_hidePanel") : t("app_showPanel")}
@@ -1135,7 +1093,7 @@ function AppShellInner() {
               <rect x="3" y="3" width="18" height="18" rx="2" />
               <line x1="15" y1="3" x2="15" y2="21" />
             </svg>
-          </button>
+          </button>}
         </div>
 
         {/* Chat 固定主区：打开文件/diff/会话信息只展开右栏，Chat 始终可见且保持挂载，
@@ -1202,17 +1160,17 @@ function AppShellInner() {
         style={{
           position: "fixed", inset: 0, zIndex: 199,
           background: "rgba(0,0,0,0.4)",
-          opacity: rightPanelOpen ? 1 : 0,
-          pointerEvents: rightPanelOpen ? "auto" : "none",
+          opacity: isMobile && rightPanelOpen ? 1 : 0,
+          pointerEvents: isMobile && rightPanelOpen ? "auto" : "none",
           transition: "opacity 0.25s ease",
         }}
       />
 
       <RightPanel
-        open={rightPanelOpen}
+        open={isMobile ? rightPanelOpen : true}
         width={rightPanelWidth}
         onWidthChange={applyRightPanelWidth}
-        onClose={() => isMobile ? setRightPanelOpen(false) : applyRightPanelOpen(false)}
+        onClose={() => setRightPanelOpen(false)}
         cwd={activeCwd}
         isMobile={isMobile}
         mobileReady={mobileWorkspaceReady}
@@ -1245,7 +1203,16 @@ function AppShellInner() {
             sessionStats={sessionStats}
             contextUsage={contextUsage}
             systemPrompt={systemPrompt}
-            branchActiveLeafId={branchActiveLeafId}
+          />
+        )}
+        branchContent={(
+          <BranchNavigator
+            tree={branchTree}
+            activeLeafId={branchActiveLeafId}
+            onLeafChange={handleBranchLeafChange}
+            branchActions={branchActions}
+            hasSession={showChat}
+            panel
           />
         )}
         onOpenFile={(filePath, fileName) => handleOpenFile(filePath, fileName, selectedSession?.id ?? null, Boolean(selectedSession?.id && selectedSession.readOnly !== true))}

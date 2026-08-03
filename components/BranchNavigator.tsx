@@ -35,6 +35,8 @@ interface Props {
    * 只读直跳行为：不出现摘要选项与书签写入口，点击仍走纯 GET context。
    */
   branchActions?: BranchActions | null;
+  /** 常驻右栏模式：直接展示完整树与书签区，不再套折叠标题。 */
+  panel?: boolean;
 }
 
 // Find the visible entry IDs on the path from root to activeLeafId.
@@ -667,7 +669,7 @@ function BranchBookmarkFooter({ currentLabel, disabled, onSubmit, t }: {
   );
 }
 
-export function BranchNavigator({ tree, activeLeafId, onLeafChange, inline, containerRef, open: openProp, onToggle, hasSession, compact, branchActions }: Props) {
+export function BranchNavigator({ tree, activeLeafId, onLeafChange, inline, containerRef, open: openProp, onToggle, hasSession, compact, branchActions, panel }: Props) {
   const { t } = useI18n();
   const [openInternal, setOpenInternal] = useState(false);
   const open = openProp !== undefined ? openProp : openInternal;
@@ -917,6 +919,15 @@ export function BranchNavigator({ tree, activeLeafId, onLeafChange, inline, cont
             {bookmarkFooter}
           </div>
         )}
+      </div>
+    );
+  }
+
+  if (panel) {
+    return (
+      <div style={{ height: "100%", display: "flex", flexDirection: "column", overflow: "hidden", background: "var(--bg-panel)" }}>
+        <div style={{ flex: 1, minHeight: 0, overflowY: "auto", paddingTop: 8 }}>{panelContent}</div>
+        {bookmarkFooter}
       </div>
     );
   }

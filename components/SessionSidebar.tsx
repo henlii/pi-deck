@@ -51,6 +51,8 @@ import { ViewportDialog } from "./ui/ViewportDialog";
 import { ProjectTrustBadge, ProjectTrustDialog, useProjectTrust, type ProjectTrustEntry } from "./ProjectTrust";
 import { useI18n } from "@/lib/i18n";
 import { loadUnreadSessionIds, saveUnreadSessionIds } from "@/lib/unread-sessions-storage";
+import { copyText } from "@/lib/clipboard";
+import { buildSessionExportHtmlHref, buildSessionExportJsonlHref, canExportSession } from "./session-export-links";
 
 declare global {
   interface Window {
@@ -3140,6 +3142,61 @@ function UnreadSessionIndicator({ size = 14 }: { size?: number }) {
   );
 }
 
+function SessionRowMenu({ session, title, canRename, canDelete, onRename, onDelete }: { session: SessionInfo; title: string; canRename: boolean; canDelete: boolean; onRename: () => void; onDelete: () => void }) {
+  const { t } = useI18n();
+  const [open, setOpen] = useState(false);
+  const [position, setPosition] = useState<{ top: number; right: number } | null>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const label = t("sidebar_sessionMenuLabel", { session: title });
+  const close = useCallback((focus = false) => { setOpen(false); if (focus) triggerRef.current?.focus(); }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    const outside = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (!menuRef.current?.contains(target) && !triggerRef.current?.contains(target)) close();
+    };
+    const viewport = () => close();
+    document.addEventListener("mousedown", outside);
+    window.addEventListener("resize", viewport);
+    window.addEventListener("scroll", viewport, true);
+    const frame = requestAnimationFrame(() => menuRef.current?.querySelector<HTMLElement>("[role='menuitem']")?.focus());
+    return () => { cancelAnimationFrame(frame); document.removeEventListener("mousedown", outside); window.removeEventListener("resize", viewport); window.removeEventListener("scroll", viewport, true); };
+  }, [close, open]);
+
+  const openMenu = () => {
+    if (open) { close(); return; }
+    const rect = triggerRef.current?.getBoundingClientRect();
+    if (rect) {
+      // 菜单靠近视口底部时向上翻转，避免最后几行的删除项被裁切。
+      const estimatedMenuHeight = 212;
+      const top = rect.bottom + 4 + estimatedMenuHeight <= window.innerHeight
+        ? rect.bottom + 4
+        : Math.max(8, rect.top - estimatedMenuHeight - 4);
+      setPosition({ top, right: Math.max(8, window.innerWidth - rect.right) });
+    }
+    setOpen(true);
+  };
+  const itemStyle: CSSProperties = { display: "flex", alignItems: "center", gap: 8, width: "100%", minHeight: 32, padding: "6px 11px", boxSizing: "border-box", background: "var(--bg)", border: "none", color: "var(--text-muted)", cursor: "pointer", textAlign: "left", textDecoration: "none", fontSize: 12, whiteSpace: "nowrap" };
+  const hover = {
+    onMouseEnter: (event: React.MouseEvent<HTMLElement>) => { event.currentTarget.style.background = "var(--bg-hover)"; event.currentTarget.style.color = "var(--text)"; },
+    onMouseLeave: (event: React.MouseEvent<HTMLElement>) => { event.currentTarget.style.background = "var(--bg)"; event.currentTarget.style.color = "var(--text-muted)"; },
+  };
+  const menuIcon = (child: ReactNode) => <span aria-hidden="true" style={{ display: "flex", color: "var(--text-dim)" }}>{child}</span>;
+
+  return <div style={{ display: "flex", flexShrink: 0 }} onClick={(event) => event.stopPropagation()} onKeyDown={(event) => { if (event.key === "Escape" && open) { event.preventDefault(); close(true); } }}>
+    <SidebarIconButton label={label} active={open} expanded={open} haspopup="menu" hoverReveal buttonRef={triggerRef} onClick={(event) => { event.stopPropagation(); openMenu(); }}><MoreVerticalIcon size={14}/></SidebarIconButton>
+    {open && position && <div ref={menuRef} role="menu" aria-label={label} style={{ position: "fixed", top: position.top, right: position.right, zIndex: 600, minWidth: 190, padding: 4, background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 8, boxShadow: "0 10px 28px rgba(0,0,0,0.18)" }}>
+      {canRename && <button type="button" role="menuitem" style={itemStyle} {...hover} onClick={() => { close(); onRename(); }}>{menuIcon(<PencilIcon size={13}/>)}{t("sidebar_renameSession")}</button>}
+      <button type="button" role="menuitem" style={itemStyle} {...hover} onClick={() => { close(); void copyText(session.id); }}>{menuIcon(<svg {...iconProps(13)}><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>)}{t("sidebar_copySessionId")}</button>
+      {canExportSession(session) && <><a role="menuitem" href={buildSessionExportHtmlHref(session.id)} download style={itemStyle} {...hover} onClick={() => close()}>{menuIcon(<svg {...iconProps(13)}><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>)}{t("sidebar_exportSessionHtml")}</a>
+      <a role="menuitem" href={buildSessionExportJsonlHref(session.id, null)} download style={itemStyle} {...hover} onClick={() => close()}>{menuIcon(<svg {...iconProps(13)}><path d="M8 3H7a2 2 0 0 0-2 2v4a2 2 0 0 1-2 2 2 2 0 0 1 2 2v4a2 2 0 0 0 2 2h1"/><path d="M16 21h1a2 2 0 0 0 2-2v-4a2 2 0 0 1 2-2 2 2 0 0 1-2-2V5a2 2 0 0 0-2-2h-1"/></svg>)}{t("sidebar_exportSessionJsonl")}</a></>}
+      {canDelete && <><div style={{ height: 1, margin: "4px 6px", background: "var(--border)" }}/><button type="button" role="menuitem" style={{ ...itemStyle, color: "#ef4444" }} onClick={() => { close(); onDelete(); }}>{menuIcon(<TrashIcon size={13}/>)}{t("sidebar_deleteSession")}</button></>}
+    </div>}
+  </div>;
+}
+
 function SessionItem({
   session,
   relation = null,
@@ -3191,8 +3248,7 @@ function SessionItem({
     || firstMessageLabel.slice(0, 50)
     || session.id.slice(0, 12);
 
-  const startRename = useCallback((e: React.MouseEvent) => {
-    e.stopPropagation();
+  const startRename = useCallback(() => {
     // 只读会话不允许改名（UI 层 guard；后端仍是权威防线）。
     if (!capabilities.canRename) return;
     setRenameValue(session.name ?? "");
@@ -3221,8 +3277,7 @@ function SessionItem({
     }
   }, [renameValue, session.id, session.name, onRenamed, capabilities.canRename]);
 
-  const handleDeleteClick = useCallback((e: React.MouseEvent) => {
-    e.stopPropagation();
+  const handleDeleteClick = useCallback(() => {
     // 只读会话不允许删除（UI 层 guard；后端仍是权威防线）。
     if (!capabilities.canDelete) return;
     setConfirmDelete(true);
@@ -3443,23 +3498,8 @@ function SessionItem({
           )}
         </div>
 
-          {/* 行内操作：恒渲染保证触屏可发现、键盘可 Tab 到达；
-              细指针下由 .sidebar-row hover/focus-within 渐进显露，
-              粗指针设备常显（globals.css 媒体查询）；只读会话不提供写操作入口 */}
-          {(capabilities.canRename || capabilities.canDelete) && (
-            <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
-              {capabilities.canRename && (
-                <SidebarIconButton label={t("sidebar_renameSession")} hoverReveal onClick={startRename}>
-                  <PencilIcon size={13} />
-                </SidebarIconButton>
-              )}
-              {capabilities.canDelete && (
-                <SidebarIconButton label={t("sidebar_deleteSession")} danger hoverReveal onClick={handleDeleteClick}>
-                  <TrashIcon size={13} />
-                </SidebarIconButton>
-              )}
-            </div>
-          )}
+          {/* 写操作与导出统一收口；只读会话仍可复制 ID 和导出。 */}
+          <SessionRowMenu session={session} title={title} canRename={capabilities.canRename} canDelete={capabilities.canDelete} onRename={startRename} onDelete={handleDeleteClick}/>
         </>
       )}
     </div>
