@@ -15,7 +15,7 @@
 - 正式版**必须**从**已审计的同一 tgz** 安装，**禁止**直接从工作区源码以生产方式常驻运行。
 - 反代（如 Nginx）**只能**在正式服务健康后指向 **31415**，不得指向 31416 / 30141 / 30143。
 - 服务以 **root** 运行（Pi 数据在 `/root/.pi/agent`）：`HOME=/root`，`PI_CODING_AGENT_DIR=/root/.pi/agent`。
-- Node 使用本机稳定入口（例如 `/root/.local/bin/node`），**不要**把 NVM 版本化路径写进 unit。
+- Node 使用标准 nvm 绝对路径（`/root/.nvm/versions/node/v24.18.0/bin/node`），unit 的 ExecStart/PATH 直接写该路径，**不要**用 `/root/.local/bin` 软连接、**不要**把版本化路径再包一层。
 - CLI：`pidance --hostname 0.0.0.0 --port 31415 --no-open`。
 - **禁止**在本目录或 unit 中写入 API 密钥、口令、私钥等敏感值。
 

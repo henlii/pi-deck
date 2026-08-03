@@ -17,8 +17,8 @@ Group=root
 # Pi 会话与配置在 root 家目录；勿改为无权限的运行用户除非同步迁移数据
 Environment=HOME=/root
 Environment=PI_CODING_AGENT_DIR=/root/.pi/agent
-# 使用本机稳定 Node 入口（如 /root/.local/bin），勿写 NVM 版本目录
-Environment=PATH=/root/.local/bin:/usr/local/bin:/usr/bin:/bin
+# 使用标准 nvm Node 入口（绝对路径 /root/.nvm/versions/node/v24.18.0/bin），勿写 /root/.local 软连接
+Environment=PATH=/root/.nvm/versions/node/v24.18.0/bin:/root/.local/bin:/usr/local/bin:/usr/bin:/bin
 Environment=NODE_ENV=production
 
 # current 为 releases/<ver> 的符号链接；CLI 经 __dirname 找包内 .next

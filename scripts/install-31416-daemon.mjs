@@ -12,7 +12,7 @@
  *   pi-web）与 31415 正式版（pidance.service）。
  * - 同名 transient unit 接管前必须指纹校验（WorkingDirectory=仓库）；
  *   指纹不符拒绝操作。
- * - ExecStart 使用稳定 Node 入口（/root/.local/bin 优先，勿写 NVM 版本目录）
+ * - ExecStart 使用标准 nvm Node 绝对路径（/root/.nvm/versions/node/v24.18.0/bin，不写版本化软连接）
  *   与仓库内 Next CLI 绝对路径；日志独立于正式版（/var/log）。
  */
 
@@ -42,10 +42,11 @@ const logFile = `/var/log/${unitName}.log`;
 const memoryHigh = "3G";
 const memoryMax = "4G";
 
-// 稳定 Node 入口：优先 /root/.local/bin/node（pidance.service 同款约定），
+// 稳定 Node 入口：直接使用标准 nvm node 绝对路径（2026-08-03 起统一，
+// 不再经 /root/.local/bin 软连接、不再指向 hermes 私有运行时）。
 // 若与当前 execPath 指向同一文件则使用之，否则退回 process.execPath。
 function resolveStableNode() {
-	const candidates = ["/root/.local/bin/node"];
+	const candidates = ["/root/.nvm/versions/node/v24.18.0/bin/node"];
 	for (const candidate of candidates) {
 		try {
 			if (realpathSync(candidate) === realpathSync(process.execPath))
@@ -119,7 +120,7 @@ function buildUnitContent(nodeBin, nextCli) {
 		"Group=root",
 		`Environment=HOME=/root`,
 		`Environment=PI_CODING_AGENT_DIR=/root/.pi/agent`,
-		`Environment=PATH=/root/.pi/agent/bin:/root/.local/bin:/usr/local/bin:/usr/bin:/bin`,
+		`Environment=PATH=/root/.nvm/versions/node/v24.18.0/bin:/root/.pi/agent/bin:/root/.local/bin:/usr/local/bin:/usr/bin:/bin`,
 		`Environment=NODE_OPTIONS=--max-old-space-size=3072`,
 		`Environment=PIDANCE_DIST_DIR=.next-public`,
 		`WorkingDirectory=${repository}`,
