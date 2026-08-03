@@ -14,9 +14,6 @@ import { CommandPalette } from "./CommandPalette";
 import type { SettingsPageId } from "./settings-nav";
 import { AboutDialog } from "./AboutDialog";
 import { BranchNavigator } from "./BranchNavigator";
-// REFACTOR-DEAD: 顶栏 runs/诊断浮层下线（P0c）；import 注释待统一清理。
-// import { SubagentRunsPanel } from "./SubagentRunsPanel";
-// import { LensDiagnosticsPanel } from "./LensDiagnosticsPanel";
 import { useTheme } from "@/hooks/useTheme";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { setDraft } from "@/lib/draft-store";
@@ -54,13 +51,6 @@ import {
   shouldPromoteSessionCreated,
   type NewSessionIntent,
 } from "@/lib/new-session-intent";
-
-// REFACTOR-DEAD: AutoNameStatus 随生成标题入口下线（P0c）。
-// type AutoNameStatus =
-//   | { kind: "idle" }
-//   | { kind: "naming" }
-//   | { kind: "success" }
-//   | { kind: "error"; message: string };
 
 export function AppShell() {
   return <ProjectProvider><AppShellInner /></ProjectProvider>;
@@ -246,20 +236,10 @@ function AppShellInner() {
 
   // Session stats (tokens + cost) — populated by ChatWindow, displayed in top bar
   const [sessionStats, setSessionStats] = useState<SessionStatsInfo | null>(null);
-  // REFACTOR-DEAD: 生成标题状态随入口下线（P0c）。
-  // const [autoNameStatus, setAutoNameStatus] = useState<AutoNameStatus>({ kind: "idle" });
-  // const autoNameTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const activeSessionIdRef = useRef<string | null>(selectedSession?.id ?? null);
   activeSessionIdRef.current = selectedSession?.id ?? null;
   const handleSessionStatsChange = useCallback((stats: SessionStatsInfo | null) => {
     setSessionStats(stats);
-  }, []);
-
-  useEffect(() => {
-    return () => {
-      // REFACTOR-DEAD: autoName 计时器随入口下线。
-      // if (autoNameTimerRef.current) clearTimeout(autoNameTimerRef.current);
-    };
   }, []);
 
   // Context usage — populated by ChatWindow, displayed in top bar
@@ -644,12 +624,6 @@ function AppShellInner() {
       .catch(() => {});
   }, [handleSelectSession]);
 
-  // REFACTOR-DEAD: 顶栏 runs 浮层下线后不再使用。
-  // const handleRunsOpenSession = useCallback((sessionFile: string) => {
-  //   setActiveTopPanel(null);
-  //   handleOpenSubagentSession(sessionFile);
-  // }, [handleOpenSubagentSession]);
-
   // ChatWindow：Pi 返回真实 id 后 promote；仅当前 intent 可写当前 chat。
   // 迟到旧 intent 的 session 仍 upsert 进 pending map，不销毁、不选中。
   const handleSessionCreated = useCallback((session: SessionInfo, intentId?: string | null) => {
@@ -678,22 +652,6 @@ function AppShellInner() {
     setRefreshKey((k) => k + 1);
     setExplorerRefreshKey((k) => k + 1);
   }, []);
-  // REFACTOR-DEAD: 生成标题入口下线（P0c 产品决策）——原实现见 git 历史 be20c80 前。
-  // const handleAutoName = ... (已注释)
-  // 遗留的裸函数体也已注释：
-  // const sessionId = selectedSession?.id;
-  // if (!sessionId || selectedSession?.readOnly === true || autoNameStatus.kind === "naming") return;
-  // if (autoNameTimerRef.current) clearTimeout(autoNameTimerRef.current);
-  // setActiveTopPanel(null);
-  // setAutoNameStatus({ kind: "naming" });
-  // try { ... } catch { ... }
-  // }, [autoNameStatus.kind, selectedSession?.id, selectedSession?.readOnly]);
-
-  // REFACTOR-DEAD: autoName 状态清理 effect（随入口下线）。
-  // useEffect(() => {
-  //   if (autoNameTimerRef.current) clearTimeout(autoNameTimerRef.current);
-  //   setAutoNameStatus({ kind: "idle" });
-  // }, [selectedSession?.id]);
 
   const handleSessionForked = useCallback((newSessionId: string, prefill?: string) => {
     // fork/新会话成功后切换：预填文本直接注入新会话 draft（新 ChatWindow 挂载时同步读取）。
@@ -1040,11 +998,6 @@ function AppShellInner() {
           </button>
           {showChat && (
             <div style={{ display: "flex", alignItems: "stretch", height: "100%" }}>
-              {/* REFACTOR-DEAD: 生成标题入口已下线（P0c 产品决策）。
-              {(() => {
-                ...auto-name 按钮...
-              })()} */}
-              {/* 生成标题（REFACTOR-DEAD）——原 auto-name 按钮 JSX 已注释，保留占位说明 */}
               <BranchNavigator
                 tree={branchTree}
                 activeLeafId={branchActiveLeafId}
@@ -1160,10 +1113,6 @@ function AppShellInner() {
               </button>
             );
           })()}
-          {/* REFACTOR-DEAD: 顶栏子代理运行浮层已下线（P0c 产品决策：子代理在侧栏树展开查看）。
-          <button ...runs...>...</button> */}
-          {/* REFACTOR-DEAD: 顶栏诊断浮层已下线（P0c 产品决策）。
-          <button ...diagnostics...>...</button> */}
           {/* 右栏（文件/diff/会话信息面板）开关；stats 按钮缺省时自身右对齐 */}
           <button
             type="button"

@@ -39,9 +39,6 @@ interface Props {
   isCompacting?: boolean;
   compactError?: string | null;
   compactResult?: CompactResultInfo | null;
-  // REFACTOR-DEAD: 工具预设下线（P0c）。
-  // toolPreset?: "none" | "default" | "full";
-  // onToolPresetChange?: (preset: "none" | "default" | "full") => void;
   thinkingLevel?: "auto" | "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
   onThinkingLevelChange?: (level: "auto" | "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max") => void;
   availableThinkingLevels?: string[] | null;
@@ -61,10 +58,6 @@ interface Props {
   cwd?: string | null;
 }
 
-// REFACTOR-DEAD: 工具预设下线（P0c）。
-// const TOOL_PRESETS = ["off", "default", "full"] as const;
-// REFACTOR-DEAD: 工具预设下线（P0c）。
-// const TOOL_PRESET_MAP: Record<"off" | "default" | "full", "none" | "default" | "full"> = { off: "none", default: "default", full: "full" };
 const COMPOSITION_END_ENTER_GRACE_MS = 100;
 const MODEL_OPTION_COLLATOR = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
 
@@ -905,8 +898,6 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     if (lvl === "auto" || !thinkingLevelMap) return lvl;
     return thinkingLevelMap[lvl] ?? lvl;
   })();
-  // REFACTOR-DEAD: 工具预设控件下线（P0c）。
-  // const toolPresetLabel = Object.entries(TOOL_PRESET_MAP).find(([, v]) => v === (toolPreset ?? "default"))?.[0] ?? "default";
 
   // ── 视口安全浮层定位 ─────────────────────────────────────────────────────
   // 所有菜单共享 useAnchoredOverlay：visualViewport 感知、上下翻转、边界
@@ -915,8 +906,6 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const atListboxId = useId();
   const modelMenuId = useId();
   const thinkingMenuId = useId();
-  // REFACTOR-DEAD: 工具预设控件下线（P0c）。
-  // const toolMenuId = useId();
   const controlsBarId = useId();
   const slashOverlay = useAnchoredOverlay({
     open: slashMenuOpen && slashQuery !== null,
@@ -958,8 +947,6 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     align: "end",
     minWidth: 180,
   });
-  // REFACTOR-DEAD: 工具预设控件下线（P0c）。
-  // const toolOverlay = useAnchoredOverlay({...});
   const compactOverlay = useAnchoredOverlay({
     open: Boolean(compactError),
     anchorRef: compactAnchorRef,
@@ -1993,8 +1980,6 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 )}
               </div>
             )}
-            {/* REFACTOR-DEAD: 工具预设控件下线（P0c：Pidance 不再收窄工具集）。
-            {!isStreaming && onToolPresetChange && (...工具预设 dropdown...)} */}
 
             {!isStreaming && onCompact && (
               <div ref={compactAnchorRef} style={{ position: "relative" }}>
