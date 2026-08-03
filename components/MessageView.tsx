@@ -14,6 +14,7 @@ import {
 import { getBranchSummaryFileMetadata } from "@/lib/branch-bookmarks";
 import { parseCompactionSummary } from "@/lib/compaction-summary";
 import { isEmptyThinkingBlock } from "@/lib/message-display";
+import type { ToolExecutionSnapshot, ToolExecutionStatus } from "@/lib/tool-execution-buffer";
 import { parseUnifiedPatch, type SplitDiffCell } from "@/lib/patch";
 import { parseSubagentResult, SUBAGENT_TOOL_NAME, type SubagentRunSummary, type SubagentResultSummary } from "@/lib/subagent-result";
 import { useI18n } from "@/lib/i18n";
@@ -67,6 +68,7 @@ interface Props {
   message: AgentMessage;
   isStreaming?: boolean;
   toolResults?: Map<string, ToolResultMessage>;
+  toolExecutionSnapshots?: ToolExecutionSnapshot[];
   modelNames?: Record<string, string>;
   cwd?: string;
   onOpenFile?: (filePath: string) => void;
@@ -114,12 +116,12 @@ function haveSameRelevantToolResults(
   return true;
 }
 
-export const MessageView = memo(function MessageView({ message, isStreaming, toolResults, modelNames, cwd, onOpenFile, onOpenSubagentSession, entryId, onBranchHere, onNewSessionFromHere, onBranchFromAssistant, onNewSessionFromAnswer, forking, showTimestamp, prevTimestamp, sessionId }: Props) {
+export const MessageView = memo(function MessageView({ message, isStreaming, toolResults, toolExecutionSnapshots, modelNames, cwd, onOpenFile, onOpenSubagentSession, entryId, onBranchHere, onNewSessionFromHere, onBranchFromAssistant, onNewSessionFromAnswer, forking, showTimestamp, prevTimestamp, sessionId }: Props) {
   if (message.role === "user") {
     return <UserMessageView message={message as UserMessage} cwd={cwd} onOpenFile={onOpenFile} entryId={entryId} onBranchHere={onBranchHere} onNewSessionFromHere={onNewSessionFromHere} forking={forking} />;
   }
   if (message.role === "assistant") {
-    return <AssistantMessageView message={message as AssistantMessage} isStreaming={isStreaming} toolResults={toolResults} modelNames={modelNames} cwd={cwd} onOpenFile={onOpenFile} onOpenSubagentSession={onOpenSubagentSession} showTimestamp={showTimestamp} prevTimestamp={prevTimestamp} sessionId={sessionId} entryId={entryId} onBranchFromAssistant={onBranchFromAssistant} onNewSessionFromAnswer={onNewSessionFromAnswer} />;
+    return <AssistantMessageView message={message as AssistantMessage} isStreaming={isStreaming} toolResults={toolResults} toolExecutionSnapshots={toolExecutionSnapshots} modelNames={modelNames} cwd={cwd} onOpenFile={onOpenFile} onOpenSubagentSession={onOpenSubagentSession} showTimestamp={showTimestamp} prevTimestamp={prevTimestamp} sessionId={sessionId} entryId={entryId} onBranchFromAssistant={onBranchFromAssistant} onNewSessionFromAnswer={onNewSessionFromAnswer} />;
   }
   if (message.role === "toolResult") {
     // Rendered inline under its toolCall — skip standalone rendering if paired
@@ -149,6 +151,7 @@ export const MessageView = memo(function MessageView({ message, isStreaming, too
   return prev.message === next.message
     && prev.isStreaming === next.isStreaming
     && haveSameRelevantToolResults(prev.message, prev.toolResults, next.toolResults)
+    && prev.toolExecutionSnapshots === next.toolExecutionSnapshots
     && prev.modelNames === next.modelNames
     && prev.cwd === next.cwd
     && prev.onOpenFile === next.onOpenFile
@@ -357,6 +360,7 @@ function AssistantMessageView({
   message,
   isStreaming,
   toolResults,
+  toolExecutionSnapshots,
   modelNames,
   cwd,
   onOpenFile,
@@ -371,6 +375,7 @@ function AssistantMessageView({
   message: AssistantMessage;
   isStreaming?: boolean;
   toolResults?: Map<string, ToolResultMessage>;
+  toolExecutionSnapshots?: ToolExecutionSnapshot[];
   modelNames?: Record<string, string>;
   cwd?: string;
   onOpenFile?: (filePath: string) => void;
@@ -421,6 +426,10 @@ function AssistantMessageView({
     }
     return map;
   }, [toolResults, message.timestamp]);
+  const toolExecutionMap = useMemo(
+    () => new Map(toolExecutionSnapshots?.map((snapshot) => [snapshot.toolCallId, snapshot]) ?? []),
+    [toolExecutionSnapshots],
+  );
 
   const textContent = blocks
     .filter((b): b is TextContent => b.type === "text")
@@ -549,7 +558,7 @@ function AssistantMessageView({
 
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         {blockItems.map(({ block, originalIndex }) => (
-          <BlockView key={`${entryId ?? "stream"}-${originalIndex}`} block={block} toolResults={toolResults} isStreaming={isStreaming} streamingDuration={streamingDurations.get(originalIndex) ?? (block.type === "thinking" ? thinkingDurationFromFile : undefined)} toolCallDurations={toolCallDurations} cwd={cwd} onOpenFile={onOpenFile} onOpenSubagentSession={onOpenSubagentSession} sessionId={sessionId} entryId={entryId} blockIndex={originalIndex} />
+          <BlockView key={`${entryId ?? "stream"}-${originalIndex}`} block={block} toolResults={toolResults} toolExecutionMap={toolExecutionMap} isStreaming={isStreaming} streamingDuration={streamingDurations.get(originalIndex) ?? (block.type === "thinking" ? thinkingDurationFromFile : undefined)} toolCallDurations={toolCallDurations} cwd={cwd} onOpenFile={onOpenFile} onOpenSubagentSession={onOpenSubagentSession} sessionId={sessionId} entryId={entryId} blockIndex={originalIndex} />
         ))}
       </div>
 
@@ -651,7 +660,7 @@ function AssistantMessageView({
   );
 }
 
-function BlockView({ block, toolResults, isStreaming, streamingDuration, toolCallDurations, cwd, onOpenFile, onOpenSubagentSession, sessionId, entryId, blockIndex }: { block: AssistantContentBlock; toolResults?: Map<string, ToolResultMessage>; isStreaming?: boolean; streamingDuration?: number; toolCallDurations?: Map<string, number>; cwd?: string; onOpenFile?: (filePath: string) => void; onOpenSubagentSession?: (sessionFile: string) => void; sessionId?: string; entryId?: string; blockIndex: number }) {
+function BlockView({ block, toolResults, toolExecutionMap, isStreaming, streamingDuration, toolCallDurations, cwd, onOpenFile, onOpenSubagentSession, sessionId, entryId, blockIndex }: { block: AssistantContentBlock; toolResults?: Map<string, ToolResultMessage>; toolExecutionMap?: Map<string, ToolExecutionSnapshot>; isStreaming?: boolean; streamingDuration?: number; toolCallDurations?: Map<string, number>; cwd?: string; onOpenFile?: (filePath: string) => void; onOpenSubagentSession?: (sessionFile: string) => void; sessionId?: string; entryId?: string; blockIndex: number }) {
   if (block.type === "text") {
     return <TextBlock block={block as TextContent} isStreaming={isStreaming} cwd={cwd} onOpenFile={onOpenFile} />;
   }
@@ -662,7 +671,7 @@ function BlockView({ block, toolResults, isStreaming, streamingDuration, toolCal
     const tc = block as ToolCallContent;
     const result = toolResults?.get(tc.toolCallId);
     const duration = toolCallDurations?.get(tc.toolCallId);
-    return <ToolCallBlock block={tc} result={result} duration={duration} onOpenSubagentSession={onOpenSubagentSession} />;
+    return <ToolCallBlock block={tc} result={result} snapshot={toolExecutionMap?.get(tc.toolCallId)} duration={duration} onOpenSubagentSession={onOpenSubagentSession} />;
   }
   return null;
 }
@@ -731,7 +740,7 @@ function ThinkingBlock({ block, duration, sessionId, entryId, blockIndex }: {
       >
         <span>{t("chat_thinking")}</span>
         {duration !== undefined && (
-          <span style={{ marginLeft: "auto", fontSize: 11, color: "var(--text-dim)", fontVariantNumeric: "tabular-nums" }}>{duration}s</span>
+          <span style={{ marginLeft: "auto", fontSize: 11, color: "var(--text-dim)", fontVariantNumeric: "tabular-nums" }}>{formatElapsedDuration(duration * 1000)}</span>
         )}
       </button>
       {expanded && (
@@ -754,8 +763,14 @@ function ThinkingBlock({ block, duration, sessionId, entryId, blockIndex }: {
 }
 
 
-function ToolCallBlock({ block, result, duration, onOpenSubagentSession }: { block: ToolCallContent; result?: ToolResultMessage; duration?: number; onOpenSubagentSession?: (sessionFile: string) => void }) {
-  const [expanded, setExpanded] = useState(false);
+function ToolCallBlock({ block, result, snapshot, duration, onOpenSubagentSession }: { block: ToolCallContent; result?: ToolResultMessage; snapshot?: ToolExecutionSnapshot; duration?: number; onOpenSubagentSession?: (sessionFile: string) => void }) {
+  const { t } = useI18n();
+  const [expandedOverride, setExpandedOverride] = useState<boolean | null>(null);
+  const [now, setNow] = useState(() => Date.now());
+  const outputRef = useRef<HTMLPreElement>(null);
+  const followOutputRef = useRef(true);
+  const isRunning = snapshot?.status === "running";
+  const expanded = expandedOverride ?? isRunning;
   const isEditTool = isEditToolName(block.toolName);
   const resultDiff = result && !result.isError ? getResultDiff(result) : null;
 
@@ -765,6 +780,24 @@ function ToolCallBlock({ block, result, duration, onOpenSubagentSession }: { blo
     : null;
   const resultIsEmpty = resultText === null ? false : (resultText.trim() === "(no output)" || resultText.trim() === "");
   const isError = result?.isError ?? false;
+  const status = snapshot?.status;
+  const statusColor = getToolStatusColor(status, isError);
+  const command = getToolCommand(block, snapshot);
+  const elapsedMs = snapshot
+    ? Math.max(0, (snapshot.status === "running" ? now : (snapshot.endedAt ?? snapshot.startedAt)) - snapshot.startedAt)
+    : duration === undefined ? undefined : duration * 1000;
+
+  useEffect(() => {
+    if (!isRunning) return;
+    const id = setInterval(() => setNow(Date.now()), 500);
+    return () => clearInterval(id);
+  }, [isRunning]);
+
+  useEffect(() => {
+    const output = outputRef.current;
+    if (!expanded || !output || !followOutputRef.current) return;
+    output.scrollTop = output.scrollHeight;
+  }, [expanded, snapshot?.output]);
   // pi-subagents 把每个子运行的模型、用量、验收与会话文件写在 details 里；
   // 文本内容通常只有一句占位，因此优先渲染结构化卡片，形状不符时回退文本。
   const subagentSummary = useMemo(
@@ -778,13 +811,14 @@ function ToolCallBlock({ block, result, duration, onOpenSubagentSession }: { blo
         borderRadius: 7,
         overflow: "hidden",
         fontSize: 12,
-        border: isError ? "1px solid rgba(248,113,113,0.45)" : "1px solid rgba(34,197,94,0.25)",
-        background: isError ? "rgba(248,113,113,0.05)" : "rgba(34,197,94,0.04)",
+        border: `1px solid color-mix(in srgb, ${statusColor} 34%, var(--border))`,
+        background: `color-mix(in srgb, ${statusColor} 5%, var(--bg))`,
       }}
     >
       {/* ── Tool call header ── */}
       <button
-        onClick={() => setExpanded((v) => !v)}
+        onClick={() => setExpandedOverride(!expanded)}
+        aria-expanded={expanded}
         style={{
           display: "flex",
           alignItems: "center",
@@ -802,19 +836,22 @@ function ToolCallBlock({ block, result, duration, onOpenSubagentSession }: { blo
       >
         {/* 工具图标 + 状态点（进行中脉冲 / 成功绿 / 错误红） */}
         <span style={{ display: "flex", alignItems: "center", gap: 5, flexShrink: 0 }}>
-          {getToolIcon(block.toolName, isError ? "#f87171" : "#16a34a")}
-          {result === undefined && !isError && (
-            <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#16a34a", opacity: 0.6, animation: "pulse 1.2s ease-in-out infinite" }} aria-hidden="true" />
+          {getToolIcon(block.toolName, statusColor)}
+          {isRunning && (
+            <span style={{ width: 7, height: 7, borderRadius: "50%", background: statusColor, boxShadow: `0 0 0 3px color-mix(in srgb, ${statusColor} 16%, transparent)`, animation: "pulse 1.2s ease-in-out infinite" }} aria-hidden="true" />
           )}
         </span>
-        <span style={{ color: isError ? "#f87171" : "#16a34a", fontFamily: "var(--font-mono)", fontWeight: 600, fontSize: 11, flexShrink: 0 }}>
+        <span style={{ color: statusColor, fontFamily: "var(--font-mono)", fontWeight: 600, fontSize: 11, flexShrink: 0 }}>
           {block.toolName}
         </span>
-        <span style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)", fontSize: 11, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, minWidth: 0 }}>
-          {getToolPreview(block)}
+        <span title={command} style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)", fontSize: 11, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, minWidth: 0 }}>
+          {command}
         </span>
-        {duration !== undefined && (
-          <span style={{ fontSize: 11, color: "var(--text-dim)", flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>{duration}s</span>
+        {status && (
+          <span style={{ color: statusColor, fontSize: 10, fontWeight: 600, flexShrink: 0 }}>{t(TOOL_STATUS_KEYS[status])}</span>
+        )}
+        {elapsedMs !== undefined && (
+          <span style={{ fontSize: 11, color: "var(--text-dim)", flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>{formatElapsedDuration(elapsedMs)}</span>
         )}
         <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="var(--text-dim)" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, transform: expanded ? "rotate(180deg)" : "none", transition: "transform 0.15s" }}>
           <polyline points="2 3.5 5 6.5 8 3.5" />
@@ -822,6 +859,13 @@ function ToolCallBlock({ block, result, duration, onOpenSubagentSession }: { blo
       </button>
 
       {/* ── Expanded: 参数友好摘要（替代原始 JSON，OpenChamber 风格） ── */}
+      {expanded && command && (
+        <div style={{ padding: "8px 10px", borderTop: `1px solid color-mix(in srgb, ${statusColor} 22%, var(--border))`, background: "var(--bg-subtle)" }}>
+          <div style={{ marginBottom: 4, color: "var(--text-dim)", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.08em" }}>{t("message_toolCommand")}</div>
+          <code style={{ display: "block", color: "var(--text)", fontFamily: "var(--font-mono)", fontSize: 11.5, lineHeight: 1.55, whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{command}</code>
+        </div>
+      )}
+
       {expanded && !isEditTool && (
         <div
           style={{
@@ -833,18 +877,36 @@ function ToolCallBlock({ block, result, duration, onOpenSubagentSession }: { blo
             maxHeight: 240,
             overflow: "auto",
             background: "var(--bg-subtle)",
-            borderTop: isError ? "1px solid rgba(248,113,113,0.25)" : "1px solid rgba(34,197,94,0.2)",
+            borderTop: `1px solid color-mix(in srgb, ${statusColor} 20%, var(--border))`,
             display: "flex",
             flexDirection: "column",
             gap: 3,
           }}
         >
-          {formatInputSummary(block.input as Record<string, unknown>).map((row) => (
+          {formatInputSummary(block.input as Record<string, unknown>).filter((row) => row.key !== "command").map((row) => (
             <div key={row.key} style={{ display: "flex", gap: 8, minWidth: 0 }}>
               <span style={{ flexShrink: 0, fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--text-dim)", width: 88, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{row.key}</span>
               <span style={{ minWidth: 0, flex: 1, overflowWrap: "anywhere", whiteSpace: "pre-wrap" }}>{row.value}</span>
             </div>
           ))}
+        </div>
+      )}
+
+      {expanded && snapshot && (
+        <div style={{ borderTop: `1px solid color-mix(in srgb, ${statusColor} 24%, var(--border))`, background: "var(--tool-bg)" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "6px 10px 4px", color: "var(--text-dim)", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.08em" }}>
+            <span>{t("message_toolLiveOutput")}</span>
+            {snapshot.truncated && <span style={{ color: "var(--warning)", textTransform: "none", letterSpacing: 0 }}>{t("message_toolOutputTruncated")}</span>}
+          </div>
+          <pre
+            ref={outputRef}
+            tabIndex={0}
+            onScroll={(event) => {
+              const output = event.currentTarget;
+              followOutputRef.current = output.scrollHeight - output.scrollTop - output.clientHeight <= 24;
+            }}
+            style={{ margin: 0, padding: "4px 10px 10px", maxHeight: 320, overflow: "auto", overscrollBehavior: "contain", color: snapshot.output ? "var(--text-muted)" : "var(--text-dim)", background: "var(--tool-bg)", fontFamily: "var(--font-mono)", fontSize: 11.5, lineHeight: 1.55, whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}
+          >{snapshot.output || t("message_toolWaitingOutput")}</pre>
         </div>
       )}
 
@@ -866,6 +928,45 @@ function ToolCallBlock({ block, result, duration, onOpenSubagentSession }: { blo
       )}
     </div>
   );
+}
+
+const TOOL_STATUS_KEYS = {
+  running: "message_toolStatusRunning",
+  success: "message_toolStatusSuccess",
+  error: "message_toolStatusError",
+  cancelled: "message_toolStatusCancelled",
+} as const;
+
+function getToolStatusColor(status: ToolExecutionStatus | undefined, resultIsError: boolean): string {
+  if (status === "running") return "var(--accent)";
+  if (status === "error" || resultIsError) return "var(--warning)";
+  if (status === "cancelled") return "var(--text-dim)";
+  return "var(--text-muted)";
+}
+
+function getToolCommand(block: ToolCallContent, snapshot?: ToolExecutionSnapshot): string {
+  if (snapshot?.command) return snapshot.command;
+  const input = block.input;
+  if (input && typeof input === "object" && "command" in input) {
+    const command = input.command;
+    if (typeof command === "string") return command;
+    if (command && typeof command === "object") {
+      const nested = command as Record<string, unknown>;
+      if (typeof nested.command === "string") return nested.command;
+      if (typeof nested.cmd === "string") return nested.cmd;
+    }
+  }
+  return getToolPreview(block);
+}
+
+export function formatElapsedDuration(milliseconds: number): string {
+  const safeMs = Number.isFinite(milliseconds) ? Math.max(0, milliseconds) : 0;
+  if (safeMs < 1000) return `${Math.floor(safeMs)}ms`;
+  const seconds = safeMs / 1000;
+  if (seconds < 10) return `${seconds.toFixed(1)}s`;
+  if (seconds < 60) return `${Math.round(seconds)}s`;
+  const wholeSeconds = Math.round(seconds);
+  return `${Math.floor(wholeSeconds / 60)}m ${String(wholeSeconds % 60).padStart(2, "0")}s`;
 }
 
 const SUBAGENT_STATUS_KEYS = {

@@ -169,3 +169,58 @@ test("源码契约：MessageView 不使用 dangerouslySetInnerHTML", () => {
   const source = readFileSync(fileURLToPath(new URL("./MessageView.tsx", import.meta.url)), "utf8");
   assert.ok(!source.includes("dangerouslySetInnerHTML"));
 });
+
+function toolMessage(command = "fallback command") {
+  return {
+    role: "assistant",
+    content: [{ type: "toolCall", toolCallId: "tool-1", toolName: "bash", input: { command } }],
+  };
+}
+
+test("实时工具：运行中默认展开终端输出，并优先展示快照命令", () => {
+  const html = renderMessage(toolMessage(), {
+    toolExecutionSnapshots: [{
+      toolCallId: "tool-1",
+      toolName: "bash",
+      command: "npm run lint -- --fix",
+      output: "checking\nfinished",
+      startedAt: Date.now() - 1250,
+      status: "running",
+      truncated: true,
+    }],
+  });
+
+  assert.ok(html.includes('aria-expanded="true"'));
+  assert.ok(html.includes("npm run lint -- --fix"));
+  assert.ok(html.includes("checking\nfinished"));
+  assert.ok(html.includes("Live output"));
+  assert.ok(html.includes("Output truncated at 64 KB"));
+  assert.match(html, /<pre[^>]*tabindex="0"[^>]*max-height:320px/);
+});
+
+test("实时工具：终态默认折叠为状态、命令与固定耗时摘要", () => {
+  const html = renderMessage(toolMessage("node test.mjs"), {
+    toolExecutionSnapshots: [{
+      toolCallId: "tool-1",
+      toolName: "bash",
+      output: "ok",
+      startedAt: 1000,
+      endedAt: 3500,
+      status: "success",
+    }],
+  });
+
+  assert.ok(html.includes('aria-expanded="false"'));
+  assert.ok(html.includes("node test.mjs"));
+  assert.ok(html.includes("Done"));
+  assert.ok(html.includes("2.5s"));
+  assert.ok(!html.includes("Live output"));
+  assert.ok(!html.includes(">ok</pre>"));
+});
+
+test("历史工具：无快照时保持默认折叠", () => {
+  const html = renderMessage(toolMessage("git status"));
+  assert.ok(html.includes('aria-expanded="false"'));
+  assert.ok(html.includes("git status"));
+  assert.ok(!html.includes("Live output"));
+});

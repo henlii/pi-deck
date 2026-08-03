@@ -172,7 +172,7 @@ export function ChatWindow({ session, newSessionCwd, newSessionIntentId, guideDe
     notices, extensionDialog, extensionInlineRequest, extensionCustomUi, extensionStatuses, extensionWidgets, respondToExtensionUi, dismissExtensionUiRequest, sendExtensionCustomInput,
     todos,
     isAutoModelSelection,
-    agentPhase,
+    agentPhase, toolExecutionSnapshots,
     isNew,
     sessionIdRef, scrollContainerRef,
     jumpButtonVisible, jumpToBottom, markExternalScrollWrite, notifyProgrammaticSmooth,
@@ -599,6 +599,7 @@ export function ChatWindow({ session, newSessionCwd, newSessionIntentId, guideDe
                     key={`${item.keyPrefix}-view-${idx}`}
                     message={msg}
                     toolResults={toolResultsMap}
+                    toolExecutionSnapshots={toolExecutionSnapshots}
                     modelNames={modelNames}
                     cwd={messageCwd}
                     onOpenFile={onOpenFile}
