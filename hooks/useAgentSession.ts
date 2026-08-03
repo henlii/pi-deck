@@ -47,6 +47,18 @@ import {
   beginAgentRunFinish,
   canFinalizeAgentRun,
 } from "@/lib/finish-agent-run";
+import {
+  applyToolExecutionStart,
+  applyToolExecutionUpdate,
+  applyToolExecutionEnd,
+  clearToolExecutions,
+  getToolExecutionSnapshots,
+  type ToolExecutionBufferState,
+  type ToolExecutionSnapshot,
+  type ToolExecutionStartInput,
+  type ToolExecutionUpdateInput,
+  type ToolExecutionEndInput,
+} from "@/lib/tool-execution-buffer";
 
 export interface SessionData {
   sessionId: string;
@@ -406,6 +418,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const [compactError, setCompactError] = useState<string | null>(null);
   const [compactResult, setCompactResult] = useState<CompactResultInfo | null>(null);
   const [agentPhase, setAgentPhase] = useState<AgentPhase>(null);
+  // P4a 实时工具执行缓冲：以 toolCallId 键控的快照数组（插入序），由
+  // tool_execution_start/update/end 事件驱动；UI（MessageView 实时工具视图）暂未消费。
+  const [toolExecutionSnapshots, setToolExecutionSnapshots] = useState<ToolExecutionSnapshot[]>([]);
   const [slashCommands, setSlashCommands] = useState<SlashCommandInfo[]>([]);
   const [slashCommandsLoading, setSlashCommandsLoading] = useState(false);
   const [noticeState, dispatchNotice] = useReducer(noticeReducer, { visible: [], pending: [] });
@@ -1151,9 +1166,19 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     agentRunningRef.current = agentRunning;
   }, [agentRunning]);
 
+  // P4a 工具执行缓冲：ref 持有不可变 Map 状态（事件处理零拷贝读取），setState 只同步
+  // 数组投影给 React。apply* 为纯函数，非法/迟到事件内部安全忽略并返回原引用。
+  const toolExecutionBufferRef = useRef<ToolExecutionBufferState>(new Map());
+  const commitToolExecutions = useCallback((next: ToolExecutionBufferState) => {
+    toolExecutionBufferRef.current = next;
+    setToolExecutionSnapshots(getToolExecutionSnapshots(next));
+  }, []);
+
   const handleAgentEvent = useCallback((event: AgentEvent, eventRunId?: number) => {
     switch (event.type) {
       case "agent_start":
+        // 新 run 开始：清空上一 run 的工具执行缓冲，避免旧快照跨 run 污染。
+        commitToolExecutions(clearToolExecutions(toolExecutionBufferRef.current));
         agentRunningRef.current = true;
         setAgentRunning(true);
         setAgentPhase({ kind: "waiting_model" });
@@ -1225,6 +1250,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         break;
       }
       case "tool_execution_start": {
+        commitToolExecutions(applyToolExecutionStart(toolExecutionBufferRef.current, event as ToolExecutionStartInput));
         const id = event.toolCallId as string;
         const name = event.toolName as string;
         setAgentPhase((prev) => {
@@ -1234,7 +1260,14 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         });
         break;
       }
+      case "tool_execution_update": {
+        // P4a 实时输出：驱动工具执行缓冲（replace 语义见 lib 层）；agentPhase 不随
+        // update 变化，实时内容由缓冲投影提供。end 后迟到的 update 在 lib 层安全忽略。
+        commitToolExecutions(applyToolExecutionUpdate(toolExecutionBufferRef.current, event as ToolExecutionUpdateInput));
+        break;
+      }
       case "tool_execution_end": {
+        commitToolExecutions(applyToolExecutionEnd(toolExecutionBufferRef.current, event as ToolExecutionEndInput));
         const id = event.toolCallId as string;
         setAgentPhase((prev) => {
           if (prev?.kind !== "running_tools") return prev;
@@ -1277,7 +1310,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         handleExtensionUiRequest(event as ExtensionUiRequest);
         break;
     }
-  }, [addNotice, finishAgentRun, handleExtensionUiRequest, loadSession]);
+  }, [addNotice, commitToolExecutions, finishAgentRun, handleExtensionUiRequest, loadSession]);
   handleAgentEventRef.current = handleAgentEvent;
 
   const handleSend = useCallback(async (message: string, images?: AttachedImage[]) => {
@@ -2021,6 +2054,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     todos,
     isAutoModelSelection: isNew && newSessionModel === null,
     agentPhase,
+    // P4a 实时工具执行快照（插入序；run 结束保留至下一个 run 开始，agent_start 清空）
+    toolExecutionSnapshots,
     isNew,
     // Refs
     sessionIdRef, eventSourceRef, scrollContainerRef,
