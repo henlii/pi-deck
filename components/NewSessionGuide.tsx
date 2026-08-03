@@ -18,8 +18,8 @@ import type { SessionInfo } from "@/lib/types";
 import {
   aggregateGuideProjects,
   beginWorktreeLoad,
-  clearWorktreeCache,
-  createWorktreeCache,
+  clearDefaultWorktreeCache,
+  getDefaultWorktreeCache,
   resolveGuideTargetProject,
   type GuideProject,
   type GuideWorktreeInfo,
@@ -41,8 +41,13 @@ export function NewSessionGuide({ targetCwd, onTargetChange }: Props) {
   const [selectedCwd, setSelectedCwd] = useState<string | null>(null);
   const [worktrees, setWorktrees] = useState<GuideWorktreeInfo[] | null>(null);
   const [loadingWorktrees, setLoadingWorktrees] = useState(false);
-  /** 工作树加载缓存（纯逻辑：in-flight 去重 + stale-while-revalidate） */
-  const worktreeCacheRef = useRef<WorktreeCacheState>(createWorktreeCache());
+  /**
+   * 工作树加载缓存（纯逻辑：in-flight 去重 + stale-while-revalidate + TTL）。
+   * 用模块级默认缓存单例而非组件实例级：引导页是条件渲染（空态才挂载），
+   * 实例级缓存每次打开都会全空、同一项目工作树被迫重新 fetch；默认缓存跨
+   * 组件挂载/卸载复用（SPA 生命周期内），页面刷新自然重建。
+   */
+  const worktreeCacheRef = useRef<WorktreeCacheState>(getDefaultWorktreeCache());
   /** 同步当前选中的项目，避免迟到的 worktree 响应覆盖新选中项 */
   const selectedCwdRef = useRef<string | null>(null);
 
@@ -166,11 +171,11 @@ export function NewSessionGuide({ targetCwd, onTargetChange }: Props) {
         return;
       }
       // 创建成功：目标直接指向新工作树（bootstrapPendingDirectory 语义），
-      // 使缓存失效并刷新分支列表让新条目出现。
+      // 使默认缓存失效并刷新分支列表让新条目出现。
       onTargetChange(data.path);
       setShowWorktreeForm(false);
       setWorktreeName("");
-      clearWorktreeCache(worktreeCacheRef.current, selectedCwd);
+      clearDefaultWorktreeCache(selectedCwd);
       await loadWorktrees(selectedCwd);
     } catch (e) {
       setWorktreeError(e instanceof Error ? e.message : String(e));

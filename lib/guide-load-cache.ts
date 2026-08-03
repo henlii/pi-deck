@@ -57,12 +57,45 @@ export function resolveGuideTargetProject(
 export interface WorktreeCacheState {
   /** cwd → 最近一次成功加载的列表（stale 数据，用于 SWR 立即渲染） */
   data: Map<string, GuideWorktreeInfo[]>;
+  /** cwd → 最近一次成功加载时间戳（TTL 判定，与 data 同步写入） */
+  loadedAt: Map<string, number>;
   /** cwd → in-flight 请求（并发去重） */
   inFlight: Map<string, Promise<GuideWorktreeInfo[]>>;
 }
 
+/**
+ * 默认缓存中工作树列表的 TTL。与服务端模型缓存（60s）一致：工作树列表可能
+ * 因外部 git 操作（新建/删除分支、增删 worktree）变化，客户端采用 stale +
+ * 后台刷新折中——TTL 内秒开旧列表并在后台刷新覆盖；TTL 过期视为无缓存、
+ * 强制重新请求，避免展示过久陈旧数据。
+ */
+export const GUIDE_WORKTREE_CACHE_TTL_MS = 60_000;
+
 export function createWorktreeCache(): WorktreeCacheState {
-  return { data: new Map(), inFlight: new Map() };
+  return { data: new Map(), loadedAt: new Map(), inFlight: new Map() };
+}
+
+/** 模块级默认缓存单例（SPA 生命周期内跨组件挂载/卸载复用；页面刷新自然重建）。 */
+let defaultWorktreeCache: WorktreeCacheState | null = null;
+
+export function getDefaultWorktreeCache(): WorktreeCacheState {
+  if (!defaultWorktreeCache) defaultWorktreeCache = createWorktreeCache();
+  return defaultWorktreeCache;
+}
+
+/**
+ * 清空默认缓存。cwd 缺省时清全部；传入 cwd 仅清该条（新建工作树成功后调用，
+ * 强制该 cwd 下次重新请求）。无缓存时为空操作。
+ */
+export function clearDefaultWorktreeCache(cwd?: string): void {
+  if (!defaultWorktreeCache) return;
+  if (cwd) {
+    clearWorktreeCache(defaultWorktreeCache, cwd);
+  } else {
+    defaultWorktreeCache.data.clear();
+    defaultWorktreeCache.loadedAt.clear();
+    defaultWorktreeCache.inFlight.clear();
+  }
 }
 
 export interface WorktreeLoadHandle {
@@ -73,17 +106,26 @@ export interface WorktreeLoadHandle {
 }
 
 /**
- * 发起（或复用）某 cwd 的工作树加载，SWR 语义：
+ * 发起（或复用）某 cwd 的工作树加载，SWR + TTL 语义：
  * - 同 cwd 的并发调用共享同一个 in-flight Promise（去重，不重复请求）
- * - 已加载过的 cwd 立即返回旧列表（stale），后台刷新完成后经 promise 覆盖
- * - 加载失败不写入缓存：保留旧数据，下次调用可重试
+ * - TTL 内已加载过的 cwd 立即返回旧列表（stale），后台刷新完成后经 promise 覆盖
+ * - TTL 过期返回 stale=null（调用方进入 loading 并重新请求），避免展示过久陈旧数据
+ * - 加载失败不写入缓存：保留旧数据与 loadedAt，下次调用可重试
+ *
+ * @param now 读取时刻（默认 Date.now()）；测试注入固定值以验证 TTL 边界。
+ *            成功写入缓存时同样以该时刻作为 loadedAt（加载完成与发起相差毫秒级）。
  */
 export function beginWorktreeLoad(
   cache: WorktreeCacheState,
   cwd: string,
   loader: () => Promise<GuideWorktreeInfo[]>,
+  now: number = Date.now(),
 ): WorktreeLoadHandle {
-  const stale = cache.data.get(cwd) ?? null;
+  const loadedAt = cache.loadedAt.get(cwd);
+  const stale =
+    loadedAt !== undefined && now - loadedAt < GUIDE_WORKTREE_CACHE_TTL_MS
+      ? cache.data.get(cwd) ?? null
+      : null;
   const existing = cache.inFlight.get(cwd);
   if (existing) return { promise: existing, stale };
 
@@ -91,6 +133,7 @@ export function beginWorktreeLoad(
     .then(loader)
     .then((wts) => {
       cache.data.set(cwd, wts);
+      cache.loadedAt.set(cwd, now);
       return wts;
     })
     .finally(() => {
@@ -103,5 +146,6 @@ export function beginWorktreeLoad(
 /** 新建工作树成功后使该 cwd 的缓存失效，下次加载强制重新请求。 */
 export function clearWorktreeCache(cache: WorktreeCacheState, cwd: string): void {
   cache.data.delete(cwd);
+  cache.loadedAt.delete(cwd);
   cache.inFlight.delete(cwd);
 }
