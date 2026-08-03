@@ -71,6 +71,80 @@ export interface WorktreeCacheState {
  */
 export const GUIDE_WORKTREE_CACHE_TTL_MS = 60_000;
 
+// ── localStorage 持久化（与 lib/session-list-cache.ts 的键名/序列化风格对齐）──
+
+/** localStorage 键名（项目列表用 pidance.sessionList.v1，工作树用同级风格）。 */
+export const GUIDE_WORKTREES_STORAGE_KEY = "pidance.guideWorktrees.v1";
+
+/** 持久化条目：某 cwd 的工作树列表与加载时刻（at = Date.now()，TTL 判定）。 */
+export interface PersistedWorktreeEntry {
+  items: GuideWorktreeInfo[];
+  at: number;
+}
+
+/**
+ * 解析 localStorage 原始串为「cwd → 条目」Map，并顺带做 TTL 过滤：
+ * 损坏 JSON / 非对象 / 空串安全回退空 Map；结构非法或已过期的单条跳过。
+ * TTL 判定与服务端一致：now - at >= TTL 视为过期，不恢复。
+ */
+export function parsePersistedWorktrees(
+  raw: string | null,
+  now: number,
+): Map<string, PersistedWorktreeEntry> {
+  const map = new Map<string, PersistedWorktreeEntry>();
+  if (!raw) return map;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return map;
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return map;
+  for (const [cwd, value] of Object.entries(parsed)) {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) continue;
+    const { items, at } = value as { items?: unknown; at?: unknown };
+    if (!Array.isArray(items) || typeof at !== "number") continue;
+    if (now - at >= GUIDE_WORKTREE_CACHE_TTL_MS) continue;
+    map.set(cwd, { items: items as GuideWorktreeInfo[], at });
+  }
+  return map;
+}
+
+/** 序列化「cwd → 条目」Map 为 localStorage 原始串。 */
+export function serializePersistedWorktrees(
+  map: ReadonlyMap<string, PersistedWorktreeEntry>,
+): string {
+  const obj: Record<string, PersistedWorktreeEntry> = {};
+  for (const [cwd, entry] of map) obj[cwd] = entry;
+  return JSON.stringify(obj);
+}
+
+/** 原地移除已过期（now - at >= TTL）的条目。 */
+export function pruneExpiredWorktrees(
+  map: Map<string, PersistedWorktreeEntry>,
+  now: number,
+): void {
+  for (const [cwd, entry] of map) {
+    if (now - entry.at >= GUIDE_WORKTREE_CACHE_TTL_MS) map.delete(cwd);
+  }
+}
+
+/**
+ * 把持久化条目合并进内存缓存（hydrate）。只补缺失条目：内存缓存已有数据
+ * （本会话内更新/刷新过的）优先，不被 localStorage 覆盖；过期条目由
+ * parsePersistedWorktrees 已过滤，此处只需补 entries。
+ */
+export function hydrateWorktreeCache(
+  cache: WorktreeCacheState,
+  persisted: ReadonlyMap<string, PersistedWorktreeEntry>,
+): void {
+  for (const [cwd, entry] of persisted) {
+    if (cache.data.has(cwd) && cache.loadedAt.has(cwd)) continue;
+    cache.data.set(cwd, entry.items);
+    cache.loadedAt.set(cwd, entry.at);
+  }
+}
+
 export function createWorktreeCache(): WorktreeCacheState {
   return { data: new Map(), loadedAt: new Map(), inFlight: new Map() };
 }

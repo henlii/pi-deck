@@ -16,15 +16,44 @@ import { useI18n } from "@/lib/i18n";
 import { loadCachedSessionList, saveCachedSessionList } from "@/lib/session-list-cache";
 import type { SessionInfo } from "@/lib/types";
 import {
+  GUIDE_WORKTREES_STORAGE_KEY,
   aggregateGuideProjects,
   beginWorktreeLoad,
   clearDefaultWorktreeCache,
   getDefaultWorktreeCache,
+  hydrateWorktreeCache,
+  parsePersistedWorktrees,
   resolveGuideTargetProject,
+  serializePersistedWorktrees,
   type GuideProject,
   type GuideWorktreeInfo,
+  type PersistedWorktreeEntry,
   type WorktreeCacheState,
 } from "@/lib/guide-load-cache";
+
+// localStorage 读写薄封装（与 session-list-cache 对称：隐私模式/配额/损坏静默降级）。
+function readPersistedWorktrees(): Map<string, PersistedWorktreeEntry> {
+  try {
+    const raw =
+      typeof window === "undefined"
+        ? null
+        : window.localStorage.getItem(GUIDE_WORKTREES_STORAGE_KEY);
+    return parsePersistedWorktrees(raw, Date.now());
+  } catch {
+    return new Map();
+  }
+}
+
+function writePersistedWorktrees(entries: Map<string, PersistedWorktreeEntry>): void {
+  try {
+    window.localStorage.setItem(
+      GUIDE_WORKTREES_STORAGE_KEY,
+      serializePersistedWorktrees(entries),
+    );
+  } catch {
+    // ignore（隐私模式 / 配额）
+  }
+}
 
 type Props = {
   /** 当前新会话目标目录（项目根或工作树路径）；null = 未选择 */
@@ -60,6 +89,14 @@ export function NewSessionGuide({ targetCwd, onTargetChange }: Props) {
       void loadWorktreesRef.current(resolved);
     }
   });
+
+  // 挂载时从 localStorage 恢复持久化工作树缓存（hydrate 只补缺失条目，不覆盖
+  // 模块级缓存已有数据）。必须声明在本 effect 之前，使下方 restoreTarget 触发
+  // 的 loadWorktrees 能直接命中 stale 秒渲染，避免刷新后首开引导页再等
+  // /api/worktrees（服务端冷态 2.7s / 热态 22ms）。
+  useEffect(() => {
+    hydrateWorktreeCache(worktreeCacheRef.current, readPersistedWorktrees());
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -105,7 +142,13 @@ export function NewSessionGuide({ targetCwd, onTargetChange }: Props) {
         worktrees?: GuideWorktreeInfo[];
         isGit?: boolean;
       };
-      return data.worktrees ?? [];
+      const wts = data.worktrees ?? [];
+      // fetch 成功后写回 localStorage（合并该 cwd 条目；读取时已过滤过期条目，
+      // 写入自然清理旧数据）。失败不写回，保留已有持久化数据。
+      const persisted = readPersistedWorktrees();
+      persisted.set(cwd, { items: wts, at: Date.now() });
+      writePersistedWorktrees(persisted);
+      return wts;
     });
     if (handle.stale) {
       // SWR：已有该 cwd 的旧列表 → 立即显示，后台刷新完成后覆盖
@@ -171,11 +214,15 @@ export function NewSessionGuide({ targetCwd, onTargetChange }: Props) {
         return;
       }
       // 创建成功：目标直接指向新工作树（bootstrapPendingDirectory 语义），
-      // 使默认缓存失效并刷新分支列表让新条目出现。
+      // 使默认缓存失效并同步移除持久化条目（避免刷新后旧列表——不含新工作树——
+      // 被恢复），再刷新分支列表让新条目出现。
       onTargetChange(data.path);
       setShowWorktreeForm(false);
       setWorktreeName("");
       clearDefaultWorktreeCache(selectedCwd);
+      const persisted = readPersistedWorktrees();
+      persisted.delete(selectedCwd);
+      writePersistedWorktrees(persisted);
       await loadWorktrees(selectedCwd);
     } catch (e) {
       setWorktreeError(e instanceof Error ? e.message : String(e));
