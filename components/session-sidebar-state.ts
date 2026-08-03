@@ -301,3 +301,49 @@ export function removeProjectWorktreeSnapshot(
   delete next[projectRoot];
   return next;
 }
+
+/**
+ * 组装 worktree 预加载队列的项目根列表。
+ *
+ * 语义（修复侧栏把 worktree 路径误当项目根预加载的问题）：
+ * - selectedProjectRoot 存在：只用它作为锚点——已在 roots 则返回原引用，
+ *   否则 unshift 到队首；**不再**用 selectedCwd 兜底（点击 worktree 分组后
+ *   selectedCwd 是 worktree 路径，混入队列会向 /api/worktrees?cwd=<worktree 路径>
+ *   发起请求并污染快照 key）。
+ * - selectedProjectRoot 为空：selectedCwd 不在 roots 时才 unshift 兜底。
+ * 无变化时返回原引用，避免触发 useMemo/effect 无谓重跑。
+ */
+export function buildKnownProjectRoots(
+  roots: readonly string[],
+  selectedCwd: string | null,
+  selectedProjectRoot: string | null,
+): readonly string[] {
+  if (selectedProjectRoot) {
+    if (roots.includes(selectedProjectRoot)) return roots;
+    return [selectedProjectRoot, ...roots];
+  }
+  if (selectedCwd && !roots.includes(selectedCwd)) return [selectedCwd, ...roots];
+  return roots;
+}
+
+/**
+ * 提交 worktree 响应到快照表，并按服务端权威 projectRoot（canonicalRoot）收敛 key。
+ *
+ * - canonicalRoot === requestRoot：等同 upsertProjectWorktreeSnapshot ready。
+ * - canonicalRoot !== requestRoot：请求 root（如 worktree 路径）不得成为快照 key——
+ *   先移除该 key（含此前预加载写入的 loading 条目，remove 对不存在的 key 是 no-op），
+ *   再把 ready 快照写入 canonicalRoot。否则 buildSidebarTree 会把这个请求 root
+ *   当成项目根创建项目桶并补 worktree 分组，侧栏多出「项目 + 工作树」。
+ */
+export function upsertCanonicalProjectWorktreeSnapshot(
+  map: ProjectWorktreeSnapshots,
+  requestRoot: string,
+  canonicalRoot: string,
+  worktrees: readonly WorktreeEntry[],
+): ProjectWorktreeSnapshots {
+  if (canonicalRoot === requestRoot) {
+    return upsertProjectWorktreeSnapshot(map, requestRoot, { status: "ready", worktrees });
+  }
+  const withoutRequestRoot = removeProjectWorktreeSnapshot(map, requestRoot);
+  return upsertProjectWorktreeSnapshot(withoutRequestRoot, canonicalRoot, { status: "ready", worktrees });
+}

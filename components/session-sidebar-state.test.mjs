@@ -272,3 +272,90 @@ test("worktree 列表比较：path/branch/isMain 顺序敏感", async () => {
     false,
   );
 });
+
+// ── 预加载队列与 canonical 快照收敛 ────────────────────────────────────────
+
+test("buildKnownProjectRoots：projectRoot 已在 roots → 不加入 selectedCwd（返回原引用）", async () => {
+  const m = await load();
+  const roots = ["/repo-a", "/repo-b"];
+  // 点击 worktree 分组后 selectedCwd 是 worktree 路径，不得混入预加载队列
+  const same = m.buildKnownProjectRoots(roots, "/repo-a/.claude/worktrees/1-feat", "/repo-a");
+  assert.equal(same, roots);
+  assert.deepEqual(same, ["/repo-a", "/repo-b"]);
+});
+
+test("buildKnownProjectRoots：projectRoot 不在 roots → unshift projectRoot", async () => {
+  const m = await load();
+  const roots = ["/repo-b"];
+  const next = m.buildKnownProjectRoots(roots, "/repo-b/.claude/worktrees/x", "/repo-a");
+  assert.notEqual(next, roots);
+  assert.deepEqual(next, ["/repo-a", "/repo-b"]);
+});
+
+test("buildKnownProjectRoots：projectRoot 为空且 selectedCwd 不在 roots → unshift selectedCwd", async () => {
+  const m = await load();
+  const roots = ["/repo-b"];
+  const next = m.buildKnownProjectRoots(roots, "/repo-a", null);
+  assert.notEqual(next, roots);
+  assert.deepEqual(next, ["/repo-a", "/repo-b"]);
+  // selectedCwd 已在 roots → 原引用
+  const same = m.buildKnownProjectRoots(roots, "/repo-b", null);
+  assert.equal(same, roots);
+});
+
+test("buildKnownProjectRoots：空输入不变（返回原引用）", async () => {
+  const m = await load();
+  const empty = [];
+  assert.equal(m.buildKnownProjectRoots(empty, null, null), empty);
+  assert.equal(m.buildKnownProjectRoots(empty, "", null), empty);
+  assert.equal(m.buildKnownProjectRoots(empty, "/a", null) === empty, false);
+});
+
+test("upsertCanonicalProjectWorktreeSnapshot：请求 root 即 canonical → 只写该 key", async () => {
+  const m = await load();
+  const list = [wt("/repo", "main", true)];
+  const map = m.upsertCanonicalProjectWorktreeSnapshot({}, "/repo", "/repo", list);
+  assert.deepEqual(Object.keys(map), ["/repo"]);
+  assert.equal(map["/repo"].status, "ready");
+  assert.deepEqual(map["/repo"].worktrees, list);
+});
+
+test("upsertCanonicalProjectWorktreeSnapshot：不同 → 移除请求 root（含 loading key），只保留 canonical", async () => {
+  const m = await load();
+  // 预加载期间请求 root（worktree 路径）先写入了 loading 条目
+  let map = m.upsertProjectWorktreeSnapshot({}, "/repo/.claude/worktrees/1-feat", { status: "loading" });
+  map = m.upsertProjectWorktreeSnapshot(map, "/repo", {
+    status: "ready",
+    worktrees: [wt("/repo", "main", true)],
+  });
+  const next = m.upsertCanonicalProjectWorktreeSnapshot(
+    map,
+    "/repo/.claude/worktrees/1-feat",
+    "/repo",
+    [wt("/repo", "main", true), wt("/repo/.claude/worktrees/1-feat", "feat")],
+  );
+  // 请求 root key 已被移除（含 loading），只剩 canonical
+  assert.deepEqual(Object.keys(next).sort(), ["/repo"]);
+  assert.equal(next["/repo"].status, "ready");
+  assert.equal(next["/repo"].worktrees.length, 2);
+  // 原 map 不被修改（immutable）
+  assert.equal("/repo/.claude/worktrees/1-feat" in map, true);
+});
+
+test("upsertCanonicalProjectWorktreeSnapshot：请求 root 不存在时 remove 是 no-op 不抛错", async () => {
+  const m = await load();
+  const list = [wt("/repo", "main", true)];
+  const map = m.upsertProjectWorktreeSnapshot({}, "/repo", { status: "ready", worktrees: list });
+  // requestRoot 不在 map 中：remove no-op，随后 upsert canonical 无变化 → 原引用
+  const same = m.upsertCanonicalProjectWorktreeSnapshot(map, "/missing-wt", "/repo", list);
+  assert.equal(same, map);
+  assert.deepEqual(Object.keys(same), ["/repo"]);
+  assert.equal(same["/repo"].status, "ready");
+  // canonical 内容不同 → 正常写回且仍只有 canonical 一个 key
+  const changed = m.upsertCanonicalProjectWorktreeSnapshot(map, "/missing-wt", "/repo", [
+    ...list,
+    wt("/repo-wt/feat", "feat"),
+  ]);
+  assert.deepEqual(Object.keys(changed), ["/repo"]);
+  assert.equal(changed["/repo"].worktrees.length, 2);
+});

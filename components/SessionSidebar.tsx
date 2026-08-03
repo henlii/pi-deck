@@ -30,6 +30,7 @@ import {
 import { loadCachedSessionList, saveCachedSessionList } from "@/lib/session-list-cache";
 import {
   GROUP_VISIBLE_PAGE_SIZE,
+  buildKnownProjectRoots,
   bumpGroupVisibleCount,
   canShowFewerTopLevel,
   canShowMoreTopLevel,
@@ -40,6 +41,7 @@ import {
   reconcilePendingSessionIds,
   resetGroupVisibleCount,
   shouldApplySessionListResponse,
+  upsertCanonicalProjectWorktreeSnapshot,
   upsertProjectWorktreeSnapshot,
   type ProjectWorktreeSnapshots,
 } from "./session-sidebar-state";
@@ -878,16 +880,17 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
       if (!mountedRef.current || worktreeRequestTokenRef.current.get(projectRoot) !== token) return;
       const canonicalRoot = data.projectRoot;
       const worktrees = data.worktrees ?? [];
-      commitWorktreeSnapshots((prev) => {
-        let next = upsertProjectWorktreeSnapshot(prev, projectRoot, { status: "ready", worktrees });
-        if (canonicalRoot !== projectRoot) {
-          next = upsertProjectWorktreeSnapshot(next, canonicalRoot, { status: "ready", worktrees });
-        }
-        return next;
-      });
+      // 服务端返回的权威 projectRoot 才是快照 key；请求 root 是 worktree 路径时
+      // 只写 canonicalRoot 并移除请求 root（含 loading 条目），避免 buildSidebarTree
+      // 把 worktree 路径当项目根创建「项目 + 工作树」分组。
+      commitWorktreeSnapshots((prev) =>
+        upsertCanonicalProjectWorktreeSnapshot(prev, projectRoot, canonicalRoot, worktrees),
+      );
       setWorktreeMetadata((prev) => {
         const metadata = { isGit: data.isGit ?? false, isTopLevel: data.isTopLevel ?? false };
-        return { ...prev, [projectRoot]: metadata, [canonicalRoot]: metadata };
+        return canonicalRoot === projectRoot
+          ? { ...prev, [projectRoot]: metadata }
+          : { ...prev, [canonicalRoot]: metadata };
       });
       if (selectedCwd && (selectedProjectRoot === projectRoot || selectedCwd === projectRoot)) {
         setIdentity({
@@ -914,12 +917,10 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     }
   }, [commitWorktreeSnapshots, selectedCwd, selectedProjectRoot, setIdentity]);
 
-  const knownProjectRoots = useMemo(() => {
-    const roots = getRecentProjects(allSessions);
-    if (selectedProjectRoot && !roots.includes(selectedProjectRoot)) roots.unshift(selectedProjectRoot);
-    else if (selectedCwd && !roots.includes(selectedCwd)) roots.unshift(selectedCwd);
-    return roots;
-  }, [allSessions, selectedCwd, selectedProjectRoot]);
+  const knownProjectRoots = useMemo(
+    () => buildKnownProjectRoots(getRecentProjects(allSessions), selectedCwd, selectedProjectRoot),
+    [allSessions, selectedCwd, selectedProjectRoot],
+  );
   // worktree 预加载只跟 wtRefreshKey + known roots；session list refresh 不得重抓 worktree。
   // generation 不含 refreshKey（见 buildWorktreePreloadGeneration）。
   const worktreePreloadGenerationRef = useRef(new Map<string, string>());
