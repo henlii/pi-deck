@@ -252,10 +252,17 @@ export function RightPanel({
               aria-label={t("workspace_close")}
               className="sidebar-icon-btn"
             >
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <polyline points="13 5 20 12 13 19" />
-                <polyline points="5 5 12 12 5 19" />
-              </svg>
+              {isMobile ? (
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              ) : (
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <polyline points="13 5 20 12 13 19" />
+                  <polyline points="5 5 12 12 5 19" />
+                </svg>
+              )}
             </button>
           </div>
         </div>
