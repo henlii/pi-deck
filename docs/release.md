@@ -214,6 +214,7 @@ ls /opt/pidance/current/node_modules/.bin/   # 仅 pidance，无 pi-web
 
 | 版本 | tgz sha256（前 8） | 部署日期 | 内容 | 验收 |
 |------|--------------------|----------|------|------|
+| `0.1.0-local-9c3fe02-6421a251` | 6421a251 | 2026-08-03 | P0–P5 会话系统重构收口（分支/新会话/去坞/右栏分屏/滚动跟随/流式同构/实时工具 UI）+ 侧栏交互对齐 openchamber（行点击折叠）+ 引导页项目/工作树缓存（含 localStorage 持久化） | A2 全路由带密码 200 / 无密码 401，bin 仅 pidance（无 pi-web） |
 | `0.1.0-local-1695fb3-d025b378` | d025b378 | 2026-08-01 | OpenChamber 交互改造批次（问题块内联/工具卡片/会话栏/子代理状态/引导页/命令面板/撤回坞等全部功能） | home/sessions/models 200，bin 仅 pidance |
 | `0.1.0-local-f1ec5da-a9994a5b` | a9994a5b | 2026-08-01 | 补包 public/（logo 等静态资源） | logo/home/sessions 200，bin 仅 pidance |
 | `0.1.0-local-cd2139e-3d2c2d97` | 3d2c2d97 | 2026-08-01 | OpenChamber 风格双下拉新会话引导 + globals.css 闭合修复 | 全路由 200（含 logo/worktrees/file-index/subagent-runs），bin 仅 pidance |
