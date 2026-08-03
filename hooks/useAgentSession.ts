@@ -49,6 +49,10 @@ import {
   shouldShowJumpButton,
   type AutoFollowMode,
 } from "@/lib/chat-auto-follow";
+import {
+  beginAgentRunFinish,
+  canFinalizeAgentRun,
+} from "@/lib/finish-agent-run";
 
 export interface SessionData {
   sessionId: string;
@@ -427,7 +431,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const bashRunningRef = useRef(false);
   const branchBusyRef = useRef(false);
   const bashRecoveryIdRef = useRef(0);
-  const handleAgentEventRef = useRef<((event: AgentEvent) => void) | null>(null);
+  const handleAgentEventRef = useRef<((event: AgentEvent, eventRunId?: number) => void) | null>(null);
   const executeBashRef = useRef<(command: string, excludeFromContext: boolean) => Promise<void> | undefined>(undefined);
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   // ── OpenChamber 风格自动跟随（纯状态机见 lib/chat-auto-follow.ts）──────────
@@ -541,6 +545,12 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const ensuringNewSessionRef = useRef<Promise<string | null> | null>(null);
   const newSessionPromotedRef = useRef(false);
   const promptRunIdRef = useRef(0);
+  /**
+   * 当前 run 的 completion claim（finishAgentRun 写入）：阻止 agent_end /
+   * prompt_done / reconcile 为同一 run 重复进入异步收尾；新 run 开始或收尾结束
+   * 时释放，token 漂移也必须释放，否则后续 run 的收尾被永久阻塞。
+   */
+  const finishingPromptRunIdRef = useRef<number | null>(null);
   const optimisticUserMessageKeyRef = useRef<string | null>(null);
   const extensionUiStateRef = useRef<ExtensionUiState>(createEmptyExtensionUiState({
     customUi: extensionCustomUi,
@@ -830,17 +840,22 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     if (!capabilities.canConnectEvents) {
       return Promise.reject(new Error("Read-only sessions do not connect to agent events"));
     }
+    // 建立时捕获 runId：连接排队/重连产生的回调携带旧 token，经 finishAgentRun
+    // 校验丢弃，不会结束新 run。
+    const streamRunId = promptRunIdRef.current;
     const manager = eventStreamManagerRef.current!;
     return manager.connect(sid, (event) => {
-      handleAgentEventRef.current?.(event as unknown as AgentEvent);
+      handleAgentEventRef.current?.(event as unknown as AgentEvent, streamRunId);
     });
   }, [capabilities.canConnectEvents]);
 
   const ensureEventsConnected = useCallback(async (sid: string) => {
     if (!capabilities.canConnectEvents) return;
+    // 同上：连接建立时捕获 runId（handleSend 在连接前已递增 promptRunIdRef）。
+    const streamRunId = promptRunIdRef.current;
     try {
       await eventStreamManagerRef.current!.ensureConnected(sid, (event) => {
-        handleAgentEventRef.current?.(event as unknown as AgentEvent);
+        handleAgentEventRef.current?.(event as unknown as AgentEvent, streamRunId);
       });
     } finally {
       // 同步外部可见的 eventSourceRef，保留清理与既有消费者的读取契约。
@@ -925,16 +940,68 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     }
   }, [addNotice, commitExtensionUiState, opts.chatInputRef]);
 
-  const finishPromptWithoutStream = useCallback(async (sid: string | null = sessionIdRef.current, runId?: number) => {
-    // Bail out before loadSession too: a stale finish for a previous run
-    // must not overwrite the messages of the run currently streaming.
-    if (runId !== undefined && promptRunIdRef.current !== runId) return;
+  /**
+   * 将 /api/agent 状态快照的附属字段应用到本地 state（散落重复点的统一收口）。
+   * 只覆盖显式提供的字段；running/streaming 等执行态由调用方负责。
+   */
+  const applyAgentStateSnapshot = useCallback((state?: AgentStateResponse | null) => {
+    if (!state) return;
+    if (state.contextUsage !== undefined) setContextUsage(state.contextUsage ?? null);
+    if (state.systemPrompt !== undefined) setSystemPrompt(state.systemPrompt ?? null);
+    if (state.thinkingLevel !== undefined) setThinkingLevel((state.thinkingLevel as ThinkingLevelOption) ?? "auto");
+    if (state.isCompacting !== undefined) setIsCompacting(state.isCompacting);
+    if (state.extensionStatuses !== undefined) patchExtensionUiState({ statuses: state.extensionStatuses ?? [] });
+    if (state.extensionWidgets !== undefined) patchExtensionUiState({ widgets: state.extensionWidgets ?? [] });
+    if (state.queuedMessages !== undefined) setQueuedMessages(normalizeQueuedMessages(state.queuedMessages));
+  }, [patchExtensionUiState]);
+
+  /**
+   * 统一 agent run 结束路径（P2）：agent_end / prompt_done / reconcile idle 三路合一。
+   * token（sid/runId/claim）校验通过才进入异步收尾：loadSession（含 includeState，
+   * 刷新 contextUsage/systemPrompt/thinkingLevel/extensionStatuses/extensionWidgets/
+   * queuedMessages 并顺手覆盖 isCompacting）→ 消息整体替换回调设置 settle/end-pin →
+   * 按同一 token 安全结束状态。loadSession 失败也必须在 finally 结束，不得永久 running。
+   */
+  const finishAgentRun = useCallback(async (sid: string | null, runId: number) => {
+    // 显式收窄：beginAgentRunFinish 的 sid 非空校验是 seam 层的防御性冗余。
+    if (!sid) return;
+    if (!beginAgentRunFinish({
+      sessionId: sid,
+      currentSessionId: sessionIdRef.current,
+      eventRunId: runId,
+      currentRunId: promptRunIdRef.current,
+      running: agentRunningRef.current,
+      claimedRunId: finishingPromptRunIdRef.current,
+    })) return;
+    // claim 必须在第一个 await 前占住：并发进入的 agent_end/prompt_done/reconcile 全部让路。
+    finishingPromptRunIdRef.current = runId;
     try {
-      if (sid) await loadSession(sid);
+      const agentState = await loadSession(sid, false, true, false, false, () => {
+        // 消息真正替换（onMessagesReplaced）：校验 token 后延长 settle 窗口并标记
+        // end-pin。pendingEndPin 无条件下发，following/released 门禁已在 messages
+        // effect 处理，released 阅读不会被拉回。
+        if (runId !== promptRunIdRef.current) return;
+        runSettleUntilRef.current = Date.now() + RUN_SETTLE_MS;
+        pendingEndPinRef.current = true;
+      });
+      // includeState 已刷新大部分附属字段；applyAgentStateSnapshot 统一补齐
+      // loadSession 未覆盖的 isCompacting（其余字段幂等重跑无害）。
+      if (agentState && typeof agentState === "object" && "running" in agentState) {
+        applyAgentStateSnapshot(agentState.state);
+      }
     } finally {
-      if (runId !== undefined && promptRunIdRef.current !== runId) return;
+      const valid = canFinalizeAgentRun({
+        sessionId: sid,
+        currentSessionId: sessionIdRef.current,
+        eventRunId: runId,
+        currentRunId: promptRunIdRef.current,
+        claimedRunId: finishingPromptRunIdRef.current,
+      });
+      // 无条件释放 claim：token 漂移（切换会话/开启新 run）也必须让路，否则
+      // 新 run 的收尾路径会被旧 claim 永久阻塞。
+      finishingPromptRunIdRef.current = null;
+      if (!valid) return;
       optimisticUserMessageKeyRef.current = null;
-      if (!agentRunningRef.current) return;
       agentRunningRef.current = false;
       setAgentRunning(false);
       setAgentPhase(null);
@@ -942,7 +1009,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       dispatch({ type: "end" });
       onAgentEnd?.();
     }
-  }, [loadSession, onAgentEnd]);
+  }, [loadSession, onAgentEnd, applyAgentStateSnapshot, dispatch, setAgentRunning, setAgentPhase, setRetryInfo]);
 
   const waitForPromptSettlement = useCallback(async (sid: string, runId?: number) => {
     await delay(PROMPT_SETTLE_INITIAL_DELAY_MS);
@@ -956,7 +1023,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           const data = await res.json() as { running?: boolean; state?: AgentStateResponse };
           const state = data.state;
           if (!data.running || !state || (!state.isStreaming && !state.isPromptRunning)) {
-            await finishPromptWithoutStream(sid, runId);
+            // 统一收尾路径：runId 缺省（刷新恢复场景）时回退当前 run id。
+            await finishAgentRun(sid, runId ?? promptRunIdRef.current);
             return;
           }
         }
@@ -965,7 +1033,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       }
       await delay(PROMPT_SETTLE_POLL_MS);
     }
-  }, [finishPromptWithoutStream]);
+  }, [finishAgentRun]);
 
   const waitForBashSettlement = useCallback(async (sid: string) => {
     const recoveryId = bashRecoveryIdRef.current + 1;
@@ -999,7 +1067,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   // missed (network drop, mobile tab backgrounded, half-open connection),
   // agent_end never arrives and the UI stays in streaming state forever.
   // If the server reports idle while we still think it's running, finish
-  // through the same path as prompt_done.
+  // through the same path as agent_end / prompt_done.
   const reconcileAgentState = useCallback(async (sid: string) => {
     if (!agentRunningRef.current) return;
     const runId = promptRunIdRef.current;
@@ -1020,17 +1088,13 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       const busy = data.running && state
         && (state.isStreaming || state.isPromptRunning || state.isCompacting);
       if (busy || !agentRunningRef.current) return;
-      if (state) {
-        if (state.contextUsage !== undefined) setContextUsage(state.contextUsage ?? null);
-        if (state.systemPrompt !== undefined) setSystemPrompt(state.systemPrompt ?? null);
-        if (state.extensionStatuses !== undefined) patchExtensionUiState({ statuses: state.extensionStatuses ?? [] });
-        if (state.extensionWidgets !== undefined) patchExtensionUiState({ widgets: state.extensionWidgets ?? [] });
-      }
-      await finishPromptWithoutStream(sid, runId);
+      // 服务端不 busy：走统一收尾路径（loadSession + 状态快照 + 结束副作用），
+      // 不再单独应用终止快照，避免与 agent_end/prompt_done 路径差异。
+      await finishAgentRun(sid, runId);
     } catch {
       // Network still down — the next poll / visibility / online tick retries.
     }
-  }, [finishPromptWithoutStream, patchExtensionUiState]);
+  }, [finishAgentRun]);
 
   // Recovery net for missed SSE events: while the agent is running, verify
   // against the server periodically and whenever the tab returns to the
@@ -1060,7 +1124,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     agentRunningRef.current = agentRunning;
   }, [agentRunning]);
 
-  const handleAgentEvent = useCallback((event: AgentEvent) => {
+  const handleAgentEvent = useCallback((event: AgentEvent, eventRunId?: number) => {
     switch (event.type) {
       case "agent_start":
         agentRunningRef.current = true;
@@ -1069,40 +1133,13 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         dispatch({ type: "start" });
         break;
       case "agent_end":
-        // A late agent_end can arrive over SSE after reconcileAgentState
-        // already finished this run — don't re-trigger completion.
-        if (!agentRunningRef.current) break;
-        agentRunningRef.current = false;
-        setAgentRunning(false);
-        setAgentPhase(null);
-        setRetryInfo(null);
-        dispatch({ type: "end" });
-        if (sessionIdRef.current) {
-          loadSession(sessionIdRef.current, false, false, false, false, () => {
-            // 整体替换可能在 settle 窗口（RUN_SETTLE_MS）外完成：流式形态与文件最终形态
-            // 的高度差会让视口跳动。延长 settle 让 paint 前的 ResizeObserver 钉底，
-            // 并标记 end-pin 由 messages effect 兜底（released 阅读不会被拉回）。
-            runSettleUntilRef.current = Date.now() + RUN_SETTLE_MS;
-            pendingEndPinRef.current = true;
-          });
-          fetch(`/api/agent/${encodeURIComponent(sessionIdRef.current)}`)
-            .then((r) => r.json())
-            .then((d: { state?: AgentStateResponse }) => {
-              if (d.state?.contextUsage !== undefined) setContextUsage(d.state.contextUsage ?? null);
-              if (d.state?.systemPrompt !== undefined) setSystemPrompt(d.state.systemPrompt ?? null);
-              if (d.state?.extensionStatuses !== undefined) patchExtensionUiState({ statuses: d.state.extensionStatuses ?? [] });
-              if (d.state?.extensionWidgets !== undefined) patchExtensionUiState({ widgets: d.state.extensionWidgets ?? [] });
-              // Aborted turns can leave messages queued in pi (delivered with the
-              // next turn); dead wrapper (no state) means the queue is gone.
-              setQueuedMessages(normalizeQueuedMessages(d.state?.queuedMessages));
-            })
-            .catch(() => {});
-        }
-        onAgentEnd?.();
+        // 统一收尾路径：eventRunId 由 SSE 建立时捕获（旧 source 排队回调携带旧 token，
+        // 经 finishAgentRun 校验丢弃，不会结束新 run）。
+        void finishAgentRun(sessionIdRef.current, eventRunId ?? promptRunIdRef.current);
         break;
       case "prompt_done":
-        if (!agentRunningRef.current) break;
-        void finishPromptWithoutStream(sessionIdRef.current);
+        // 同 agent_end：走同一收尾路径（含 claim/token 校验，重复进入被丢弃）。
+        void finishAgentRun(sessionIdRef.current, eventRunId ?? promptRunIdRef.current);
         break;
       case "prompt_error":
         addNotice({ type: "error", message: (event.errorMessage as string | undefined) ?? "Command failed" });
@@ -1213,7 +1250,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         handleExtensionUiRequest(event as ExtensionUiRequest);
         break;
     }
-  }, [addNotice, finishPromptWithoutStream, handleExtensionUiRequest, loadSession, onAgentEnd, patchExtensionUiState]);
+  }, [addNotice, finishAgentRun, handleExtensionUiRequest, loadSession]);
   handleAgentEventRef.current = handleAgentEvent;
 
   const handleSend = useCallback(async (message: string, images?: AttachedImage[]) => {
