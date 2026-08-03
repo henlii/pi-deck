@@ -39,8 +39,9 @@ interface Props {
   isCompacting?: boolean;
   compactError?: string | null;
   compactResult?: CompactResultInfo | null;
-  toolPreset?: "none" | "default" | "full";
-  onToolPresetChange?: (preset: "none" | "default" | "full") => void;
+  // REFACTOR-DEAD: 工具预设下线（P0c）。
+  // toolPreset?: "none" | "default" | "full";
+  // onToolPresetChange?: (preset: "none" | "default" | "full") => void;
   thinkingLevel?: "auto" | "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
   onThinkingLevelChange?: (level: "auto" | "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max") => void;
   availableThinkingLevels?: string[] | null;
@@ -60,8 +61,10 @@ interface Props {
   cwd?: string | null;
 }
 
-const TOOL_PRESETS = ["off", "default", "full"] as const;
-const TOOL_PRESET_MAP: Record<"off" | "default" | "full", "none" | "default" | "full"> = { off: "none", default: "default", full: "full" };
+// REFACTOR-DEAD: 工具预设下线（P0c）。
+// const TOOL_PRESETS = ["off", "default", "full"] as const;
+// REFACTOR-DEAD: 工具预设下线（P0c）。
+// const TOOL_PRESET_MAP: Record<"off" | "default" | "full", "none" | "default" | "full"> = { off: "none", default: "default", full: "full" };
 const COMPOSITION_END_ENTER_GRACE_MS = 100;
 const MODEL_OPTION_COLLATOR = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
 
@@ -211,7 +214,7 @@ function QueuedMessageRow({ kind, text }: { kind: "steer" | "follow-up"; text: s
 
 export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   onSend, onAbort, onSteer, onFollowUp, isStreaming, model, isAutoModelSelection, modelNames, modelList, onModelChange,
-  onCompact, onAbortCompaction, isCompacting, compactError, compactResult, toolPreset, onToolPresetChange,
+  onCompact, onAbortCompaction, isCompacting, compactError, compactResult,
   thinkingLevel, onThinkingLevelChange, availableThinkingLevels, thinkingLevelMap,
   retryInfo, queuedMessages, onRecallQueue,
   slashCommands, slashCommandsLoading, onLoadSlashCommands,
@@ -902,7 +905,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     if (lvl === "auto" || !thinkingLevelMap) return lvl;
     return thinkingLevelMap[lvl] ?? lvl;
   })();
-  const toolPresetLabel = Object.entries(TOOL_PRESET_MAP).find(([, v]) => v === (toolPreset ?? "default"))?.[0] ?? "default";
+  // REFACTOR-DEAD: 工具预设控件下线（P0c）。
+  // const toolPresetLabel = Object.entries(TOOL_PRESET_MAP).find(([, v]) => v === (toolPreset ?? "default"))?.[0] ?? "default";
 
   // ── 视口安全浮层定位 ─────────────────────────────────────────────────────
   // 所有菜单共享 useAnchoredOverlay：visualViewport 感知、上下翻转、边界
@@ -911,9 +915,9 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const atListboxId = useId();
   const modelMenuId = useId();
   const thinkingMenuId = useId();
-  const toolMenuId = useId();
+  // REFACTOR-DEAD: 工具预设控件下线（P0c）。
+  // const toolMenuId = useId();
   const controlsBarId = useId();
-
   const slashOverlay = useAnchoredOverlay({
     open: slashMenuOpen && slashQuery !== null,
     anchorRef: inputContainerRef,
@@ -954,16 +958,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     align: "end",
     minWidth: 180,
   });
-  const toolOverlay = useAnchoredOverlay({
-    open: toolDropdownOpen,
-    anchorRef: toolDropdownRef,
-    overlayRef: toolDropdownPanelRef,
-    preferredPlacement: "above",
-    gap: 6,
-    margin: 8,
-    align: "end",
-    minWidth: 120,
-  });
+  // REFACTOR-DEAD: 工具预设控件下线（P0c）。
+  // const toolOverlay = useAnchoredOverlay({...});
   const compactOverlay = useAnchoredOverlay({
     open: Boolean(compactError),
     anchorRef: compactAnchorRef,
@@ -1997,111 +1993,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 )}
               </div>
             )}
-            {!isStreaming && onToolPresetChange && (
-              <div ref={toolDropdownRef} style={{ position: "relative" }}>
-                <button
-                  onClick={() => {
-                    if (isStreaming) return;
-                    const opening = !toolDropdownOpen;
-                    setToolDropdownOpen(opening);
-                    if (opening) {
-                      // 菜单互斥：关掉思考菜单/模型下拉与输入补全，防止窄屏叠放。
-                      setThinkingDropdownOpen(false);
-                      setModelDropdownOpen(false);
-                      setSlashMenuOpen(false);
-                      setAtMenuOpen(false);
-                    }
-                  }}
-                  disabled={isStreaming}
-                  title={toolPresetLabel}
-                  aria-label={t("input_toolsTitle")}
-                  aria-haspopup="menu"
-                  aria-expanded={toolDropdownOpen}
-                  aria-controls={toolMenuId}
-                  style={{
-                    display: "flex", alignItems: "center", justifyContent: "center", gap: 5,
-                    padding: isMobile ? "0 6px" : "8px 12px",
-                    width: isMobile ? "auto" : undefined,
-                    height: 32,
-                    background: toolDropdownOpen ? "var(--bg-hover)" : "none",
-                    border: "none",
-                    borderRadius: 9,
-                    color: "var(--text-muted)",
-                    cursor: isStreaming ? "not-allowed" : "pointer",
-                    fontSize: 12,
-                    opacity: isStreaming ? 0.5 : 1,
-                    transition: "background 0.12s, color 0.12s",
-                  }}
-                  onMouseEnter={(e) => {
-                    if (isStreaming) return;
-                    e.currentTarget.style.background = "var(--bg-hover)";
-                    e.currentTarget.style.color = "var(--text)";
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.background = toolDropdownOpen ? "var(--bg-hover)" : "none";
-                    e.currentTarget.style.color = "var(--text-muted)";
-                  }}
-                >
-                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
-                  </svg>
-                  {(!isMobile || controlsMenuOpen) && <span style={{ whiteSpace: "nowrap" }}>{toolPresetLabel}</span>}
-                </button>
-                {toolDropdownOpen && createPortal(
-                  <div
-                    ref={toolDropdownPanelRef}
-                    id={toolMenuId}
-                    role="menu"
-                    onKeyDown={(e) => movePanelOptionFocus(e, '[role="menuitemradio"]')}
-                    style={{
-                    ...toolOverlay.style,
-                    zIndex: 100, background: "var(--bg)", border: "1px solid var(--border)",
-                    borderRadius: 8,
-                    boxShadow: toolOverlay.placement === "above" ? "0 -4px 16px rgba(0,0,0,0.10)" : "0 4px 16px rgba(0,0,0,0.10)",
-                    overflow: "hidden", overflowY: "auto",
-                  }}>
-                    {TOOL_PRESETS.map((lvl) => {
-                      const preset = TOOL_PRESET_MAP[lvl];
-                      const isActive = (toolPreset ?? "default") === preset;
-                      const desc = lvl === "off" ? t("input_toolsNone") : lvl === "default" ? t("input_toolsDefault") : t("input_toolsAll");
-                      return (
-                        <button
-                          key={lvl}
-                          role="menuitemradio"
-                          aria-checked={isActive}
-                          onClick={() => {
-                            setToolDropdownOpen(false);
-                            // 选择后焦点回 trigger，键盘/读屏用户不丢上下文。
-                            focusTriggerButton(toolDropdownRef.current);
-                            if (!isActive) onToolPresetChange(preset);
-                          }}
-                          style={{
-                            display: "flex", alignItems: "center", gap: 8,
-                            width: "100%", padding: "7px 12px",
-                            minHeight: isMobile ? 44 : undefined,
-                            background: isActive ? "var(--bg-selected)" : "none",
-                            border: "none",
-                            color: isActive ? "var(--text)" : "var(--text-muted)",
-                            cursor: "pointer", fontSize: 12, textAlign: "left",
-                            fontWeight: isActive ? 600 : 400,
-                            whiteSpace: "nowrap",
-                          }}
-                          onMouseEnter={(e) => { if (!isActive) e.currentTarget.style.background = "var(--bg-hover)"; }}
-                          onMouseLeave={(e) => { if (!isActive) e.currentTarget.style.background = "none"; }}
-                        >
-                          {isActive
-                            ? <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><polyline points="1.5 5 4 7.5 8.5 2.5" /></svg>
-                            : <span style={{ width: 10, flexShrink: 0 }} />}
-                          <span style={{ flex: 1 }}>{lvl}</span>
-                          <span style={{ fontSize: 11, color: "var(--text-dim)", marginLeft: 8 }}>{desc}</span>
-                        </button>
-                      );
-                    })}
-                  </div>,
-                  document.body,
-                )}
-              </div>
-            )}
+            {/* REFACTOR-DEAD: 工具预设控件下线（P0c：Pidance 不再收窄工具集）。
+            {!isStreaming && onToolPresetChange && (...工具预设 dropdown...)} */}
 
             {!isStreaming && onCompact && (
               <div ref={compactAnchorRef} style={{ position: "relative" }}>

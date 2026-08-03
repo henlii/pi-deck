@@ -23,8 +23,7 @@ import {
   type BranchActionResult,
   type BranchSwitchChoice,
 } from "@/lib/branch-bookmarks";
-import type { RetractedRecord } from "@/lib/retract-stack";
-import { getToolNamesForPreset, type ToolEntry } from "@/lib/tool-presets";
+import type { ToolEntry } from "@/lib/tool-presets";
 import { createEventStreamManager, EventStreamConnectionError, type EventStreamManager, type EventStreamConnectionResult } from "@/lib/event-stream-manager";
 import type { SessionStatsInfo } from "@/lib/pi-types";
 import {
@@ -197,7 +196,6 @@ export interface UseAgentSessionOptions {
   onBranchDataChange?: (tree: SessionTreeNode[], activeLeafId: string | null, onLeafChange: (leafId: string | null) => void, actions: BranchActions) => void;
   onSystemPromptChange?: (prompt: string | null) => void;
   onSessionStatsPanelOpen?: () => void;
-  setToolPreset?: (preset: "none" | "default" | "full") => void;
   /** 移动端断点（与 useIsMobile 同源）：决定末端区域与底部 spacer 尺寸。 */
   isMobile?: boolean;
 }
@@ -399,7 +397,6 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const [modelThinkingLevelMaps, setModelThinkingLevelMaps] = useState<Record<string, Record<string, string | null>>>({});
   const [newSessionModel, setNewSessionModel] = useState<SelectedModel | null>(null);
   const [newSessionDefaultModel, setNewSessionDefaultModel] = useState<SelectedModel | null>(null);
-  const [toolPreset, setToolPreset] = useState<"none" | "default" | "full">("default");
   const [thinkingLevel, setThinkingLevel] = useState<ThinkingLevelOption>("auto");
   const [retryInfo, setRetryInfo] = useState<{ attempt: number; maxAttempts: number; errorMessage?: string } | null>(null);
   const [contextUsage, setContextUsage] = useState<{ percent: number | null; contextWindow: number; tokens: number | null } | null>(null);
@@ -423,9 +420,6 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const [queuedMessages, setQueuedMessages] = useState<QueuedMessages>({ steering: [], followUp: [] });
   // 分支切换/总结进行中：树节点、发送与再次导航全部暂停，避免与 navigateTree 并发写。
   const [branchBusy, setBranchBusy] = useState(false);
-
-  // 消息撤回坞（OpenChamber 风格）：服务端内存栈，会话切换时重新拉取。
-  const [retractedMessages, setRetractedMessages] = useState<RetractedRecord[]>([]);
 
   const eventSourceRef = useRef<EventSource | null>(null);
   const sessionIdRef = useRef<string | null>(session?.id ?? null);
@@ -592,8 +586,6 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     });
   }
 
-  const setToolPresetState = opts.setToolPreset ?? setToolPreset;
-
   const currentModel = currentModelOverride ?? data?.context.model ?? pendingModel ?? null;
   const displayModel = isNew ? (newSessionModel ?? newSessionDefaultModel) : currentModel;
 
@@ -743,17 +735,14 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
   const loadTools = useCallback(async (sid: string) => {
     // 只读会话：get_tools 会经 /api/agent 启动 AgentSession，跳过。
+    // P0c：tool preset 下线后不再推断 preset；保留 get_tools 探测以维持会话工具状态一致性。
     if (isReadOnly) return;
     try {
-      const tools = await sendAgentCommand<ToolEntry[]>(sid, { type: "get_tools" });
-      if (tools) {
-        const { getPresetFromTools } = await import("@/lib/tool-presets");
-        setToolPresetState(getPresetFromTools(tools));
-      }
+      await sendAgentCommand<ToolEntry[]>(sid, { type: "get_tools" });
     } catch (e) {
       console.error("Failed to load tools:", e);
     }
-  }, [isReadOnly, setToolPresetState]);
+  }, [isReadOnly]);
 
   const promoteNewSession = useCallback((messageCount = 0, firstMessage = "(no messages)") => {
     const sid = sessionIdRef.current;
@@ -782,15 +771,12 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     const ensureCwd = cwd;
     const promise = (async () => {
       const selectedModel = newSessionModel ?? newSessionDefaultModel;
-      if (selectedModel) setPendingModel(selectedModel);
-      const toolNames = getToolNamesForPreset(toolPreset);
+      // P0c：不再用预设收窄工具集——新会话不传 toolNames，SDK/扩展加载全集。
       const res = await fetch("/api/agent/new", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           cwd: ensureCwd,
-          type: "ensure_session",
-          toolNames,
           ...(selectedModel ? { provider: selectedModel.provider, modelId: selectedModel.modelId } : {}),
           ...(thinkingLevel !== "auto" ? { thinkingLevel } : {}),
         }),
@@ -809,7 +795,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     } finally {
       ensuringNewSessionRef.current = null;
     }
-  }, [isNew, newSessionModel, newSessionDefaultModel, toolPreset, thinkingLevel]);
+  }, [isNew, newSessionModel, newSessionDefaultModel, thinkingLevel]);
 
   const loadSlashCommands = useCallback(async () => {
     // 只读会话：get_commands 会经 /api/agent 启动 AgentSession，直接返回空集。
@@ -1422,86 +1408,6 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     await loadContext(sid, entryId);
   }, [isReadOnly, loadContext]);
 
-  // REFACTOR-DEAD: 回退坞下线后 refreshRetracted 不再被调用（保留实现待统一清理）。
-  // const refreshRetracted = useCallback(async () => {
-  //   const sid = sessionIdRef.current;
-  //   if (!sid || isReadOnly) {
-  //     setRetractedMessages([]);
-  //     return;
-  //   }
-  //   try {
-  //     const res = await sendAgentCommand<{ retracted?: RetractedRecord[] }>(sid, { type: "list_retracted" });
-  //     setRetractedMessages(res?.retracted ?? []);
-  //   } catch {
-  //     // 未持久化会话等场景无此命令：静默保持空坞。
-  //   }
-  // }, [isReadOnly]);
-
-  // REFACTOR-DEAD: 回退坞已下线（P0a 产品决策）：不再在挂载时拉取撤回列表。
-  // useEffect(() => {
-  //   void refreshRetracted();
-  // }, [session?.id, refreshRetracted]);
-
-  /**
-   * 撤回消息 M：navigate_tree(M.parentId)（Pi 原生分支语义，文件保留）。
-   * 工作区还原由已安装扩展经 session_before_tree 被动完成，不绑定插件。
-   */
-  const handleRetractMessage = useCallback(async (entryId: string) => {
-    const gate = gateBranchAction({
-      readOnly: isReadOnly,
-      busy: agentRunningRef.current || bashRunningRef.current || branchBusyRef.current,
-    });
-    if (!gate.allowed) return;
-    const sid = sessionIdRef.current;
-    if (!sid) return;
-    branchBusyRef.current = true;
-    setBranchBusy(true);
-    try {
-      const result = await sendAgentCommand<{ ok?: boolean; cancelled?: boolean; retracted?: RetractedRecord[] }>(
-        sid,
-        { type: "retract_message", entryId },
-      );
-      // cancelled（如插件 dirty 检查拒绝）：插件已 notify，静默保持现状。
-      if (result?.cancelled) return;
-      if (result?.retracted) setRetractedMessages(result.retracted);
-      await loadSession(sid, false, false, true, true);
-    } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
-      addNotice({ type: "error", message });
-    } finally {
-      branchBusyRef.current = false;
-      setBranchBusy(false);
-    }
-  }, [addNotice, isReadOnly, loadSession]);
-
-  /** 恢复消息 M：navigate_tree(M 链尾)，工作区由插件被动恢复。 */
-  const handleRestoreMessage = useCallback(async (entryId: string) => {
-    const gate = gateBranchAction({
-      readOnly: isReadOnly,
-      busy: agentRunningRef.current || bashRunningRef.current || branchBusyRef.current,
-    });
-    if (!gate.allowed) return;
-    const sid = sessionIdRef.current;
-    if (!sid) return;
-    branchBusyRef.current = true;
-    setBranchBusy(true);
-    try {
-      const result = await sendAgentCommand<{ ok?: boolean; cancelled?: boolean; retracted?: RetractedRecord[] }>(
-        sid,
-        { type: "restore_message", entryId },
-      );
-      if (result?.cancelled) return;
-      if (result?.retracted) setRetractedMessages(result.retracted);
-      await loadSession(sid, false, false, true, true);
-    } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
-      addNotice({ type: "error", message });
-    } finally {
-      branchBusyRef.current = false;
-      setBranchBusy(false);
-    }
-  }, [addNotice, isReadOnly, loadSession]);
-
   const handleLeafChange = useCallback(async (leafId: string | null) => {
     if (bashRunningRef.current || branchBusyRef.current) return;
     setActiveLeafId(leafId);
@@ -1992,20 +1898,6 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     }
   }, [isReadOnly]);
 
-  const handleToolPresetChange = useCallback(async (preset: "none" | "default" | "full") => {
-    // 只读会话：set_tools 会写会话状态，拦截。
-    if (isReadOnly) return;
-    const toolNames = getToolNamesForPreset(preset);
-    setToolPresetState(preset);
-    const sid = sessionIdRef.current ?? await ensuringNewSessionRef.current;
-    if (!sid) return;
-    try {
-      await sendAgentCommand(sid, { type: "set_tools", toolNames });
-    } catch (e) {
-      console.error("Failed to set tools:", e);
-    }
-  }, [isReadOnly, setToolPresetState]);
-
   /**
    * Workspace History 命令：仅通过 type:prompt 派发 slash 到扩展，
    * 禁止本地 git checkout/reset 或 { command: "undo" } 形态。
@@ -2327,7 +2219,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   return {
     // State
     data, loading, error, activeLeafId, messages, entryIds, observationalMemory, workspaceHistory, streamState,
-    agentRunning, modelNames, modelList, modelThinkingLevels, modelThinkingLevelMaps, newSessionModel, toolPreset, thinkingLevel,
+    agentRunning, modelNames, modelList, modelThinkingLevels, modelThinkingLevelMaps, newSessionModel, thinkingLevel,
     retryInfo, contextUsage, systemPrompt, forkingEntryId,
     isCompacting, compactError, compactResult, currentModel, displayModel, sessionStats,
     slashCommands, slashCommandsLoading, queuedMessages,
@@ -2345,12 +2237,12 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     handleCompact, handleSteer, handleFollowUp, handlePromptWithStreamingBehavior, handleAbortCompaction,
     handleRecallQueue,
     handleBuiltinSlashCommand,
-    handleToolPresetChange, handleThinkingLevelChange, loadTools, loadSlashCommands, setActiveLeafId, setData, setMessages,
+    // REFACTOR-DEAD: handleToolPresetChange 已注释（P0c 工具不收窄）。
+    handleThinkingLevelChange, loadTools, loadSlashCommands, setActiveLeafId, setData, setMessages,
     dispatch, setAgentRunning, setForkingEntryId,
     bashRunning, pendingBash,
     // Workspace History（仅 type:prompt 派发到扩展）
     handleWorkspaceUndo, handleWorkspaceRedo, handleWorkspaceCheckpoint,
-    retractedMessages, handleRetractMessage, handleRestoreMessage,
     handleBranchHere, handleBranchFromAssistant, handleNewSessionFromHere, handleNewSessionFromAnswer,
     // 分支书签与带选项切换（D3）
     branchBusy, branchActions, navigateBranch, setBranchLabel,

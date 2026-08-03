@@ -14,8 +14,9 @@ import { ChatMinimap, useMessageRefs } from "./ChatMinimap";
 import { InlineExtensionCard } from "./InlineExtensionCard";
 import { NewSessionGuide } from "./NewSessionGuide";
 import { TodoPanel } from "./TodoPanel";
-import { OmPanel } from "./OmPanel";
-import { WorkspaceHistoryPanel } from "./WorkspaceHistoryPanel";
+// REFACTOR-DEAD: om/wh 面板下线（P0c）；import 注释待统一清理。
+// import { OmPanel } from "./OmPanel";
+// import { WorkspaceHistoryPanel } from "./WorkspaceHistoryPanel";
 import { useAgentSession, type AgentPhase, type NoticeItem } from "@/hooks/useAgentSession";
 import { useAudio } from "@/hooks/useAudio";
 import { useI18n } from "@/lib/i18n";
@@ -174,14 +175,15 @@ export function ChatWindow({ session, newSessionCwd, newSessionIntentId, guideDe
 
   const {
     loading, error, messages, entryIds, streamState,
-    agentRunning, bashRunning, pendingBash, modelNames, modelList, modelThinkingLevels, modelThinkingLevelMaps, toolPreset, thinkingLevel,
+    agentRunning, bashRunning, pendingBash, modelNames, modelList, modelThinkingLevels, modelThinkingLevelMaps, thinkingLevel,
     retryInfo, contextUsage, forkingEntryId,
     isCompacting, compactError, compactResult, displayModel: displayModelValue, sessionStats,
     slashCommands, slashCommandsLoading, queuedMessages,
     notices, extensionDialog, extensionInlineRequest, extensionCustomUi, extensionStatuses, extensionWidgets, respondToExtensionUi, dismissExtensionUiRequest, sendExtensionCustomInput,
     todos,
-    observationalMemory,
-    workspaceHistory,
+    // REFACTOR-DEAD: om/wh 面板下线（P0c）后不再消费。
+    // observationalMemory,
+    // workspaceHistory,
     isAutoModelSelection,
     agentPhase,
     isNew,
@@ -191,9 +193,11 @@ export function ChatWindow({ session, newSessionCwd, newSessionIntentId, guideDe
     handleCompact, handleSteer, handleFollowUp, handlePromptWithStreamingBehavior, handleAbortCompaction,
     handleRecallQueue,
     handleBuiltinSlashCommand,
-    handleToolPresetChange, handleThinkingLevelChange, loadSlashCommands,
-    handleWorkspaceUndo, handleWorkspaceRedo, handleWorkspaceCheckpoint,
-    branchBusy,
+    // REFACTOR-DEAD: handleToolPresetChange 已注释（P0c 工具不收窄）。
+    handleThinkingLevelChange, loadSlashCommands,
+    // REFACTOR-DEAD: WH 面板下线（P0c）。
+    // handleWorkspaceUndo, handleWorkspaceRedo, handleWorkspaceCheckpoint,
+    // branchBusy,
     // REFACTOR-DEAD: 撤回坞下线后不再消费 retractedMessages / handleRetractMessage / handleRestoreMessage。
     handleBranchHere, handleBranchFromAssistant, handleNewSessionFromHere, handleNewSessionFromAnswer,
   } = useAgentSession({
@@ -203,18 +207,20 @@ export function ChatWindow({ session, newSessionCwd, newSessionIntentId, guideDe
   });
   const sessionBusy = agentRunning || bashRunning;
   const [todosCollapsed, setTodosCollapsed] = useState(true);
-  const [omCollapsed, setOmCollapsed] = useState(true);
-  const [whCollapsed, setWhCollapsed] = useState(true);
-  const [whActing, setWhActing] = useState(false);
+  // REFACTOR-DEAD: om/wh 面板下线（P0c）后相关折叠状态不再使用。
+  // const [omCollapsed, setOmCollapsed] = useState(true);
+  // const [whCollapsed, setWhCollapsed] = useState(true);
+  // const [whActing, setWhActing] = useState(false);
   const [expiredInlineRequestId, setExpiredInlineRequestId] = useState<string | null>(null);
   const inlineExtensionCardRef = useRef<HTMLDivElement>(null);
   const todoCollapseScope = session?.id ?? (effectiveNewSessionCwd ? `new:${effectiveNewSessionCwd}` : "new-session");
   // Todo / om / wh 展开状态只属于当前聊天视图；切换会话后恢复默认折叠。
   useEffect(() => {
     setTodosCollapsed(true);
-    setOmCollapsed(true);
-    setWhCollapsed(true);
-    setWhActing(false);
+    // REFACTOR-DEAD: om/wh 面板下线（P0c）。
+    // setOmCollapsed(true);
+    // setWhCollapsed(true);
+    // setWhActing(false);
   }, [todoCollapseScope]);
 
   // expiresAt 到达：按 id 从 FIFO 清理并推进；不发送 extension_ui_response（服务端 timeout 自结算）。
@@ -414,8 +420,6 @@ export function ChatWindow({ session, newSessionCwd, newSessionIntentId, guideDe
       isCompacting={isCompacting}
       compactError={compactError}
       compactResult={compactResult}
-      toolPreset={toolPreset}
-      onToolPresetChange={session || isNew ? handleToolPresetChange : undefined}
       thinkingLevel={thinkingLevel}
       onThinkingLevelChange={session || isNew ? handleThinkingLevelChange : undefined}
       availableThinkingLevels={availableThinkingLevels}
@@ -455,62 +459,19 @@ export function ChatWindow({ session, newSessionCwd, newSessionIntentId, guideDe
     </div>
   );
 
-  // 观察与反思：已有会话完成首轮加载后保留低权重入口；放在 Todo 下方。
-  // null 也可能表示当前分支没有可读投影，不能推断扩展未安装或数据不存在。
-  const omPanelElement = loading || !session ? null : (
-    <div
-      style={{
-        flexShrink: 0,
-        padding: `0 ${CHAT_COLUMN_PADDING}px`,
-        paddingRight: isMobile ? CHAT_COLUMN_PADDING : CHAT_INPUT_RIGHT_PADDING,
-      }}
-    >
-      <div style={{ maxWidth: 820, margin: "0 auto" }}>
-        <OmPanel
-          memory={observationalMemory}
-          collapsed={omCollapsed}
-          onToggle={() => setOmCollapsed((value) => !value)}
-        />
-      </div>
-    </div>
-  );
+  // REFACTOR-DEAD: 观察与反思面板下线（P0c 产品决策：Om 不进输入上方）。
+  // const omPanelElement = loading || !session ? null : (
+  //   <div style={{...}}><div style={{ maxWidth: 820, margin: "0 auto" }}>
+  //     <OmPanel memory={observationalMemory} collapsed={omCollapsed} onToggle={() => setOmCollapsed((value) => !value)} />
+  //   </div></div>
+  // );
 
-  // 工作区历史：无 snapshot 不渲染；放在 om 下方。只读 child 可看时间线，无写按钮。
-  // 与 handleSend 门禁一致：branchBusy（分支切换/书签写入窗口）期间禁止派发。
-  const whCanAct = !isReadOnly && !sessionBusy && !branchBusy && !whActing;
-  const runWhAction = useCallback(async (action: () => void | Promise<void>) => {
-    if (!whCanAct) return;
-    setWhActing(true);
-    try {
-      await action();
-    } finally {
-      setWhActing(false);
-    }
-  }, [whCanAct]);
-  const whPanelElement = !workspaceHistory?.hasData ? null : (
-    <div
-      style={{
-        flexShrink: 0,
-        padding: `0 ${CHAT_COLUMN_PADDING}px`,
-        paddingRight: isMobile ? CHAT_COLUMN_PADDING : CHAT_INPUT_RIGHT_PADDING,
-      }}
-    >
-      <div style={{ maxWidth: 820, margin: "0 auto" }}>
-        <WorkspaceHistoryPanel
-          history={workspaceHistory}
-          collapsed={whCollapsed}
-          onToggle={() => setWhCollapsed((value) => !value)}
-          canAct={whCanAct}
-          acting={whActing}
-          onUndo={isReadOnly ? undefined : () => runWhAction(handleWorkspaceUndo)}
-          onRedo={isReadOnly ? undefined : () => runWhAction(handleWorkspaceRedo)}
-          onCheckpoint={isReadOnly ? undefined : (label) => runWhAction(() => handleWorkspaceCheckpoint(label))}
-          cwd={session?.cwd ?? effectiveNewSessionCwd}
-          sessionId={session?.id ?? sessionIdRef.current}
-        />
-      </div>
-    </div>
-  );
+  // REFACTOR-DEAD: 工作区历史面板下线（P0c 产品决策：代码历史不需要，回退≠WH）。
+  // const whPanelElement = !workspaceHistory?.hasData ? null : (
+  //   <div style={{...}}><div style={{ maxWidth: 820, margin: "0 auto" }}>
+  //     <WorkspaceHistoryPanel ... />
+  //   </div></div>
+  // );
 
   const aboveEditorWidgets = extensionWidgets.filter((widget) => widget.placement !== "belowEditor");
   const belowEditorWidgets = extensionWidgets.filter((widget) => widget.placement === "belowEditor");
@@ -606,8 +567,7 @@ export function ChatWindow({ session, newSessionCwd, newSessionIntentId, guideDe
               />
             </div>
             {todoPanelElement}
-            {omPanelElement}
-            {whPanelElement}
+            {/* REFACTOR-DEAD: om/wh 面板下线（P0c） */}
             {chatInputElement}
           </div>
         </div>
@@ -819,8 +779,7 @@ export function ChatWindow({ session, newSessionCwd, newSessionIntentId, guideDe
           </div>
         </div>
         {todoPanelElement}
-        {omPanelElement}
-        {whPanelElement}
+        {/* REFACTOR-DEAD: om/wh 面板下线（P0c） */}
         {chatInputElement}
       </div>
       </>

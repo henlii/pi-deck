@@ -13,8 +13,9 @@ import { CommandPalette } from "./CommandPalette";
 import type { SettingsPageId } from "./settings-nav";
 import { AboutDialog } from "./AboutDialog";
 import { BranchNavigator } from "./BranchNavigator";
-import { SubagentRunsPanel } from "./SubagentRunsPanel";
-import { LensDiagnosticsPanel } from "./LensDiagnosticsPanel";
+// REFACTOR-DEAD: 顶栏 runs/诊断浮层下线（P0c）；import 注释待统一清理。
+// import { SubagentRunsPanel } from "./SubagentRunsPanel";
+// import { LensDiagnosticsPanel } from "./LensDiagnosticsPanel";
 import { useTheme } from "@/hooks/useTheme";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { copyText } from "@/lib/clipboard";
@@ -57,11 +58,12 @@ import {
 } from "@/lib/new-session-intent";
 
 type SessionCopyField = "file" | "id";
-type AutoNameStatus =
-  | { kind: "idle" }
-  | { kind: "naming" }
-  | { kind: "success" }
-  | { kind: "error"; message: string };
+// REFACTOR-DEAD: AutoNameStatus 随生成标题入口下线（P0c）。
+// type AutoNameStatus =
+//   | { kind: "idle" }
+//   | { kind: "naming" }
+//   | { kind: "success" }
+//   | { kind: "error"; message: string };
 
 export function AppShell() {
   return <ProjectProvider><AppShellInner /></ProjectProvider>;
@@ -230,8 +232,9 @@ function AppShellInner() {
 
   // Session stats (tokens + cost) — populated by ChatWindow, displayed in top bar
   const [sessionStats, setSessionStats] = useState<SessionStatsInfo | null>(null);
-  const [autoNameStatus, setAutoNameStatus] = useState<AutoNameStatus>({ kind: "idle" });
-  const autoNameTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // REFACTOR-DEAD: 生成标题状态随入口下线（P0c）。
+  // const [autoNameStatus, setAutoNameStatus] = useState<AutoNameStatus>({ kind: "idle" });
+  // const autoNameTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const activeSessionIdRef = useRef<string | null>(selectedSession?.id ?? null);
   activeSessionIdRef.current = selectedSession?.id ?? null;
   const handleSessionStatsChange = useCallback((stats: SessionStatsInfo | null) => {
@@ -250,7 +253,8 @@ function AppShellInner() {
   useEffect(() => {
     return () => {
       if (sessionCopyTimerRef.current) clearTimeout(sessionCopyTimerRef.current);
-      if (autoNameTimerRef.current) clearTimeout(autoNameTimerRef.current);
+      // REFACTOR-DEAD: autoName 计时器随入口下线。
+      // if (autoNameTimerRef.current) clearTimeout(autoNameTimerRef.current);
     };
   }, []);
 
@@ -265,10 +269,11 @@ function AppShellInner() {
   const [topPanelPos, setTopPanelPos] = useState<{ top: number; left: number; width: number } | null>(null);
   // D1 runs 入口 badge：活动（queued/running）数由 SubagentRunsPanel 成功拉取后上报；
   // 面板关闭期间保留最后已知值，不额外轮询（轮询只存在于面板打开时）。
-  const [runsActiveCount, setRunsActiveCount] = useState(0);
+  // REFACTOR-DEAD: 顶栏 runs/诊断入口下线后不再使用。
+  // const [runsActiveCount, setRunsActiveCount] = useState(0);
   // D10 诊断入口 badge：问题总数由 LensDiagnosticsPanel 成功拉取后上报；
   // 面板关闭期间保留最后已知值，不额外轮询。
-  const [diagIssueCount, setDiagIssueCount] = useState(0);
+  // const [diagIssueCount, setDiagIssueCount] = useState(0);
 
   const toggleTopPanel = useCallback((panel: "branches" | "system" | "session" | "runs" | "export" | "diagnostics") => {
     if (isMobile) {
@@ -659,11 +664,11 @@ function AppShellInner() {
       .catch(() => {});
   }, [handleSelectSession]);
 
-  // runs 面板中打开子会话：跳转后顺手关闭浮层，露出聊天区。
-  const handleRunsOpenSession = useCallback((sessionFile: string) => {
-    setActiveTopPanel(null);
-    handleOpenSubagentSession(sessionFile);
-  }, [handleOpenSubagentSession]);
+  // REFACTOR-DEAD: 顶栏 runs 浮层下线后不再使用。
+  // const handleRunsOpenSession = useCallback((sessionFile: string) => {
+  //   setActiveTopPanel(null);
+  //   handleOpenSubagentSession(sessionFile);
+  // }, [handleOpenSubagentSession]);
 
   // ChatWindow：Pi 返回真实 id 后 promote；仅当前 intent 可写当前 chat。
   // 迟到旧 intent 的 session 仍 upsert 进 pending map，不销毁、不选中。
@@ -693,43 +698,22 @@ function AppShellInner() {
     setRefreshKey((k) => k + 1);
     setExplorerRefreshKey((k) => k + 1);
   }, []);
+  // REFACTOR-DEAD: 生成标题入口下线（P0c 产品决策）——原实现见 git 历史 be20c80 前。
+  // const handleAutoName = ... (已注释)
+  // 遗留的裸函数体也已注释：
+  // const sessionId = selectedSession?.id;
+  // if (!sessionId || selectedSession?.readOnly === true || autoNameStatus.kind === "naming") return;
+  // if (autoNameTimerRef.current) clearTimeout(autoNameTimerRef.current);
+  // setActiveTopPanel(null);
+  // setAutoNameStatus({ kind: "naming" });
+  // try { ... } catch { ... }
+  // }, [autoNameStatus.kind, selectedSession?.id, selectedSession?.readOnly]);
 
-  const handleAutoName = useCallback(async () => {
-    const sessionId = selectedSession?.id;
-    // 只读会话：auto-name 会改名（写操作），UI 层先拦（后端仍是权威防线）。
-    if (!sessionId || selectedSession?.readOnly === true || autoNameStatus.kind === "naming") return;
-    if (autoNameTimerRef.current) clearTimeout(autoNameTimerRef.current);
-    setActiveTopPanel(null);
-    setAutoNameStatus({ kind: "naming" });
-
-    try {
-      const response = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/auto-name`, {
-        method: "POST",
-      });
-      const body = (await response.json().catch(() => ({}))) as { title?: string; error?: string };
-      if (!response.ok || !body.title) {
-        throw new Error(body.error || `HTTP ${response.status}`);
-      }
-
-      const title = body.title.trim();
-      setRefreshKey((key) => key + 1);
-      if (activeSessionIdRef.current !== sessionId) return;
-      setSelectedSession((current) => current?.id === sessionId ? { ...current, name: title } : current);
-      setSessionStats((current) => current?.sessionId === sessionId ? { ...current, sessionName: title } : current);
-      setAutoNameStatus({ kind: "success" });
-      autoNameTimerRef.current = setTimeout(() => setAutoNameStatus({ kind: "idle" }), 1800);
-    } catch (error) {
-      if (activeSessionIdRef.current !== sessionId) return;
-      const message = error instanceof Error ? error.message : String(error);
-      setAutoNameStatus({ kind: "error", message });
-      autoNameTimerRef.current = setTimeout(() => setAutoNameStatus({ kind: "idle" }), 5000);
-    }
-  }, [autoNameStatus.kind, selectedSession?.id, selectedSession?.readOnly]);
-
-  useEffect(() => {
-    if (autoNameTimerRef.current) clearTimeout(autoNameTimerRef.current);
-    setAutoNameStatus({ kind: "idle" });
-  }, [selectedSession?.id]);
+  // REFACTOR-DEAD: autoName 状态清理 effect（随入口下线）。
+  // useEffect(() => {
+  //   if (autoNameTimerRef.current) clearTimeout(autoNameTimerRef.current);
+  //   setAutoNameStatus({ kind: "idle" });
+  // }, [selectedSession?.id]);
 
   const handleSessionForked = useCallback((newSessionId: string, prefill?: string) => {
     // fork/新会话成功后切换：预填文本直接注入新会话 draft（新 ChatWindow 挂载时同步读取）。
@@ -1114,81 +1098,11 @@ function AppShellInner() {
           </button>
           {showChat && (
             <div style={{ display: "flex", alignItems: "stretch", height: "100%" }}>
+              {/* REFACTOR-DEAD: 生成标题入口已下线（P0c 产品决策）。
               {(() => {
-                const isReadOnly = selectedSession?.readOnly === true;
-                const hasMessages = Boolean(
-                  selectedSession
-                  && (sessionStats?.userMessages ?? selectedSession.messageCount) > 0,
-                );
-                const disabled = !selectedSession || isReadOnly || !hasMessages || autoNameStatus.kind === "naming";
-                const isSuccess = autoNameStatus.kind === "success";
-                const isError = autoNameStatus.kind === "error";
-                const label = autoNameStatus.kind === "naming"
-                  ? t("app_titleGenerating")
-                  : isSuccess
-                    ? t("app_titleGenerated")
-                    : isError
-                      ? t("app_titleGenerationFailed")
-                      : t("app_generateTitle");
-                const title = !selectedSession
-                  ? t("app_titleGenerationDisabledReason")
-                  : isReadOnly
-                    ? t("app_titleGenerationDisabled")
-                    : !hasMessages
-                      ? t("app_titleGenerationDisabledReason")
-                      : isError
-                        ? autoNameStatus.message
-                        : t("app_generateTitle");
-
-                return (
-                  <button
-                    type="button"
-                    onClick={() => void handleAutoName()}
-                    disabled={disabled}
-                    title={title}
-                    aria-label={label}
-                    style={{
-                      display: "flex", alignItems: "center", gap: 6,
-                      height: "100%", padding: "0 12px",
-                      background: "none", border: "none",
-                      borderTop: "2px solid transparent",
-                      borderRight: "1px solid var(--border)",
-                      color: isError ? "#dc2626" : isSuccess ? "var(--accent)" : disabled ? "var(--text-dim)" : "var(--text-muted)",
-                      cursor: disabled ? "not-allowed" : "pointer",
-                      opacity: disabled && autoNameStatus.kind !== "naming" ? 0.45 : 1,
-                      flexShrink: 0, fontSize: 11, whiteSpace: "nowrap",
-                      transition: "color 0.1s, background 0.1s, opacity 0.1s",
-                    }}
-                    onMouseEnter={(e) => {
-                      if (disabled) return;
-                      e.currentTarget.style.color = isError ? "#dc2626" : "var(--text)";
-                      e.currentTarget.style.background = "var(--bg-hover)";
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.color = isError ? "#dc2626" : isSuccess ? "var(--accent)" : disabled ? "var(--text-dim)" : "var(--text-muted)";
-                      e.currentTarget.style.background = "none";
-                    }}
-                  >
-                    {autoNameStatus.kind === "naming" ? (
-                      <svg className="animate-spin" width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                        <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2" opacity="0.25" />
-                        <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-                      </svg>
-                    ) : isSuccess ? (
-                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                        <polyline points="20 6 9 17 4 12" />
-                      </svg>
-                    ) : (
-                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                        <path d="m15 4 5 5L7 22l-5-5Z" />
-                        <path d="m14 5 5 5" />
-                        <path d="M6 4V2M5 3H3M19 19v3M17.5 20.5h3" />
-                      </svg>
-                    )}
-                    {!isMobile && <span>{label}</span>}
-                  </button>
-                );
-              })()}
+                ...auto-name 按钮...
+              })()} */}
+              {/* 生成标题（REFACTOR-DEAD）——原 auto-name 按钮 JSX 已注释，保留占位说明 */}
               <BranchNavigator
                 tree={branchTree}
                 activeLeafId={branchActiveLeafId}
@@ -1362,83 +1276,10 @@ function AppShellInner() {
               </button>
             );
           })()}
-          {/* D1 子代理运行观测入口：活动数 badge，只读浮层，与 workspace 开关同规格 */}
-          <button
-            type="button"
-            onClick={() => toggleTopPanel("runs")}
-            title={t("runs_toggle")}
-            aria-label={runsActiveCount > 0 ? t("runs_toggleWithActive", { count: runsActiveCount }) : t("runs_toggle")}
-            aria-pressed={activeTopPanel === "runs"}
-            style={{
-              marginLeft: showChat && (sessionStats || contextUsage) ? 0 : "auto",
-              position: "relative",
-              display: "flex", alignItems: "center", justifyContent: "center",
-              width: 36, height: 36, padding: 0,
-              background: activeTopPanel === "runs" ? "var(--bg-selected)" : "none",
-              border: "none",
-              borderTop: activeTopPanel === "runs" ? "2px solid var(--accent)" : "2px solid transparent",
-              borderLeft: "1px solid var(--border)",
-              color: activeTopPanel === "runs" ? "var(--text)" : "var(--text-muted)",
-              cursor: "pointer", flexShrink: 0,
-              transition: "background 0.12s, color 0.12s",
-            }}
-            onMouseEnter={(e) => { e.currentTarget.style.color = "var(--text)"; }}
-            onMouseLeave={(e) => { e.currentTarget.style.color = activeTopPanel === "runs" ? "var(--text)" : "var(--text-muted)"; }}
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
-            </svg>
-            {runsActiveCount > 0 && (
-              <span aria-hidden="true" style={{
-                position: "absolute", top: 2, right: 2,
-                minWidth: 14, height: 14, padding: "0 3px",
-                borderRadius: 999, background: "var(--accent)", color: "#fff",
-                fontSize: 9, lineHeight: "14px", textAlign: "center",
-                fontVariantNumeric: "tabular-nums", pointerEvents: "none",
-              }}>
-                {runsActiveCount > 99 ? "99+" : runsActiveCount}
-              </span>
-            )}
-          </button>
-          {/* D10 pi-lens 诊断入口：问题数 badge，只读浮层，轮询仅在面板打开时 */}
-          <button
-            type="button"
-            onClick={() => toggleTopPanel("diagnostics")}
-            title={t("lens_toggle")}
-            aria-label={diagIssueCount > 0 ? t("lens_toggleWithIssues", { count: diagIssueCount }) : t("lens_toggle")}
-            aria-pressed={activeTopPanel === "diagnostics"}
-            style={{
-              position: "relative",
-              display: "flex", alignItems: "center", justifyContent: "center",
-              width: 36, height: 36, padding: 0,
-              background: activeTopPanel === "diagnostics" ? "var(--bg-selected)" : "none",
-              border: "none",
-              borderTop: activeTopPanel === "diagnostics" ? "2px solid var(--accent)" : "2px solid transparent",
-              borderLeft: "1px solid var(--border)",
-              color: activeTopPanel === "diagnostics" ? "var(--text)" : "var(--text-muted)",
-              cursor: "pointer", flexShrink: 0,
-              transition: "background 0.12s, color 0.12s",
-            }}
-            onMouseEnter={(e) => { e.currentTarget.style.color = "var(--text)"; }}
-            onMouseLeave={(e) => { e.currentTarget.style.color = activeTopPanel === "diagnostics" ? "var(--text)" : "var(--text-muted)"; }}
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
-              <line x1="12" y1="9" x2="12" y2="13" />
-              <line x1="12" y1="17" x2="12.01" y2="17" />
-            </svg>
-            {diagIssueCount > 0 && (
-              <span aria-hidden="true" style={{
-                position: "absolute", top: 2, right: 2,
-                minWidth: 14, height: 14, padding: "0 3px",
-                borderRadius: 999, background: "var(--accent)", color: "#fff",
-                fontSize: 9, lineHeight: "14px", textAlign: "center",
-                fontVariantNumeric: "tabular-nums", pointerEvents: "none",
-              }}>
-                {diagIssueCount > 99 ? "99+" : diagIssueCount}
-              </span>
-            )}
-          </button>
+          {/* REFACTOR-DEAD: 顶栏子代理运行浮层已下线（P0c 产品决策：子代理在侧栏树展开查看）。
+          <button ...runs...>...</button> */}
+          {/* REFACTOR-DEAD: 顶栏诊断浮层已下线（P0c 产品决策）。
+          <button ...diagnostics...>...</button> */}
           {/* 最右侧 Files/Git 工作区开关：在顶栏内占位，不再固定覆盖内容 */}
           <button
             type="button"
@@ -1660,35 +1501,10 @@ function AppShellInner() {
                   )}
                 </div>
               )}
-              {activeTopPanel === "runs" && (
-                <div style={{
-                  background: "var(--bg-panel)",
-                  borderBottom: "1px solid var(--border)",
-                  boxShadow: "0 10px 28px rgba(0,0,0,0.10)",
-                }}>
-                  {/* 内容限宽居中：比 session info 的内容更聚焦，仍在 top panel/视口约束内 */}
-                  <div style={{ maxWidth: 760, margin: "0 auto" }}>
-                    <SubagentRunsPanel
-                      onOpenSubagentSession={handleRunsOpenSession}
-                      onActiveCountChange={setRunsActiveCount}
-                    />
-                  </div>
-                </div>
-              )}
-              {activeTopPanel === "diagnostics" && (
-                <div style={{
-                  background: "var(--bg-panel)",
-                  borderBottom: "1px solid var(--border)",
-                  boxShadow: "0 10px 28px rgba(0,0,0,0.10)",
-                }}>
-                  <div style={{ maxWidth: 760, margin: "0 auto" }}>
-                    <LensDiagnosticsPanel
-                      cwd={activeCwd}
-                      onIssueCountChange={setDiagIssueCount}
-                    />
-                  </div>
-                </div>
-              )}
+              {/* REFACTOR-DEAD: 顶栏 runs 浮层已下线（P0c：子代理在侧栏树展开查看）。
+              {activeTopPanel === "runs" && (...)} */}
+              {/* REFACTOR-DEAD: 顶栏诊断浮层已下线（P0c）。
+              {activeTopPanel === "diagnostics" && (...)} */}
               {activeTopPanel === "export" && selectedSession && canExportSession(selectedSession) && (
                 <div style={{
                   background: "var(--bg-panel)",
