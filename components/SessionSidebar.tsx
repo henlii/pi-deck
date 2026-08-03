@@ -1465,7 +1465,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     });
   }, []);
 
-  // 项目折叠：显式用户动作，写入偏好。行点击选中项目时顺带展开（见下行）。
+  // 项目折叠：显式用户动作，写入偏好。
   const toggleProjectCollapse = useCallback((root: string) => {
     updatePrefs((prev) => ({
       ...prev,
@@ -1483,22 +1483,6 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
         : [...prev.collapsedWorktreePaths, path],
     }));
   }, [updatePrefs]);
-
-  /** 点击项目标题：切换有效 cwd 到项目根；若项目处于折叠态则展开。 */
-  const handleSelectProject = useCallback((root: string) => {
-    selectCwd(root, root);
-    updatePrefs((prev) => prev.collapsedProjectRoots.includes(root)
-      ? { ...prev, collapsedProjectRoots: prev.collapsedProjectRoots.filter((item) => item !== root) }
-      : prev);
-  }, [selectCwd, updatePrefs]);
-
-  /** 点击非主 worktree 标题：切换有效 cwd 到该检出；折叠态则展开。 */
-  const handleSelectWorktree = useCallback((path: string, projectRoot: string) => {
-    selectCwd(path, projectRoot);
-    updatePrefs((prev) => prev.collapsedWorktreePaths.includes(path)
-      ? { ...prev, collapsedWorktreePaths: prev.collapsedWorktreePaths.filter((item) => item !== path) }
-      : prev);
-  }, [selectCwd, updatePrefs]);
 
   /**
    * 关闭项目：仅把 root 写入 UI 偏好并从侧栏隐藏——绝不删除目录、会话、
@@ -1831,8 +1815,6 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
             homeDir={homeDir}
             displayMode={displayMode}
             projectAliases={prefs.projectAliases}
-            selectedCwd={selectedCwd}
-            selectedProject={selectedProject}
             selectedSessionId={selectedSessionId}
             runningSessionIds={runningSessionIds}
             subagentRunningIds={subagentRunningIds}
@@ -1843,8 +1825,6 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
             searchActive={searchActive}
             onToggleProject={toggleProjectCollapse}
             onToggleWorktree={toggleWorktreeCollapse}
-            onSelectProject={handleSelectProject}
-            onSelectWorktree={handleSelectWorktree}
             onNewSession={handleNewSession}
             onSelectSession={handleSelectSessionFromList}
             trustEntries={trustEntries}
@@ -2480,8 +2460,6 @@ function ProjectSection({
   homeDir,
   displayMode,
   projectAliases,
-  selectedCwd,
-  selectedProject,
   selectedSessionId,
   runningSessionIds,
   subagentRunningIds,
@@ -2492,8 +2470,6 @@ function ProjectSection({
   searchActive,
   onToggleProject,
   onToggleWorktree,
-  onSelectProject,
-  onSelectWorktree,
   onNewSession,
   onSelectSession,
   menuOpen,
@@ -2526,8 +2502,6 @@ function ProjectSection({
   homeDir: string;
   displayMode: SidebarDisplayMode;
   projectAliases: ProjectAliases;
-  selectedCwd: string | null;
-  selectedProject: string | null;
   selectedSessionId: string | null;
   runningSessionIds: Set<string>;
   subagentRunningIds: Set<string>;
@@ -2538,8 +2512,6 @@ function ProjectSection({
   searchActive: boolean;
   onToggleProject: (root: string) => void;
   onToggleWorktree: (path: string) => void;
-  onSelectProject: (root: string) => void;
-  onSelectWorktree: (path: string, projectRoot: string) => void;
   onNewSession: (cwd: string) => void;
   onSelectSession: (s: SessionInfo) => void;
   menuOpen: boolean;
@@ -2570,19 +2542,32 @@ function ProjectSection({
   onCancelRemoveWorktree: () => void;
 }) {
   const { t } = useI18n();
-  const isCurrentProject = selectedProject === project.root;
   const collapsed = isSessionNodeEffectivelyCollapsed(collapsedProjectRoots, project.root, searchActive);
   const hasSessions = project.mainTree.length > 0 || project.worktrees.some((group) => group.tree.length > 0);
   // 显示名优先 alias；title 仍保留真实 root 路径（见行 title 属性）。
   const projectName = projectAliases[project.root] ?? displayCwd(project.root, homeDir);
   const trustEntry = trustEntries.get(project.root) ?? null;
+  const collapseLabel = collapsed
+    ? t("sidebar_expandProjectNamed", { project: projectName })
+    : t("sidebar_collapseProjectNamed", { project: projectName });
 
   return (
     <div>
-      {/* 项目行：点击切换有效 cwd；chevron 独立折叠 */}
+      {/* 项目行仅控制折叠；cwd 由会话行或新建会话入口切换。 */}
       <div
         className="sidebar-row"
-        onClick={() => onSelectProject(project.root)}
+        role="button"
+        tabIndex={0}
+        aria-expanded={!collapsed}
+        aria-label={collapseLabel}
+        onClick={() => onToggleProject(project.root)}
+        onMouseEnter={(event) => { event.currentTarget.style.background = "var(--bg-hover)"; }}
+        onMouseLeave={(event) => { event.currentTarget.style.background = "transparent"; }}
+        onKeyDown={(event) => {
+          if (event.target !== event.currentTarget || (event.key !== "Enter" && event.key !== " ")) return;
+          event.preventDefault();
+          onToggleProject(project.root);
+        }}
         title={project.root}
         style={{
           display: "flex",
@@ -2592,19 +2577,19 @@ function ProjectSection({
           paddingLeft: 6,
           paddingRight: 8,
           cursor: "pointer",
-          background: isCurrentProject ? "var(--bg-selected)" : "transparent",
-          color: isCurrentProject ? "var(--text)" : "var(--text-muted)",
+          background: "transparent",
+          color: "var(--text-muted)",
         }}
       >
         <ChevronButton
           collapsed={collapsed}
-           label={collapsed ? t("sidebar_expandProjectNamed", { project: projectName }) : t("sidebar_collapseProjectNamed", { project: projectName })}
+          label={collapseLabel}
           onClick={(e) => {
             e.stopPropagation();
             onToggleProject(project.root);
           }}
         />
-        <span style={{ display: "flex", flexShrink: 0, color: isCurrentProject ? "var(--accent)" : "var(--text-dim)" }}>
+        <span style={{ display: "flex", flexShrink: 0, color: "var(--text-dim)" }}>
           <FolderIcon size={13} />
         </span>
         <PathLabel
@@ -2612,7 +2597,7 @@ function ProjectSection({
           style={{
             flex: 1,
             fontSize: 12,
-            fontWeight: isCurrentProject ? 600 : 500,
+            fontWeight: 500,
             fontFamily: "var(--font-mono)",
           }}
         />
@@ -2699,7 +2684,6 @@ function ProjectSection({
               group={group}
               homeDir={homeDir}
               displayMode={displayMode}
-              selectedCwd={selectedCwd}
               selectedSessionId={selectedSessionId}
               runningSessionIds={runningSessionIds}
               subagentRunningIds={subagentRunningIds}
@@ -2708,7 +2692,6 @@ function ProjectSection({
               collapsedSessionIds={collapsedSessionIds}
               searchActive={searchActive}
               onToggleWorktree={(path) => onToggleWorktree(path)}
-              onSelectWorktree={(path) => onSelectWorktree(path, project.root)}
               onNewSession={() => onNewSession(group.path)}
               onSelectSession={onSelectSession}
               onRenamed={onRenamed}
@@ -2800,7 +2783,6 @@ function WorktreeGroupSection({
   group,
   homeDir,
   displayMode,
-  selectedCwd,
   selectedSessionId,
   runningSessionIds,
   subagentRunningIds,
@@ -2809,7 +2791,6 @@ function WorktreeGroupSection({
   collapsedSessionIds,
   searchActive,
   onToggleWorktree,
-  onSelectWorktree,
   onNewSession,
   onSelectSession,
   onRenamed,
@@ -2829,7 +2810,6 @@ function WorktreeGroupSection({
   group: SidebarWorktreeGroup;
   homeDir: string;
   displayMode: SidebarDisplayMode;
-  selectedCwd: string | null;
   selectedSessionId: string | null;
   runningSessionIds: Set<string>;
   subagentRunningIds: Set<string>;
@@ -2838,7 +2818,6 @@ function WorktreeGroupSection({
   collapsedSessionIds: ReadonlySet<string>;
   searchActive: boolean;
   onToggleWorktree: (path: string) => void;
-  onSelectWorktree: (path: string) => void;
   onNewSession: () => void;
   onSelectSession: (s: SessionInfo) => void;
   onRenamed: () => void;
@@ -2858,15 +2837,28 @@ function WorktreeGroupSection({
 }) {
   const { t } = useI18n();
   const collapsed = isSessionNodeEffectivelyCollapsed(collapsedWorktreePaths, group.path, searchActive);
-  const isCurrent = selectedCwd === group.path;
   const label = group.branch ?? displayCwd(group.path, homeDir);
+  const collapseLabel = collapsed
+    ? t("sidebar_expandWorktreeNamed", { name: label })
+    : t("sidebar_collapseWorktreeNamed", { name: label });
 
   return (
     <div>
-      {/* 分组标题行：点击切换有效 cwd 到该检出；chevron 独立折叠 */}
+      {/* 工作树行仅控制折叠；cwd 由会话行或新建会话入口切换。 */}
       <div
         className="sidebar-row"
-        onClick={() => onSelectWorktree(group.path)}
+        role="button"
+        tabIndex={0}
+        aria-expanded={!collapsed}
+        aria-label={collapseLabel}
+        onClick={() => onToggleWorktree(group.path)}
+        onMouseEnter={(event) => { event.currentTarget.style.background = "var(--bg-hover)"; }}
+        onMouseLeave={(event) => { event.currentTarget.style.background = "transparent"; }}
+        onKeyDown={(event) => {
+          if (event.target !== event.currentTarget || (event.key !== "Enter" && event.key !== " ")) return;
+          event.preventDefault();
+          onToggleWorktree(group.path);
+        }}
         title={group.path}
         style={{
           display: "flex",
@@ -2876,19 +2868,19 @@ function WorktreeGroupSection({
           paddingLeft: 22,
           paddingRight: 8,
           cursor: "pointer",
-          background: isCurrent ? "var(--bg-hover)" : "transparent",
-          color: isCurrent ? "var(--text)" : "var(--text-muted)",
+          background: "transparent",
+          color: "var(--text-muted)",
         }}
       >
         <ChevronButton
           collapsed={collapsed}
-           label={collapsed ? t("sidebar_expandWorktreeNamed", { name: label }) : t("sidebar_collapseWorktreeNamed", { name: label })}
+          label={collapseLabel}
           onClick={(e) => {
             e.stopPropagation();
             onToggleWorktree(group.path);
           }}
         />
-        <span style={{ display: "flex", flexShrink: 0, color: isCurrent ? "var(--accent)" : "var(--text-dim)" }}>
+        <span style={{ display: "flex", flexShrink: 0, color: "var(--text-dim)" }}>
           <BranchIcon size={11} />
         </span>
         <PathLabel
@@ -2896,7 +2888,7 @@ function WorktreeGroupSection({
           style={{
             flex: 1,
             fontSize: 11.5,
-            fontWeight: isCurrent ? 600 : 400,
+            fontWeight: 400,
             fontFamily: "var(--font-mono)",
           }}
         />
