@@ -6,8 +6,9 @@ import { useGlobalKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { SessionSidebar } from "./SessionSidebar";
 import { ChatWindow } from "./ChatWindow";
 import { FileViewer } from "./FileViewer";
-import { TabBar, type Tab } from "./TabBar";
-import { RightWorkspace } from "./RightWorkspace";
+import type { Tab } from "./TabBar";
+import { RightPanel } from "./RightPanel";
+import { SessionInfoPanel } from "./SessionInfoPanel";
 import { SettingsView } from "./SettingsView";
 import { CommandPalette } from "./CommandPalette";
 import type { SettingsPageId } from "./settings-nav";
@@ -18,7 +19,6 @@ import { BranchNavigator } from "./BranchNavigator";
 // import { LensDiagnosticsPanel } from "./LensDiagnosticsPanel";
 import { useTheme } from "@/hooks/useTheme";
 import { useIsMobile } from "@/hooks/useIsMobile";
-import { copyText } from "@/lib/clipboard";
 import { setDraft } from "@/lib/draft-store";
 import { encodeFilePathForApi, getFileName } from "@/lib/file-paths";
 import {
@@ -30,22 +30,20 @@ import {
 } from "@/lib/file-editor-state";
 import { buildAtMentionText, buildFileAtMentionsText } from "@/lib/file-fuzzy";
 import { getInitialNavigation } from "@/lib/initial-navigation";
-import {
-  buildSessionExportHtmlHref,
-  buildSessionExportJsonlHref,
-  canExportSession,
-} from "./session-export-links";
 import type { SessionInfo, SessionTreeNode } from "@/lib/types";
 import type { BranchActions } from "@/lib/branch-bookmarks";
 import type { ChatInputHandle } from "./ChatInput";
 import type { SessionStatsInfo } from "@/lib/pi-types";
 import { ProjectProvider, useProjectActions, useProjectIdentity } from "./ProjectProvider";
 import {
+  RIGHT_PANEL_WIDTH_DEFAULT,
   SIDEBAR_WIDTH_DEFAULT,
   SIDEBAR_WIDTH_MAX,
   SIDEBAR_WIDTH_MIN,
+  clampRightPanelWidth,
   clampSidebarWidth,
   loadSidebarPreferences,
+  saveRightPanelPreferences,
   saveSidebarWidth,
 } from "@/lib/ui-preferences";
 import { useI18n } from "@/lib/i18n";
@@ -57,7 +55,6 @@ import {
   type NewSessionIntent,
 } from "@/lib/new-session-intent";
 
-type SessionCopyField = "file" | "id";
 // REFACTOR-DEAD: AutoNameStatus 随生成标题入口下线（P0c）。
 // type AutoNameStatus =
 //   | { kind: "idle" }
@@ -127,8 +124,10 @@ function AppShellInner() {
   const [modelsRefreshKey, setModelsRefreshKey] = useState(0);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [mobileSidebarReady, setMobileSidebarReady] = useState(false);
-  const [workspaceOpen, setWorkspaceOpen] = useState(true);
-  const [workspaceWidth, setWorkspaceWidth] = useState(288);
+  // ── 右栏（文件/diff/会话信息面板）：初装默认关闭，开/关与宽度跨刷新记忆 ──
+  // 首次客户端渲染必须与 SSR 一致；挂载后再恢复浏览器持久化偏好。
+  const [rightPanelOpen, setRightPanelOpen] = useState(false);
+  const [rightPanelWidth, setRightPanelWidth] = useState(RIGHT_PANEL_WIDTH_DEFAULT);
   const [mobileWorkspaceReady, setMobileWorkspaceReady] = useState(false);
   // ── 桌面会话栏调宽：AppShell 是宽度唯一 owner（布局 owner），从偏好恢复并即时落盘 ──
   // 首次客户端渲染必须与 SSR 一致；挂载后再恢复浏览器持久化宽度。
@@ -187,15 +186,31 @@ function AppShellInner() {
   }, [applySidebarWidth]);
 
   useEffect(() => {
-    setSidebarWidth(loadSidebarPreferences().sidebarWidth);
+    const prefs = loadSidebarPreferences();
+    setSidebarWidth(prefs.sidebarWidth);
+    setRightPanelOpen(prefs.rightPanelOpen);
+    setRightPanelWidth(prefs.rightPanelWidth);
+  }, []);
+
+  // 右栏宽度/开关的唯一写入口：AppShell 是布局 owner，变更即时落盘。
+  const applyRightPanelWidth = useCallback((width: number) => {
+    const clamped = clampRightPanelWidth(width);
+    setRightPanelWidth(clamped);
+    saveRightPanelPreferences({ width: clamped });
+  }, []);
+
+  const applyRightPanelOpen = useCallback((open: boolean) => {
+    setRightPanelOpen(open);
+    saveRightPanelPreferences({ open });
   }, []);
 
   // On mobile the sidebar is an overlay drawer; hide it by default so the chat
   // is visible on load. Runs once the breakpoint resolves after hydration.
+  // 移动端抽屉显隐不落盘，避免覆盖桌面端持久化偏好。
   useEffect(() => {
     if (isMobile) {
       setSidebarOpen(false);
-      setWorkspaceOpen(false);
+      setRightPanelOpen(false);
     }
   }, [isMobile]);
   useEffect(() => {
@@ -224,7 +239,6 @@ function AppShellInner() {
   }, []);
 
   const [systemPrompt, setSystemPrompt] = useState<string | null>(null);
-  const systemBtnRef = useRef<HTMLButtonElement>(null);
 
   const handleSystemPromptChange = useCallback((prompt: string | null) => {
     setSystemPrompt(prompt);
@@ -240,19 +254,9 @@ function AppShellInner() {
   const handleSessionStatsChange = useCallback((stats: SessionStatsInfo | null) => {
     setSessionStats(stats);
   }, []);
-  const [copiedSessionField, setCopiedSessionField] = useState<SessionCopyField | null>(null);
-  const sessionCopyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const handleCopySessionField = useCallback((field: SessionCopyField, value: string) => {
-    void copyText(value).then(() => {
-      if (sessionCopyTimerRef.current) clearTimeout(sessionCopyTimerRef.current);
-      setCopiedSessionField(field);
-      sessionCopyTimerRef.current = setTimeout(() => setCopiedSessionField(null), 1400);
-    });
-  }, []);
 
   useEffect(() => {
     return () => {
-      if (sessionCopyTimerRef.current) clearTimeout(sessionCopyTimerRef.current);
       // REFACTOR-DEAD: autoName 计时器随入口下线。
       // if (autoNameTimerRef.current) clearTimeout(autoNameTimerRef.current);
     };
@@ -264,64 +268,40 @@ function AppShellInner() {
     setContextUsage(usage);
   }, []);
 
-  // Single active panel — only one dropdown open at a time
-  const [activeTopPanel, setActiveTopPanel] = useState<"branches" | "system" | "session" | "runs" | "export" | "diagnostics" | null>(null);
-  const [topPanelPos, setTopPanelPos] = useState<{ top: number; left: number; width: number } | null>(null);
-  // D1 runs 入口 badge：活动（queued/running）数由 SubagentRunsPanel 成功拉取后上报；
-  // 面板关闭期间保留最后已知值，不额外轮询（轮询只存在于面板打开时）。
-  // REFACTOR-DEAD: 顶栏 runs/诊断入口下线后不再使用。
-  // const [runsActiveCount, setRunsActiveCount] = useState(0);
-  // D10 诊断入口 badge：问题总数由 LensDiagnosticsPanel 成功拉取后上报；
-  // 面板关闭期间保留最后已知值，不额外轮询。
-  // const [diagIssueCount, setDiagIssueCount] = useState(0);
+  // 顶栏唯一剩余浮层：分支树（导出/系统/会话信息已迁入右栏「会话信息」Tab）。
+  const [activeTopPanel, setActiveTopPanel] = useState<"branches" | null>(null);
 
-  const toggleTopPanel = useCallback((panel: "branches" | "system" | "session" | "runs" | "export" | "diagnostics") => {
+  const toggleTopPanel = useCallback((panel: "branches") => {
     if (isMobile) {
       setSidebarOpen(false);
-      setWorkspaceOpen(false);
+      setRightPanelOpen(false);
     }
     setActiveTopPanel((cur) => cur === panel ? null : panel);
-  }, [isMobile]);
-
-  const openSessionStatsPanel = useCallback(() => {
-    if (isMobile) {
-      setSidebarOpen(false);
-      setWorkspaceOpen(false);
-    }
-    setActiveTopPanel("session");
   }, [isMobile]);
 
   const handleSidebarToggle = useCallback(() => {
     if (isMobile) {
       setActiveTopPanel(null);
-      setWorkspaceOpen(false);
+      setRightPanelOpen(false);
     }
     setSidebarOpen((open) => !open);
   }, [isMobile]);
 
-  const handleWorkspaceToggle = useCallback(() => {
+  const handleRightPanelToggle = useCallback(() => {
     if (isMobile) {
       setSidebarOpen(false);
       setActiveTopPanel(null);
+      // 移动端抽屉显隐不落盘（见 isMobile effect 注释）。
+      setRightPanelOpen((open) => !open);
+    } else {
+      applyRightPanelOpen(!rightPanelOpen);
     }
-    setWorkspaceOpen((open) => !open);
-  }, [isMobile]);
+  }, [isMobile, rightPanelOpen, applyRightPanelOpen]);
 
-  useEffect(() => {
-    if (!activeTopPanel || !topBarRef.current) return;
-    const update = () => {
-      const rect = topBarRef.current!.getBoundingClientRect();
-      setTopPanelPos({ top: rect.bottom, left: rect.left, width: rect.width });
-    };
-    update();
-    const ro = new ResizeObserver(update);
-    ro.observe(topBarRef.current);
-    return () => ro.disconnect();
-  }, [activeTopPanel]);
-
-  // 中央工作区文件 tabs：Chat 固定首 tab，文件预览不进入最右窄栏。
+  // 右栏文件预览 tabs：与固定导航 tab（files/git/info）共用同一活跃态。
   const [fileTabs, setFileTabs] = useState<Tab[]>([]);
-  const [activeFileTabId, setActiveFileTabId] = useState<string | null>(null);
+  /** 右栏活跃 tab："files" | "git" | "info" | `file:<bufferKey>`。 */
+  const [activeRightTabId, setActiveRightTabId] = useState<string>("files");
   const [pendingCloseTabId, setPendingCloseTabId] = useState<string | null>(null);
   const [fileEditorState, dispatchFileEditor] = useReducer(fileEditorReducer, EMPTY_FILE_EDITOR_STATE);
   const fileEditorStateRef = useRef(fileEditorState);
@@ -767,17 +747,20 @@ function AppShellInner() {
     const tabId = `file:${bufferKey}`;
     setFileTabs((prev) => {
       const existing = prev.find((t) => t.id === tabId);
-      if (!existing) return [...prev, { id: tabId, label: fileName, filePath, sourceSessionId, bufferKey, writable, readOnly: !writable }];
+      if (!existing) return [...prev, { id: tabId, label: fileName, filePath, sourceSessionId, bufferKey, writable, readOnly: !writable, kind: "file" as const }];
       return prev;
     });
     setPendingCloseTabId(null);
-    setActiveFileTabId(tabId);
-    // 移动端文件预览在中央主工作区显示：关闭左右抽屉，避免三层覆盖。
+    setActiveRightTabId(tabId);
+    // 分屏语义：打开文件只展开右栏，聊天主区始终可见、不卸载。
+    // 移动端右栏为全屏 overlay 抽屉：关闭会话侧栏避免三层覆盖。
     if (isMobile) {
       setSidebarOpen(false);
-      setWorkspaceOpen(false);
+      setRightPanelOpen(true);
+    } else {
+      applyRightPanelOpen(true);
     }
-  }, [isMobile]);
+  }, [isMobile, applyRightPanelOpen]);
 
   const handleOpenLinkedFile = useCallback((filePath: string) => {
     handleOpenFile(filePath, getFileName(filePath), selectedSession?.id ?? null, Boolean(selectedSession?.id && selectedSession.readOnly !== true));
@@ -789,10 +772,11 @@ function AppShellInner() {
     setFileTabs((prev) => {
       return prev.filter((t) => t.id !== tabId);
     });
-    setActiveFileTabId((cur) => {
+    setActiveRightTabId((cur) => {
       if (cur !== tabId) return cur;
+      // 活跃文件 tab 关闭：回退到最后一个文件 tab，否则回固定导航 tab。
       const remaining = fileTabs.filter((t) => t.id !== tabId);
-      return remaining.length > 0 ? remaining[remaining.length - 1].id : null;
+      return remaining.length > 0 ? remaining[remaining.length - 1].id : "files";
     });
     setPendingCloseTabId((current) => current === tabId ? null : current);
   }, [dispatchFileEditorAction, fileTabs]);
@@ -801,7 +785,7 @@ function AppShellInner() {
     const tab = fileTabs.find((item) => item.id === tabId);
     const buffer = tab?.bufferKey ? getBuffer(fileEditorStateRef.current, tab.bufferKey) : undefined;
     if (buffer?.dirty) {
-      setActiveFileTabId(tabId);
+      setActiveRightTabId(tabId);
       setPendingCloseTabId(tabId);
       return;
     }
@@ -824,18 +808,33 @@ function AppShellInner() {
     closeFileTabNow(tab.id, false);
   }, [closeFileTabNow, dispatchFileEditorAction, fileTabs, pendingCloseTabId]);
 
-  const centerTabs = useMemo<Tab[]>(() => [
-    { id: "chat", label: t("app_chat"), filePath: "", kind: "chat" },
+  // 右栏 Tab 行：固定导航 tab（files/git/info）在前，文件预览 tab 在后。
+  const rightTabs = useMemo<Tab[]>(() => [
+    { id: "files", label: t("workspace_files"), filePath: "", kind: "files" },
+    { id: "git", label: t("workspace_gitChanges"), filePath: "", kind: "git" },
+    { id: "info", label: t("app_sessionInfo"), filePath: "", kind: "info" },
     ...fileTabs.map((tab) => {
       const buffer = tab.bufferKey ? getBuffer(fileEditorState, tab.bufferKey) : undefined;
       return { ...tab, dirty: buffer?.dirty, saving: buffer?.saveState === "saving" };
     }),
   ], [fileEditorState, fileTabs, t]);
 
-  const handleSelectCenterTab = useCallback((tabId: string) => {
+  const handleSelectRightTab = useCallback((tabId: string) => {
     setPendingCloseTabId(null);
-    setActiveFileTabId(tabId === "chat" ? null : tabId);
+    setActiveRightTabId(tabId);
   }, []);
+
+  // 顶栏 stats / ChatWindow /session 命令入口：打开右栏并切到「会话信息」Tab。
+  const openSessionInfoTab = useCallback(() => {
+    if (isMobile) {
+      setSidebarOpen(false);
+      setRightPanelOpen(true);
+    } else {
+      applyRightPanelOpen(true);
+    }
+    setPendingCloseTabId(null);
+    setActiveRightTabId("info");
+  }, [isMobile, applyRightPanelOpen]);
 
   // 新会话 cwd 来自 intent 捕获值，不从随后可能变化的 activeCwd 裸推导。
   const effectiveNewSessionCwd =
@@ -844,7 +843,9 @@ function AppShellInner() {
   // While restoring initial session from URL, don't show the placeholder
   const showPlaceholder = initialSessionRestored && !showChat;
 
-  const activeFileTab = fileTabs.find((t) => t.id === activeFileTabId) ?? null;
+  const activeFileTab = activeRightTabId.startsWith("file:")
+    ? fileTabs.find((t) => t.id === activeRightTabId) ?? null
+    : null;
   const activeCwdName = activeCwd ? getFileName(activeCwd) || activeCwd : null;
   const windowTitle = activeCwdName ? `${activeCwdName} - Pidance` : "Pidance";
 
@@ -906,65 +907,6 @@ function AppShellInner() {
   return (
     <>
     <style>{`
-      @keyframes session-info-pop {
-        0% {
-          opacity: 0;
-          transform: translateY(-24px);
-          filter: blur(6px);
-          box-shadow: 0 2px 8px rgba(0,0,0,0);
-        }
-        55% {
-          opacity: 1;
-          transform: translateY(0);
-          filter: blur(0);
-          background: color-mix(in srgb, var(--accent) 8%, var(--bg-panel));
-          box-shadow: 0 18px 44px rgba(37,99,235,0.16);
-        }
-        100% {
-          opacity: 1;
-          transform: translateY(0);
-          filter: blur(0);
-          background: var(--bg-panel);
-          box-shadow: 0 10px 28px rgba(0,0,0,0.10);
-        }
-      }
-      @keyframes session-info-light-wash {
-        0% {
-          opacity: 0;
-          transform: translateX(-110%) skewX(-16deg);
-        }
-        24% {
-          opacity: 0.42;
-        }
-        100% {
-          opacity: 0;
-          transform: translateX(115%) skewX(-16deg);
-        }
-      }
-      .session-info-popover {
-        position: relative;
-        overflow: hidden;
-        transform-origin: top right;
-        animation: session-info-pop 360ms ease-out both;
-        will-change: transform, opacity, filter, background, box-shadow;
-      }
-      .session-info-popover::after {
-        content: "";
-        position: absolute;
-        top: 0;
-        bottom: 0;
-        left: 0;
-        width: 44%;
-        pointer-events: none;
-        background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--accent) 24%, transparent), transparent);
-        animation: session-info-light-wash 620ms ease-out both;
-      }
-      @media (prefers-reduced-motion: reduce) {
-        .session-info-popover,
-        .session-info-popover::after {
-          animation: none;
-        }
-      }
       @media (max-width: 640px) {
         .sidebar-overlay-backdrop.sidebar-mobile-pending {
           opacity: 0 !important;
@@ -1115,66 +1057,7 @@ function AppShellInner() {
                 onToggle={() => toggleTopPanel("branches")}
                 hasSession
               />
-              <button
-                ref={systemBtnRef}
-                onClick={() => toggleTopPanel("system")}
-                title={t("app_systemPrompt")}
-                aria-label={t("app_systemPrompt")}
-                aria-pressed={activeTopPanel === "system"}
-                style={{
-                  display: "flex", alignItems: "center", gap: 6,
-                  height: "100%", padding: "0 12px",
-                  background: activeTopPanel === "system" ? "var(--bg-selected)" : "none",
-                  border: "none",
-                  borderTop: activeTopPanel === "system" ? "2px solid var(--accent)" : "2px solid transparent",
-                  borderRight: "1px solid var(--border)",
-                  cursor: "pointer",
-                  color: activeTopPanel === "system" ? "var(--text)" : "var(--text-muted)",
-                  fontSize: 11, whiteSpace: "nowrap", transition: "color 0.1s, background 0.1s",
-                }}
-                onMouseEnter={(e) => { e.currentTarget.style.color = "var(--text)"; }}
-                onMouseLeave={(e) => { e.currentTarget.style.color = activeTopPanel === "system" ? "var(--text)" : "var(--text-muted)"; }}
-              >
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: systemPrompt ? "var(--accent)" : "var(--text-dim)", flexShrink: 0 }}>
-                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                  <polyline points="14 2 14 8 20 8" />
-                  <line x1="8" y1="13" x2="16" y2="13" />
-                  <line x1="8" y1="17" x2="13" y2="17" />
-                </svg>
-                {!isMobile && <span>{t("app_system")}</span>}
-              </button>
-              {/* D2 会话导出：仅已持久化会话（有真实 id）展示入口；
-                  新会话/未选择会话隐藏而非给出必然 404 的假动作。
-                  普通与 readOnly 会话都可导出，不套写能力门禁。 */}
-              {canExportSession(selectedSession) && (
-                <button
-                  type="button"
-                  onClick={() => toggleTopPanel("export")}
-                  title={t("export_toggle")}
-                  aria-label={t("export_toggle")}
-                  aria-pressed={activeTopPanel === "export"}
-                  style={{
-                    display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
-                    height: "100%", padding: "0 12px",
-                    background: activeTopPanel === "export" ? "var(--bg-selected)" : "none",
-                    border: "none",
-                    borderTop: activeTopPanel === "export" ? "2px solid var(--accent)" : "2px solid transparent",
-                    borderRight: "1px solid var(--border)",
-                    cursor: "pointer",
-                    color: activeTopPanel === "export" ? "var(--text)" : "var(--text-muted)",
-                    fontSize: 11, whiteSpace: "nowrap", transition: "color 0.1s, background 0.1s",
-                  }}
-                  onMouseEnter={(e) => { e.currentTarget.style.color = "var(--text)"; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.color = activeTopPanel === "export" ? "var(--text)" : "var(--text-muted)"; }}
-                >
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ flexShrink: 0 }}>
-                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                    <polyline points="7 10 12 15 17 10" />
-                    <line x1="12" y1="15" x2="12" y2="3" />
-                  </svg>
-                  {!isMobile && <span>{t("export_toggle")}</span>}
-                </button>
-              )}
+              {/* 系统提示词 / 导出 / 会话信息入口已迁入右栏「会话信息」Tab（P1 分屏） */}
             </div>
           )}
           {/* Session stats — right-aligned in top bar */}
@@ -1207,29 +1090,30 @@ function AppShellInner() {
             }
             const tooltip = tooltipParts.join("  |  ");
 
+            const infoTabActive = rightPanelOpen && activeRightTabId === "info";
             return (
               <button
                 type="button"
-                onClick={() => toggleTopPanel("session")}
+                onClick={openSessionInfoTab}
                 title={tooltip || t("app_sessionInfo")}
                 aria-label={t("app_sessionInfo")}
-                aria-pressed={activeTopPanel === "session"}
+                aria-pressed={infoTabActive}
                 style={{
                   marginLeft: "auto",
                   display: "flex", alignItems: "center", gap: 10,
                   paddingLeft: 12,
                   paddingRight: 12,
                   height: "100%",
-                  background: activeTopPanel === "session" ? "var(--bg-selected)" : "none",
+                  background: infoTabActive ? "var(--bg-selected)" : "none",
                   border: "none",
-                  borderTop: activeTopPanel === "session" ? "2px solid var(--accent)" : "2px solid transparent",
+                  borderTop: infoTabActive ? "2px solid var(--accent)" : "2px solid transparent",
                   fontSize: 11, color: "var(--text-muted)",
                   whiteSpace: "nowrap", cursor: "pointer",
                   fontVariantNumeric: "tabular-nums",
                   transition: "color 0.1s, background 0.1s",
                 }}
                 onMouseEnter={(e) => { e.currentTarget.style.color = "var(--text)"; }}
-                onMouseLeave={(e) => { e.currentTarget.style.color = activeTopPanel === "session" ? "var(--text)" : "var(--text-muted)"; }}
+                onMouseLeave={(e) => { e.currentTarget.style.color = infoTabActive ? "var(--text)" : "var(--text-muted)"; }}
               >
                 {isMobile && (
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -1280,20 +1164,20 @@ function AppShellInner() {
           <button ...runs...>...</button> */}
           {/* REFACTOR-DEAD: 顶栏诊断浮层已下线（P0c 产品决策）。
           <button ...diagnostics...>...</button> */}
-          {/* 最右侧 Files/Git 工作区开关：在顶栏内占位，不再固定覆盖内容 */}
+          {/* 右栏（文件/diff/会话信息面板）开关；stats 按钮缺省时自身右对齐 */}
           <button
             type="button"
-            onClick={handleWorkspaceToggle}
-            title={workspaceOpen ? t("app_hideFiles") : t("app_showFiles")}
-            aria-label={workspaceOpen ? t("app_hideFiles") : t("app_showFiles")}
-            aria-pressed={workspaceOpen}
+            onClick={handleRightPanelToggle}
+            title={rightPanelOpen ? t("app_hidePanel") : t("app_showPanel")}
+            aria-label={rightPanelOpen ? t("app_hidePanel") : t("app_showPanel")}
+            aria-pressed={rightPanelOpen}
             style={{
-              marginLeft: 0,
+              marginLeft: showChat && (sessionStats || contextUsage) ? 0 : "auto",
               display: "flex", alignItems: "center", justifyContent: "center",
               width: 36, height: 36, padding: 0,
-              background: workspaceOpen ? "var(--bg-selected)" : "none",
+              background: rightPanelOpen ? "var(--bg-selected)" : "none",
               border: "none", borderLeft: "1px solid var(--border)",
-              color: workspaceOpen ? "var(--text)" : "var(--text-muted)",
+              color: rightPanelOpen ? "var(--text)" : "var(--text-muted)",
               cursor: "pointer", flexShrink: 0,
               transition: "background 0.12s, color 0.12s",
             }}
@@ -1303,324 +1187,12 @@ function AppShellInner() {
               <line x1="15" y1="3" x2="15" y2="21" />
             </svg>
           </button>
-          {/* Top panel dropdown — shared, only one active at a time */}
-          {activeTopPanel && topPanelPos && (
-            <div style={{
-              position: "fixed",
-              top: topPanelPos.top,
-              left: topPanelPos.left,
-              width: topPanelPos.width,
-              maxHeight: `calc(100dvh - ${topPanelPos.top}px)`,
-              overflowY: "auto",
-              zIndex: 500,
-            }}>
-              {activeTopPanel === "system" && (
-                <div style={{
-                  background: "var(--bg-panel)",
-                  borderBottom: "1px solid var(--border)",
-                }}>
-                  {selectedSession?.readOnly === true ? (
-                    <div style={{ padding: "10px 16px", fontSize: 12, color: "var(--text-muted)", fontStyle: "italic" }}>
-                      {t("app_systemPromptReadOnlyHint")}
-                    </div>
-                  ) : systemPrompt ? (
-                    <div style={{
-                      maxHeight: "min(600px, 75vh)",
-                      overflowY: "auto",
-                      padding: "12px 16px",
-                      color: "var(--text-muted)",
-                      fontSize: 12,
-                      lineHeight: 1.6,
-                      whiteSpace: "pre-wrap",
-                      fontFamily: "var(--font-mono)",
-                    }}>
-                      {systemPrompt}
-                    </div>
-                  ) : systemPrompt === "" ? (
-                    <div style={{ padding: "10px 16px", fontSize: 12, color: "var(--text-muted)", fontStyle: "italic" }}>
-                      {t("app_systemPromptEmptyHint")}
-                    </div>
-                  ) : (
-                    <div style={{ padding: "10px 16px", fontSize: 12, color: "var(--text-muted)", fontStyle: "italic" }}>
-                      {t("app_systemPromptAfterMessageHint")}
-                    </div>
-                  )}
-                </div>
-              )}
-              {activeTopPanel === "session" && (
-                <div className="session-info-popover" style={{
-                  background: "var(--bg-panel)",
-                  borderBottom: "1px solid var(--border)",
-                  boxShadow: "0 10px 28px rgba(0,0,0,0.10)",
-                  padding: "12px 16px",
-                }}>
-                  {sessionStats ? (() => {
-                    const sessionRows = [
-                      ...(sessionStats.sessionName ? [{ label: t("app_name"), value: sessionStats.sessionName, copyField: null }] : []),
-                      { label: t("app_file"), value: sessionStats.sessionFile ?? t("app_inMemory"), copyField: "file" as const },
-                      { label: t("app_id"), value: sessionStats.sessionId, copyField: "id" as const },
-                    ];
-                    const messageRows = [
-                      [t("app_user"), sessionStats.userMessages.toLocaleString()],
-                      [t("app_assistant"), sessionStats.assistantMessages.toLocaleString()],
-                      [t("app_toolCalls"), sessionStats.toolCalls.toLocaleString()],
-                      [t("app_toolResults"), sessionStats.toolResults.toLocaleString()],
-                      [t("app_total"), sessionStats.totalMessages.toLocaleString()],
-                    ];
-                    const tokenRows = [
-                      [t("app_input"), sessionStats.tokens.input.toLocaleString()],
-                      [t("app_output"), sessionStats.tokens.output.toLocaleString()],
-                      ...(sessionStats.tokens.cacheRead > 0 ? [[t("app_cacheRead"), sessionStats.tokens.cacheRead.toLocaleString()]] : []),
-                      ...(sessionStats.tokens.cacheWrite > 0 ? [[t("app_cacheWrite"), sessionStats.tokens.cacheWrite.toLocaleString()]] : []),
-                      [t("app_total"), sessionStats.tokens.total.toLocaleString()],
-                    ];
-                    const ctx = contextUsage ?? sessionStats.contextUsage;
-                    const formatCompact = (n: number) => n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1000 ? `${(n / 1000).toFixed(0)}k` : String(n);
-                    const extraTokenRows = [
-                      ...(sessionStats.cost > 0 ? [[t("app_cost"), `$${sessionStats.cost.toFixed(4)}`]] : []),
-                      ...(ctx?.contextWindow ? [[t("app_context"), `${ctx.percent !== null ? `${ctx.percent.toFixed(1)}%` : "?"} / ${formatCompact(ctx.contextWindow)}`]] : []),
-                    ];
-                    const section = (
-                      title: string,
-                      sectionRows: string[][],
-                      valueAlign: "left" | "right" = "left",
-                      compact = false,
-                    ) => (
-                        <div style={{ minWidth: 0 }}>
-                          <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text)", marginBottom: 6 }}>{title}</div>
-                          <div style={{
-                            display: "grid",
-                            gridTemplateColumns: compact ? "max-content max-content" : "auto minmax(0, 1fr)",
-                            columnGap: compact ? 14 : 12,
-                            rowGap: 4,
-                            justifyContent: compact ? "start" : undefined,
-                          }}>
-                            {sectionRows.map(([label, value]) => (
-                              <div key={`${title}:${label}`} style={{ display: "contents" }}>
-                                <div style={{ color: "var(--text-dim)", whiteSpace: "nowrap" }}>{label}</div>
-                                <div style={{
-                                  color: "var(--text-muted)",
-                                  minWidth: 0,
-                                  overflowWrap: compact ? "normal" : "anywhere",
-                                  textAlign: valueAlign,
-                                  whiteSpace: valueAlign === "right" ? "nowrap" : "normal",
-                                }}>{value}</div>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      );
-                    const copyButton = (field: SessionCopyField, value: string) => {
-                      const copied = copiedSessionField === field;
-                      return (
-                        <button
-                          type="button"
-                          title={copied ? t("app_copied") : field === "file" ? t("app_copyFilePath") : t("app_copySessionId")}
-                          onClick={() => handleCopySessionField(field, value)}
-                          style={{
-                            alignSelf: "start",
-                            display: "inline-flex",
-                            alignItems: "center",
-                            justifyContent: "center",
-                            width: 22,
-                            height: 22,
-                            marginTop: -2,
-                            color: copied ? "var(--accent)" : "var(--text-dim)",
-                            background: "transparent",
-                            border: "1px solid var(--border)",
-                            borderRadius: 4,
-                            cursor: "pointer",
-                            flex: "0 0 auto",
-                            transition: "color 0.12s, border-color 0.12s, background 0.12s",
-                          }}
-                          onMouseEnter={(e) => {
-                            e.currentTarget.style.color = "var(--accent)";
-                            e.currentTarget.style.borderColor = "var(--accent)";
-                            e.currentTarget.style.background = "var(--bg-hover)";
-                          }}
-                          onMouseLeave={(e) => {
-                            e.currentTarget.style.color = copied ? "var(--accent)" : "var(--text-dim)";
-                            e.currentTarget.style.borderColor = "var(--border)";
-                            e.currentTarget.style.background = "transparent";
-                          }}
-                        >
-                          {copied ? (
-                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                              <polyline points="20 6 9 17 4 12" />
-                            </svg>
-                          ) : (
-                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                              <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-                              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-                            </svg>
-                          )}
-                        </button>
-                      );
-                    };
-                    const sessionInfoSection = (
-                      <div style={{ minWidth: 0 }}>
-                        <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text)", marginBottom: 6 }}>{t("app_sessionInfo")}</div>
-                        <div style={{ display: "grid", gridTemplateColumns: "auto minmax(0, 1fr) auto", columnGap: 12, rowGap: 8, alignItems: "start" }}>
-                          {sessionRows.map((row) => (
-                            <div key={`session-info:${row.label}`} style={{ display: "contents" }}>
-                              <div style={{ color: "var(--text-dim)", whiteSpace: "nowrap" }}>{row.label}</div>
-                              <div style={{
-                                color: "var(--text-muted)",
-                                minWidth: 0,
-                                overflowWrap: "anywhere",
-                                wordBreak: "break-word",
-                                whiteSpace: "normal",
-                              }}>{row.value}</div>
-                              <div>{row.copyField ? copyButton(row.copyField, row.value) : null}</div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    );
-
-                    return (
-                      <div style={{
-                        display: "grid",
-                        gridTemplateColumns: isMobile
-                          ? "1fr"
-                          : "minmax(360px, 1.7fr) minmax(140px, 0.55fr) minmax(190px, 0.75fr)",
-                        gap: isMobile ? 16 : 24,
-                        fontSize: 12,
-                        lineHeight: 1.5,
-                        fontFamily: "var(--font-mono)",
-                      }}>
-                        {sessionInfoSection}
-                        {section(t("app_messages"), messageRows)}
-                        {section(t("app_tokens"), [...tokenRows, ...extraTokenRows], "right", true)}
-                      </div>
-                    );
-                  })() : (
-                    <div style={{ fontSize: 12, color: "var(--text-muted)", fontStyle: "italic" }}>
-                      {t("app_sessionInfoAfterMessageHint")}
-                    </div>
-                  )}
-                </div>
-              )}
-              {/* REFACTOR-DEAD: 顶栏 runs 浮层已下线（P0c：子代理在侧栏树展开查看）。
-              {activeTopPanel === "runs" && (...)} */}
-              {/* REFACTOR-DEAD: 顶栏诊断浮层已下线（P0c）。
-              {activeTopPanel === "diagnostics" && (...)} */}
-              {activeTopPanel === "export" && selectedSession && canExportSession(selectedSession) && (
-                <div style={{
-                  background: "var(--bg-panel)",
-                  borderBottom: "1px solid var(--border)",
-                  boxShadow: "0 10px 28px rgba(0,0,0,0.10)",
-                }}>
-                  {/* D2 导出菜单：两项原生 <a href download>，不 fetch/blob；
-                      href 在渲染期由 branchActiveLeafId 重建，切分支即实时更新（无 leaf 省略 leafId）。
-                      readOnly 子会话同样可导出——导出不写会话文件，不套写能力门禁。 */}
-                  <div style={{ maxWidth: 520, margin: "0 auto", padding: "12px 16px" }}>
-                    <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text)", marginBottom: 8 }}>
-                      {t("export_title")}
-                    </div>
-                    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                      {([
-                        {
-                          key: "html",
-                          href: buildSessionExportHtmlHref(selectedSession.id),
-                          label: t("export_htmlLabel"),
-                          desc: t("export_htmlDesc"),
-                          icon: (
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                              <polyline points="16 18 22 12 16 6" />
-                              <polyline points="8 6 2 12 8 18" />
-                            </svg>
-                          ),
-                        },
-                        {
-                          key: "jsonl",
-                          href: buildSessionExportJsonlHref(selectedSession.id, branchActiveLeafId),
-                          label: t("export_jsonlLabel"),
-                          desc: t("export_jsonlDesc"),
-                          icon: (
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                              <path d="M8 3H7a2 2 0 0 0-2 2v4a2 2 0 0 1-2 2 2 2 0 0 1 2 2v4a2 2 0 0 0 2 2h1" />
-                              <path d="M16 21h1a2 2 0 0 0 2-2v-4a2 2 0 0 1 2-2 2 2 0 0 1-2-2V5a2 2 0 0 0-2-2h-1" />
-                            </svg>
-                          ),
-                        },
-                      ]).map((item) => (
-                        <a
-                          key={item.key}
-                          href={item.href}
-                          download
-                          title={item.desc}
-                          onClick={() => setActiveTopPanel(null)}
-                          style={{
-                            display: "flex", alignItems: "center", gap: 10,
-                            padding: "8px 10px", borderRadius: 6,
-                            border: "1px solid var(--border)",
-                            background: "none", textDecoration: "none",
-                            color: "var(--text)", cursor: "pointer",
-                            transition: "background 0.12s, border-color 0.12s",
-                          }}
-                          onMouseEnter={(e) => {
-                            e.currentTarget.style.background = "var(--bg-hover)";
-                            e.currentTarget.style.borderColor = "var(--accent)";
-                          }}
-                          onMouseLeave={(e) => {
-                            e.currentTarget.style.background = "none";
-                            e.currentTarget.style.borderColor = "var(--border)";
-                          }}
-                        >
-                          <span style={{ color: "var(--accent)", display: "flex", flexShrink: 0 }}>{item.icon}</span>
-                          <span style={{ flex: 1, minWidth: 0 }}>
-                            <span style={{ display: "block", fontSize: 12, fontWeight: 600, lineHeight: 1.4 }}>{item.label}</span>
-                            <span style={{ display: "block", fontSize: 11, color: "var(--text-muted)", lineHeight: 1.4, overflowWrap: "anywhere" }}>{item.desc}</span>
-                          </span>
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ color: "var(--text-dim)", flexShrink: 0 }}>
-                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                            <polyline points="7 10 12 15 17 10" />
-                            <line x1="12" y1="15" x2="12" y2="3" />
-                          </svg>
-                        </a>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-
         </div>
 
-        {/* 中央主工作区 tab：只有打开文件时出现，Chat 固定首项 */}
-        {fileTabs.length > 0 && (
-          <div style={{ flexShrink: 0, borderBottom: "1px solid var(--border)" }}>
-            <TabBar
-              tabs={centerTabs}
-              activeTabId={activeFileTabId ?? "chat"}
-              onSelectTab={handleSelectCenterTab}
-              onCloseTab={handleCloseFileTab}
-            />
-            {pendingCloseTabId && fileTabs.some((tab) => tab.id === pendingCloseTabId) && (
-              <div className="file-close-confirm" role="alert">
-                <span className="file-close-confirm__message">{t("app_unsavedChangesIn", { name: fileTabs.find((tab) => tab.id === pendingCloseTabId)?.label ?? "" })}</span>
-                <button type="button" className="file-close-confirm__button" onClick={() => void handleSaveAndClose()} title={t("app_saveAndClose")} aria-label={t("app_saveAndClose")}>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
-                  <span>{t("app_saveAndClose")}</span>
-                </button>
-                <button type="button" className="file-close-confirm__button is-danger" onClick={handleDiscardAndClose} title={t("app_discardChanges")} aria-label={t("app_discardChanges")}>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="m19 6-1 14H6L5 6m3 0V4h8v2"/></svg>
-                  <span>{t("app_discardChanges")}</span>
-                </button>
-                <button type="button" className="file-close-confirm__button" onClick={() => setPendingCloseTabId(null)} title={t("app_cancelClosing")} aria-label={t("app_cancelClosing")}>
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-                  <span>{t("common_cancel")}</span>
-                </button>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Chat 保持挂载：切到文件 tab 只视觉隐藏，SSE/流式状态与滚动不丢失 */}
+        {/* Chat 固定主区：打开文件/diff/会话信息只展开右栏，Chat 始终可见且保持挂载，
+            SSE/流式状态与滚动不丢失（P1 分屏语义，不再有互斥隐藏）。 */}
         <div style={{ flex: 1, overflow: "hidden", position: "relative" }}>
-          <div style={{ display: activeFileTab ? "none" : "block", height: "100%", overflow: "hidden", position: "relative" }}>
+          <div style={{ height: "100%", overflow: "hidden", position: "relative" }}>
             {showChat ? (
               <ChatWindow
                 key={sessionKey}
@@ -1636,7 +1208,7 @@ function AppShellInner() {
                 onBranchDataChange={handleBranchDataChange}
                 onSystemPromptChange={handleSystemPromptChange}
                 onSessionStatsChange={handleSessionStatsChange}
-                onSessionStatsPanelOpen={openSessionStatsPanel}
+                onSessionStatsPanelOpen={openSessionInfoTab}
                 onContextUsageChange={handleContextUsageChange}
                 onOpenFile={handleOpenLinkedFile}
                 onOpenSubagentSession={handleOpenSubagentSession}
@@ -1671,46 +1243,62 @@ function AppShellInner() {
               )
             ) : null}
           </div>
-
-          {activeFileTab?.filePath && (
-            <div style={{ height: "100%", overflow: "hidden" }}>
-              <FileViewer
-                filePath={activeFileTab.filePath}
-                cwd={activeCwd ?? undefined}
-                sourceSessionId={activeFileTab.sourceSessionId}
-                writable={activeFileTab.writable === true}
-                buffer={activeFileTab.bufferKey ? getBuffer(fileEditorState, activeFileTab.bufferKey) : undefined}
-                dispatchBuffer={dispatchFileEditorAction}
-                onSave={activeFileTab.bufferKey ? () => saveFileBuffer(activeFileTab.bufferKey!) : undefined}
-                gitRefreshKey={explorerRefreshKey}
-                onOpenFile={(filePath) => handleOpenFile(filePath, getFileName(filePath), activeFileTab.sourceSessionId, activeFileTab.writable === true)}
-              />
-            </div>
-          )}
         </div>
       </div>
 
-      {/* 移动端遮罩：点击关闭最右工作区 */}
+      {/* 移动端遮罩：点击关闭右栏 */}
       <div
         className={`sidebar-overlay-backdrop workspace-overlay-backdrop${mobileWorkspaceReady ? "" : " workspace-mobile-pending"}`}
-        onClick={() => setWorkspaceOpen(false)}
+        onClick={() => setRightPanelOpen(false)}
         style={{
           position: "fixed", inset: 0, zIndex: 199,
           background: "rgba(0,0,0,0.4)",
-          opacity: workspaceOpen ? 1 : 0,
-          pointerEvents: workspaceOpen ? "auto" : "none",
+          opacity: rightPanelOpen ? 1 : 0,
+          pointerEvents: rightPanelOpen ? "auto" : "none",
           transition: "opacity 0.25s ease",
         }}
       />
 
-      <RightWorkspace
-        open={workspaceOpen}
-        width={workspaceWidth}
-        onWidthChange={setWorkspaceWidth}
-        onClose={() => setWorkspaceOpen(false)}
+      <RightPanel
+        open={rightPanelOpen}
+        width={rightPanelWidth}
+        onWidthChange={applyRightPanelWidth}
+        onClose={() => isMobile ? setRightPanelOpen(false) : applyRightPanelOpen(false)}
         cwd={activeCwd}
         isMobile={isMobile}
         mobileReady={mobileWorkspaceReady}
+        tabs={rightTabs}
+        activeTabId={activeRightTabId}
+        onSelectTab={handleSelectRightTab}
+        onCloseTab={handleCloseFileTab}
+        pendingCloseTabLabel={pendingCloseTabId ? fileTabs.find((tab) => tab.id === pendingCloseTabId)?.label ?? null : null}
+        onSaveAndClose={() => void handleSaveAndClose()}
+        onDiscardAndClose={handleDiscardAndClose}
+        onCancelClose={() => setPendingCloseTabId(null)}
+        fileViewerContent={activeFileTab?.filePath ? (
+          <div style={{ height: "100%", overflow: "hidden" }}>
+            <FileViewer
+              filePath={activeFileTab.filePath}
+              cwd={activeCwd ?? undefined}
+              sourceSessionId={activeFileTab.sourceSessionId}
+              writable={activeFileTab.writable === true}
+              buffer={activeFileTab.bufferKey ? getBuffer(fileEditorState, activeFileTab.bufferKey) : undefined}
+              dispatchBuffer={dispatchFileEditorAction}
+              onSave={activeFileTab.bufferKey ? () => saveFileBuffer(activeFileTab.bufferKey!) : undefined}
+              gitRefreshKey={explorerRefreshKey}
+              onOpenFile={(filePath) => handleOpenFile(filePath, getFileName(filePath), activeFileTab.sourceSessionId, activeFileTab.writable === true)}
+            />
+          </div>
+        ) : null}
+        sessionInfoContent={(
+          <SessionInfoPanel
+            session={selectedSession}
+            sessionStats={sessionStats}
+            contextUsage={contextUsage}
+            systemPrompt={systemPrompt}
+            branchActiveLeafId={branchActiveLeafId}
+          />
+        )}
         onOpenFile={(filePath, fileName) => handleOpenFile(filePath, fileName, selectedSession?.id ?? null, Boolean(selectedSession?.id && selectedSession.readOnly !== true))}
         fileRefreshKey={explorerRefreshKey}
         gitRefreshKey={explorerRefreshKey}
@@ -1748,7 +1336,6 @@ function AppShellInner() {
       onToggleTheme={toggleTheme}
       cwd={activeCwd ?? selectedSession?.cwd ?? null}
     />
-    <AboutDialog open={aboutOpen} onClose={() => setAboutOpen(false)} />
     </>
   );
 }

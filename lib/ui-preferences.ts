@@ -16,6 +16,11 @@ export const SIDEBAR_WIDTH_MIN = 240;
 export const SIDEBAR_WIDTH_MAX = 520;
 export const SIDEBAR_WIDTH_DEFAULT = 300;
 
+/** 右栏（文件/diff/会话信息面板）可调宽边界：窄到不挤压聊天，宽到可读代码。 */
+export const RIGHT_PANEL_WIDTH_MIN = 320;
+export const RIGHT_PANEL_WIDTH_MAX = 720;
+export const RIGHT_PANEL_WIDTH_DEFAULT = 400;
+
 /**
  * 将任意输入钳到侧栏宽度合法范围；非有限数回退默认。
  * 解析与写入共用，保证持久化值始终可渲染。
@@ -23,6 +28,20 @@ export const SIDEBAR_WIDTH_DEFAULT = 300;
 export function clampSidebarWidth(value: unknown): number {
   if (typeof value !== "number" || !Number.isFinite(value)) return SIDEBAR_WIDTH_DEFAULT;
   return Math.min(SIDEBAR_WIDTH_MAX, Math.max(SIDEBAR_WIDTH_MIN, Math.round(value)));
+}
+
+/**
+ * 将任意输入钳到右栏宽度合法范围；非有限数回退默认。
+ * 解析与写入共用，保证持久化值始终可渲染。
+ */
+export function clampRightPanelWidth(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return RIGHT_PANEL_WIDTH_DEFAULT;
+  return Math.min(RIGHT_PANEL_WIDTH_MAX, Math.max(RIGHT_PANEL_WIDTH_MIN, Math.round(value)));
+}
+
+/** 容错解析右栏开/关：仅接受显式 boolean true，其余（含旧数据缺字段）一律关闭。 */
+export function parseRightPanelOpen(value: unknown): boolean {
+  return value === true;
 }
 
 export interface SidebarPreferences {
@@ -37,6 +56,10 @@ export interface SidebarPreferences {
   closedProjectRoots: string[];
   /** 桌面侧栏宽度（px）；损坏/越界值解析时 clamp。 */
   sidebarWidth: number;
+  /** 右栏（文件/diff/会话信息面板）开/关；初装默认关闭，之后记住。 */
+  rightPanelOpen: boolean;
+  /** 右栏宽度（px）；损坏/越界值解析时 clamp。 */
+  rightPanelWidth: number;
 }
 
 export const DEFAULT_SIDEBAR_PREFERENCES: SidebarPreferences = {
@@ -46,6 +69,8 @@ export const DEFAULT_SIDEBAR_PREFERENCES: SidebarPreferences = {
   projectAliases: {},
   closedProjectRoots: [],
   sidebarWidth: SIDEBAR_WIDTH_DEFAULT,
+  rightPanelOpen: false,
+  rightPanelWidth: RIGHT_PANEL_WIDTH_DEFAULT,
 };
 
 export const STORAGE_KEY = "pidance:sidebar-preferences";
@@ -105,6 +130,9 @@ export function parseSidebarPreferences(raw: unknown): SidebarPreferences {
     closedProjectRoots: parsePathList(record.closedProjectRoots),
     // 旧数据缺字段时 clamp 非数字 → 默认 300；越界/损坏一律钳入 [min, max]。
     sidebarWidth: clampSidebarWidth(record.sidebarWidth),
+    // 旧数据无右栏字段：右栏默认关闭、宽度默认。
+    rightPanelOpen: parseRightPanelOpen(record.rightPanelOpen),
+    rightPanelWidth: clampRightPanelWidth(record.rightPanelWidth),
   };
 }
 
@@ -116,6 +144,8 @@ export function serializeSidebarPreferences(prefs: SidebarPreferences): string {
     projectAliases: prefs.projectAliases,
     closedProjectRoots: prefs.closedProjectRoots,
     sidebarWidth: clampSidebarWidth(prefs.sidebarWidth),
+    rightPanelOpen: parseRightPanelOpen(prefs.rightPanelOpen),
+    rightPanelWidth: clampRightPanelWidth(prefs.rightPanelWidth),
   });
 }
 
@@ -171,4 +201,30 @@ export function saveSidebarWidthToStorage(storage: StorageLike, width: number): 
 export function saveSidebarWidth(width: number): void {
   if (typeof window === "undefined") return;
   saveSidebarWidthToStorage(window.localStorage, width);
+}
+
+/**
+ * 只更新存储中的右栏开/关与宽度（read-modify-write），其余字段原样保留。
+ * 右栏偏好的唯一 owner 是 AppShell（布局 owner）；其它写入不得经此函数。
+ */
+export function saveRightPanelPreferencesToStorage(
+  storage: StorageLike,
+  patch: { open?: boolean; width?: number },
+): void {
+  try {
+    const current = loadSidebarPreferencesFromStorage(storage);
+    storage.setItem(STORAGE_KEY, serializeSidebarPreferences({
+      ...current,
+      rightPanelOpen: patch.open === undefined ? current.rightPanelOpen : parseRightPanelOpen(patch.open),
+      rightPanelWidth: patch.width === undefined ? current.rightPanelWidth : clampRightPanelWidth(patch.width),
+    }));
+  } catch {
+    // 忽略存储配额 / 隐私模式错误
+  }
+}
+
+/** SSR / 无 localStorage 环境安全 no-op。 */
+export function saveRightPanelPreferences(patch: { open?: boolean; width?: number }): void {
+  if (typeof window === "undefined") return;
+  saveRightPanelPreferencesToStorage(window.localStorage, patch);
 }

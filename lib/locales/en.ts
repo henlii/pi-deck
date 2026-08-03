@@ -271,6 +271,11 @@ export const en = {
   workspace_refresh: 'Refresh',
   workspace_close: 'Close',
   workspace_selectProject: 'Select project',
+  // right panel (files / diff / session info)
+  app_showPanel: 'Show panel',
+  app_hidePanel: 'Hide panel',
+  panel_ariaLabel: 'Files, Git and session panel',
+  panel_selectSessionHint: 'Select a session to view its info',
   // git
   git_loading: 'Loading Git status…', git_openFile: 'Open {path} ({status})',
   git_notRepo: 'Not a Git repository',

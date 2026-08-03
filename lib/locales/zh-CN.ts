@@ -271,6 +271,11 @@ export const zhCN: Record<TranslationKey, string> = {
   workspace_refresh: '刷新',
   workspace_close: '关闭',
   workspace_selectProject: '选择项目',
+  // 右栏（文件 / diff / 会话信息）
+  app_showPanel: '显示面板',
+  app_hidePanel: '隐藏面板',
+  panel_ariaLabel: '文件、Git 与会话面板',
+  panel_selectSessionHint: '选择会话后查看会话信息',
   // git
   git_loading: '正在加载 Git 状态…', git_openFile: '打开 {path}（{status}）',
   git_notRepo: '不是 Git 仓库',

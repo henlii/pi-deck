@@ -27,7 +27,7 @@ const STATUS_RANK: Record<GitFileStatusKind, number> = {
 };
 
 /**
- * 只读 Git 工作区变更面板：复用 /api/git/status 数据（由 RightWorkspace 抓取），
+ * 只读 Git 工作区变更面板：复用 /api/git/status 数据（由 RightPanel 抓取），
  * 点击文件行打开现有文件预览（FileViewer 自带 Diff 模式），不提供 stage/commit。
  */
 export function GitPanel({ cwd, status, loading, error, onOpenFile }: Props) {

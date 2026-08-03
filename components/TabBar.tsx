@@ -9,14 +9,61 @@ export interface Tab {
   label: string;
   filePath: string;
   sourceSessionId?: string | null;
-  /** chat = 会话主 tab（不可关闭、固定在首）；缺省为文件 tab。 */
-  kind?: "chat" | "file";
+  /**
+   * chat = 会话主 tab（不可关闭、固定在首）；files/git/info = 右栏固定导航 tab
+   * （不可关闭）；file 或缺省 = 文件预览 tab（可关闭）。
+   */
+  kind?: "chat" | "file" | "files" | "git" | "info";
   /** 文件 tab 打开时固化的写能力，不能随当前会话切换而变化。 */
   writable?: boolean;
   readOnly?: boolean;
   bufferKey?: string;
   dirty?: boolean;
   saving?: boolean;
+}
+
+/** 固定导航 tab（不可关闭）：chat 主 tab 与右栏 files/git/info。 */
+function isFixedTab(tab: Tab): boolean {
+  return tab.kind !== undefined && tab.kind !== "file";
+}
+
+function PanelTabIcon({ kind }: { kind: Tab["kind"] }) {
+  const common = {
+    width: 13,
+    height: 13,
+    viewBox: "0 0 24 24",
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: 2,
+    strokeLinecap: "round",
+    strokeLinejoin: "round",
+    "aria-hidden": true,
+  } as const;
+  if (kind === "files") {
+    return (
+      <svg {...common}>
+        <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
+      </svg>
+    );
+  }
+  if (kind === "git") {
+    return (
+      <svg {...common}>
+        <line x1="6" y1="3" x2="6" y2="15" />
+        <circle cx="18" cy="6" r="3" />
+        <circle cx="6" cy="18" r="3" />
+        <path d="M18 9a9 9 0 0 1-9 9" />
+      </svg>
+    );
+  }
+  // info
+  return (
+    <svg {...common}>
+      <circle cx="12" cy="12" r="10" />
+      <line x1="12" y1="16" x2="12" y2="12" />
+      <line x1="12" y1="8" x2="12.01" y2="8" />
+    </svg>
+  );
 }
 
 interface Props {
@@ -43,7 +90,7 @@ export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab }: Props) {
     >
       {tabs.map((tab) => {
         const isActive = tab.id === activeTabId;
-        const isChat = tab.kind === "chat";
+        const isFixed = isFixedTab(tab);
         return (
           <div
             key={tab.id}
@@ -61,7 +108,7 @@ export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab }: Props) {
               if (e.button === 1) e.preventDefault();
             }}
             onAuxClick={(e) => {
-              if (e.button !== 1 || isChat) return;
+              if (e.button !== 1 || isFixed) return;
               e.preventDefault();
               e.stopPropagation();
               onCloseTab(tab.id);
@@ -72,7 +119,7 @@ export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab }: Props) {
               gap: 6,
               height: 36,
               paddingLeft: 12,
-              paddingRight: isChat ? 12 : 6,
+              paddingRight: isFixed ? 12 : 6,
               borderRight: "1px solid var(--border)",
               background: isActive ? "var(--bg)" : "var(--bg-panel)",
               cursor: "pointer",
@@ -80,17 +127,19 @@ export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab }: Props) {
               color: isActive ? "var(--text)" : "var(--text-muted)",
               whiteSpace: "nowrap",
               maxWidth: 180,
-              minWidth: isChat ? 0 : 80,
+              minWidth: isFixed ? 0 : 80,
               flexShrink: 0,
               userSelect: "none",
               transition: "background 0.1s, color 0.1s",
             }}
           >
             <span style={{ flexShrink: 0, opacity: isActive ? 1 : 0.7, display: "flex", alignItems: "center" }}>
-              {isChat ? (
+              {tab.kind === "chat" ? (
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                   <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
                 </svg>
+              ) : isFixed ? (
+                <PanelTabIcon kind={tab.kind} />
               ) : (
                 getFileIcon(tab.label, 13)
               )}
@@ -102,11 +151,11 @@ export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab }: Props) {
                 flex: 1,
                 fontWeight: isActive ? 500 : 400,
               }}
-              title={isChat ? t("tabs_backToChat") : tab.filePath}
+              title={tab.kind === "chat" ? t("tabs_backToChat") : tab.filePath || tab.label}
             >
               {tab.label}
             </span>
-            {!isChat && (
+            {!isFixed && (
               <button
                 onClick={(e) => { e.stopPropagation(); onCloseTab(tab.id); }}
                 onMouseEnter={() => setHoveredClose(tab.id)}
