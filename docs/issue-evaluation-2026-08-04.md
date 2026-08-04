@@ -353,3 +353,63 @@ worktree preload → `useAgentSession` 保留 SSE/runId/completion claim 在同�
 - **#9**：D4 标记完成并校正正文（生产模式而非 Next dev）；D5 域名改为 `pidance.namixinxi.cn`。
 - **#14**：保留 open 降 P2，补充"实施前需完成 WS/native package 设计 spike"。
 - **#4**：D1/D2 降 P2 待需求验证；D3 并入 #15；D5 拆分标记大部分完成。
+
+---
+
+## 九、二次评估（2026-08-04，渲染桥后）
+
+> 评估对象：HEAD `d6f1306`（TUI 渲染桥全线落地 + 通知分级 + 审核修复）之后，
+> 且**插件专属 subagent UI 已删除**（SubagentResultCard/parseSubagentResult/
+> onOpenSubagentSession 链已移除，subagent 结果走通用渲染）。
+> 本节省略未受影响的条目；总判定以第一节-第八节 + 本节为准。
+
+### 9.1 行号漂移（原引用 → 现位置）
+
+| 条目 | 原引用 | 现位置 |
+|---|---|---|
+| #4 D1 会话统计 | useAgentSession.ts:611-648 | hooks/useAgentSession.ts:662-699（语义未变） |
+| #4 D4 slash commands | rpc-manager.ts:813-830 | lib/rpc-manager.ts:1067-1094 |
+| #16 D2 撤回命令 | rpc-manager.ts:632-725 | lib/rpc-manager.ts:886-979 |
+| #16 D2 destroy 清理 | rpc-manager.ts:930 | lib/rpc-manager.ts:1172-1187（栈删在 1186） |
+| #16 D2 globalThis 栈 | rpc-manager.ts:1289-1298 | lib/rpc-manager.ts:1556-1565 |
+| #16 D3 hook 类型/state | useAgentSession.ts:75-77,398-399 | hooks/useAgentSession.ts:66-80,444-445 |
+| #16 D3 主 GET 回填 | useAgentSession.ts:688-749 | hooks/useAgentSession.ts:701-789（Om/WH 回填 748-749；同区新增 preserveCustomRenderedLines） |
+| #16 D3 context 回填 | — | hooks/useAgentSession.ts:791-820 |
+| #16 D3 hook 返回 | useAgentSession.ts:2048 | hooks/useAgentSession.ts:2169-2177（Om/WH 在 2171） |
+| #16 D4 正常 UI 不传 toolNames | useAgentSession.ts:793 | hooks/useAgentSession.ts:850-872 |
+| #16 D4 set_tools | rpc-manager.ts:842-847 | lib/rpc-manager.ts:1096-1102 |
+| #16 D4 启动器 toolNames | rpc-manager.ts:1369-1406,1427-1435 | lib/rpc-manager.ts:1636-1702 |
+| #16 D5 useAgentSession 规模 | 约 2081 行 | **2208 行**（+127）；返回对象 2169-2208 |
+| #9 基线 | main=acaeb85 | main=**d6f1306**（+2962 行，渲染桥） |
+
+### 9.2 判定变化
+
+| 条目 | 原判定 | 新判定 | 依据 |
+|---|---|---|---|
+| #16 D3 Om/WH | P1 删除 | **不变，边界仍清晰** | preserveCustomRenderedLines 只作用 messages（733-741,803-810），不依赖 Om/WH；主 GET/context/hook 五处投影仍独立可删 |
+| #16 D4 SubagentRunsPanel | P1 删面板保 API | **不变** | 仍无生产挂载（lib/chat-refactor-regression.test.mjs:85-90 固定）；runs API 侧栏仍用 |
+| #16 D4 专属 subagent UI 链 | 无此条目 | **新增清理项（已完成）** | SubagentResultCard/parseSubagentResult/onOpenSubagentSession 链已删 |
+| #16 D5 组件拆分 | P1，先侧栏后 hook | **仍适用，拆分顺序微调** | hook 2208 行；notice reducer 作为首个小拆分（完成 P2-9），SSE/runId/claim 保持单一 owner 后拆 |
+| #16 D6 浏览器回归 | 6–8 用例 | **8–10 用例，范围扩大** | 新增：ANSI 全链路优先/回退、渲染器异常不断流、custom renderedLines 同页重载保留、硬刷新回退、widget snapshot 显示/删除、通知生命周期、活动去重、新会话 ensure |
+| #9 发布 | P1 | **不变，基线更新** | 最终制品必须基于含渲染桥 + 专属 UI 删除后的 main；发布前先做真实插件渲染桥验收 |
+| #4/#14/#15 | — | **无实质影响** | PTY 不是 ANSI 渲染；SessionSidebar 未改 |
+
+### 9.3 新增待办
+
+1. **P1 #16 D8：真实插件端到端适配验收**——用真实 pi-subagents 覆盖 renderCall/
+   partial/final renderResult/async setWidget 工厂/registerMessageRenderer/失败回退；
+   删除专属卡后从「增强验证」升级为**发布前必做验收**。
+2. **P1：硬刷新 renderedLines 降级契约**——ANSI 不写 .jsonl，刷新后回退通用显示；
+   必须验证回退完整可读、无空卡/重复；不建议写回 Pi schema，sidecar 待需求明确。
+3. **P1：D6 扩展**——固定两个已发生回归（渲染桥异常不断流、新会话 type:"ensure_session"）。
+4. **P2：notice reducer 抽纯逻辑 + 测试**——backlog P2-9 提升为 D5 拆分第一步。
+5. **P2：输出上限/宽度基于真实样本调优**——当前 100 列/500 行/4000 字符/200KB/100ms
+   已严格校验，待真实样本再调。
+6. **P2/条件性：setWidget 事件驱动重渲染**——snapshot-only 已明确记录，仅真实插件
+   依赖 invalidate 且不重调 setWidget 时升级。
+7. **P2：通知 error 独立语义色**——backlog P2-11，不阻塞发布。
+
+### 9.4 总结论
+
+原 10 项「值得做」清单整体仍有效；唯一新增必做项是**「真实插件渲染桥 + 硬刷新回退」
+的发布前验收**，建议并入扩展后的 #16 D6，不另起长期架构工程。

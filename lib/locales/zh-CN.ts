@@ -528,21 +528,8 @@ export const zhCN: Record<TranslationKey, string> = {
   plugins_versionConfigured: "配置 {version}",
   plugins_diagnostics_one: "{count} 条诊断",
   plugins_diagnostics_other: "{count} 条诊断",
-  // phase2 D3 subagent result card
-  subagent_statusOk: "完成",
-  subagent_statusError: "失败",
-  subagent_statusTimeout: "超时",
-  subagent_statusInterrupted: "已中断",
-  subagent_statusStopped: "已停止",
-  subagent_statusDetached: "已分离",
-  subagent_acceptance: "验收：{status}",
-  subagent_nestedRuns: "{count} 个嵌套运行",
+  // subagent 运行面板（SubagentRunsPanel）
   subagent_tokensInOut: "输入 {input} · 输出 {output}",
-  subagent_totalTokens: "合计输入 {input} · 输出 {output}",
-  subagent_cacheRead: "缓存 {count}",
-  subagent_turns: "{count} 轮",
-  subagent_failedModels: "已从 {models} 回退",
-  subagent_showOutput: "查看输出",
   subagent_openSession: "打开子会话",
   // hermes memory
   memory_readOnlyHint: "只读查看 Hermes 记忆文件；此处不会编辑或写回。",

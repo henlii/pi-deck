@@ -597,19 +597,6 @@ function AppShellInner() {
     }).catch(() => {});
   }, [invalidateHydrate]);
 
-  // subagent 结果卡片按会话文件路径跳转到侧栏已发现的只读子会话。
-  // 子会话由 /api/sessions 的嵌套发现返回，这里只做路径匹配与选中，
-  // 不创建 AgentSession，也不改变子会话的只读能力门禁。
-  const handleOpenSubagentSession = useCallback((sessionFile: string) => {
-    void fetch("/api/sessions")
-      .then((r) => (r.ok ? (r.json() as Promise<{ sessions: SessionInfo[] }>) : null))
-      .then((d) => {
-        const match = d?.sessions.find((s) => s.path === sessionFile);
-        if (match) handleSelectSession(match);
-      })
-      .catch(() => {});
-  }, [handleSelectSession]);
-
   // ChatWindow：Pi 返回真实 id 后 promote；仅当前 intent 可写当前 chat。
   // 迟到旧 intent 的 session 仍 upsert 进 pending map，不销毁、不选中。
   const handleSessionCreated = useCallback((session: SessionInfo, intentId?: string | null) => {
@@ -1141,7 +1128,6 @@ function AppShellInner() {
                 onSessionStatsPanelOpen={openSessionInfoTab}
                 onContextUsageChange={handleContextUsageChange}
                 onOpenFile={handleOpenLinkedFile}
-                onOpenSubagentSession={handleOpenSubagentSession}
               />
             ) : initialCwdStatus === "validating" ? (
               <div role="status" style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, padding: 24, color: "var(--text-muted)", textAlign: "center" }}>

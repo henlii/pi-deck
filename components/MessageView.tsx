@@ -17,7 +17,6 @@ import { isEmptyThinkingBlock } from "@/lib/message-display";
 import { parseAnsiLine } from "@/lib/ansi";
 import type { ToolExecutionSnapshot, ToolExecutionStatus } from "@/lib/tool-execution-buffer";
 import { parseUnifiedPatch, type SplitDiffCell } from "@/lib/patch";
-import { parseSubagentResult, SUBAGENT_TOOL_NAME, type SubagentRunSummary, type SubagentResultSummary } from "@/lib/subagent-result";
 import { useI18n } from "@/lib/i18n";
 import type {
   AgentMessage,
@@ -73,8 +72,6 @@ interface Props {
   modelNames?: Record<string, string>;
   cwd?: string;
   onOpenFile?: (filePath: string) => void;
-  /** 打开 subagent 结果卡片中的只读子会话（按会话文件路径解析）。 */
-  onOpenSubagentSession?: (sessionFile: string) => void;
   entryId?: string;
   /** 用户「从此处分支」：回到该消息之前（发送后形成新分支）。 */
   onBranchHere?: (entryId: string) => void;
@@ -117,12 +114,12 @@ function haveSameRelevantToolResults(
   return true;
 }
 
-export const MessageView = memo(function MessageView({ message, isStreaming, toolResults, toolExecutionSnapshots, modelNames, cwd, onOpenFile, onOpenSubagentSession, entryId, onBranchHere, onNewSessionFromHere, onBranchFromAssistant, onNewSessionFromAnswer, forking, showTimestamp, prevTimestamp, sessionId }: Props) {
+export const MessageView = memo(function MessageView({ message, isStreaming, toolResults, toolExecutionSnapshots, modelNames, cwd, onOpenFile, entryId, onBranchHere, onNewSessionFromHere, onBranchFromAssistant, onNewSessionFromAnswer, forking, showTimestamp, prevTimestamp, sessionId }: Props) {
   if (message.role === "user") {
     return <UserMessageView message={message as UserMessage} cwd={cwd} onOpenFile={onOpenFile} entryId={entryId} onBranchHere={onBranchHere} onNewSessionFromHere={onNewSessionFromHere} forking={forking} />;
   }
   if (message.role === "assistant") {
-    return <AssistantMessageView message={message as AssistantMessage} isStreaming={isStreaming} toolResults={toolResults} toolExecutionSnapshots={toolExecutionSnapshots} modelNames={modelNames} cwd={cwd} onOpenFile={onOpenFile} onOpenSubagentSession={onOpenSubagentSession} showTimestamp={showTimestamp} prevTimestamp={prevTimestamp} sessionId={sessionId} entryId={entryId} onBranchFromAssistant={onBranchFromAssistant} onNewSessionFromAnswer={onNewSessionFromAnswer} />;
+    return <AssistantMessageView message={message as AssistantMessage} isStreaming={isStreaming} toolResults={toolResults} toolExecutionSnapshots={toolExecutionSnapshots} modelNames={modelNames} cwd={cwd} onOpenFile={onOpenFile} showTimestamp={showTimestamp} prevTimestamp={prevTimestamp} sessionId={sessionId} entryId={entryId} onBranchFromAssistant={onBranchFromAssistant} onNewSessionFromAnswer={onNewSessionFromAnswer} />;
   }
   if (message.role === "toolResult") {
     // Rendered inline under its toolCall — skip standalone rendering if paired
@@ -156,7 +153,6 @@ export const MessageView = memo(function MessageView({ message, isStreaming, too
     && prev.modelNames === next.modelNames
     && prev.cwd === next.cwd
     && prev.onOpenFile === next.onOpenFile
-    && prev.onOpenSubagentSession === next.onOpenSubagentSession
     && prev.entryId === next.entryId
     && prev.onBranchHere === next.onBranchHere
     && prev.onNewSessionFromHere === next.onNewSessionFromHere
@@ -365,7 +361,6 @@ function AssistantMessageView({
   modelNames,
   cwd,
   onOpenFile,
-  onOpenSubagentSession,
   showTimestamp,
   prevTimestamp,
   sessionId,
@@ -380,7 +375,6 @@ function AssistantMessageView({
   modelNames?: Record<string, string>;
   cwd?: string;
   onOpenFile?: (filePath: string) => void;
-  onOpenSubagentSession?: (sessionFile: string) => void;
   showTimestamp?: boolean;
   prevTimestamp?: number;
   sessionId?: string;
@@ -559,7 +553,7 @@ function AssistantMessageView({
 
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         {blockItems.map(({ block, originalIndex }) => (
-          <BlockView key={`${entryId ?? "stream"}-${originalIndex}`} block={block} toolResults={toolResults} toolExecutionMap={toolExecutionMap} isStreaming={isStreaming} streamingDuration={streamingDurations.get(originalIndex) ?? (block.type === "thinking" ? thinkingDurationFromFile : undefined)} toolCallDurations={toolCallDurations} cwd={cwd} onOpenFile={onOpenFile} onOpenSubagentSession={onOpenSubagentSession} sessionId={sessionId} entryId={entryId} blockIndex={originalIndex} />
+          <BlockView key={`${entryId ?? "stream"}-${originalIndex}`} block={block} toolResults={toolResults} toolExecutionMap={toolExecutionMap} isStreaming={isStreaming} streamingDuration={streamingDurations.get(originalIndex) ?? (block.type === "thinking" ? thinkingDurationFromFile : undefined)} toolCallDurations={toolCallDurations} cwd={cwd} onOpenFile={onOpenFile} sessionId={sessionId} entryId={entryId} blockIndex={originalIndex} />
         ))}
       </div>
 
@@ -661,7 +655,7 @@ function AssistantMessageView({
   );
 }
 
-function BlockView({ block, toolResults, toolExecutionMap, isStreaming, streamingDuration, toolCallDurations, cwd, onOpenFile, onOpenSubagentSession, sessionId, entryId, blockIndex }: { block: AssistantContentBlock; toolResults?: Map<string, ToolResultMessage>; toolExecutionMap?: Map<string, ToolExecutionSnapshot>; isStreaming?: boolean; streamingDuration?: number; toolCallDurations?: Map<string, number>; cwd?: string; onOpenFile?: (filePath: string) => void; onOpenSubagentSession?: (sessionFile: string) => void; sessionId?: string; entryId?: string; blockIndex: number }) {
+function BlockView({ block, toolResults, toolExecutionMap, isStreaming, streamingDuration, toolCallDurations, cwd, onOpenFile, sessionId, entryId, blockIndex }: { block: AssistantContentBlock; toolResults?: Map<string, ToolResultMessage>; toolExecutionMap?: Map<string, ToolExecutionSnapshot>; isStreaming?: boolean; streamingDuration?: number; toolCallDurations?: Map<string, number>; cwd?: string; onOpenFile?: (filePath: string) => void; sessionId?: string; entryId?: string; blockIndex: number }) {
   if (block.type === "text") {
     return <TextBlock block={block as TextContent} isStreaming={isStreaming} cwd={cwd} onOpenFile={onOpenFile} />;
   }
@@ -672,7 +666,7 @@ function BlockView({ block, toolResults, toolExecutionMap, isStreaming, streamin
     const tc = block as ToolCallContent;
     const result = toolResults?.get(tc.toolCallId);
     const duration = toolCallDurations?.get(tc.toolCallId);
-    return <ToolCallBlock block={tc} result={result} snapshot={toolExecutionMap?.get(tc.toolCallId)} duration={duration} onOpenSubagentSession={onOpenSubagentSession} />;
+    return <ToolCallBlock block={tc} result={result} snapshot={toolExecutionMap?.get(tc.toolCallId)} duration={duration} />;
   }
   return null;
 }
@@ -764,7 +758,7 @@ function ThinkingBlock({ block, duration, sessionId, entryId, blockIndex }: {
 }
 
 
-function ToolCallBlock({ block, result, snapshot, duration, onOpenSubagentSession }: { block: ToolCallContent; result?: ToolResultMessage; snapshot?: ToolExecutionSnapshot; duration?: number; onOpenSubagentSession?: (sessionFile: string) => void }) {
+function ToolCallBlock({ block, result, snapshot, duration }: { block: ToolCallContent; result?: ToolResultMessage; snapshot?: ToolExecutionSnapshot; duration?: number }) {
   const { t } = useI18n();
   const [expandedOverride, setExpandedOverride] = useState<boolean | null>(null);
   const [now, setNow] = useState(() => Date.now());
@@ -802,12 +796,6 @@ function ToolCallBlock({ block, result, snapshot, duration, onOpenSubagentSessio
     if (!expanded || !output || !followOutputRef.current) return;
     output.scrollTop = output.scrollHeight;
   }, [expanded, snapshot?.output, snapshot?.renderedLines]);
-  // pi-subagents 把每个子运行的模型、用量、验收与会话文件写在 details 里；
-  // 文本内容通常只有一句占位，因此优先渲染结构化卡片，形状不符时回退文本。
-  const subagentSummary = useMemo(
-    () => (block.toolName === SUBAGENT_TOOL_NAME && result ? parseSubagentResult(result.details) : null),
-    [block.toolName, result],
-  );
 
   return (
     <div
@@ -922,8 +910,6 @@ function ToolCallBlock({ block, result, snapshot, duration, onOpenSubagentSessio
       {expanded && result && (
         renderedResultLines ? (
           <AnsiToolLines lines={renderedResultLines} statusColor={statusColor} />
-        ) : subagentSummary ? (
-          <SubagentResultCard summary={subagentSummary} onOpenSubagentSession={onOpenSubagentSession} />
         ) : resultDiff ? (
           <PairedDiffResult
             diff={resultDiff}
@@ -1011,203 +997,6 @@ export function formatElapsedDuration(milliseconds: number): string {
   if (seconds < 60) return `${Math.round(seconds)}s`;
   const wholeSeconds = Math.round(seconds);
   return `${Math.floor(wholeSeconds / 60)}m ${String(wholeSeconds % 60).padStart(2, "0")}s`;
-}
-
-const SUBAGENT_STATUS_KEYS = {
-  ok: "subagent_statusOk",
-  error: "subagent_statusError",
-  timeout: "subagent_statusTimeout",
-  interrupted: "subagent_statusInterrupted",
-  stopped: "subagent_statusStopped",
-  detached: "subagent_statusDetached",
-} as const;
-
-const SUBAGENT_STATUS_COLORS: Record<keyof typeof SUBAGENT_STATUS_KEYS, string> = {
-  ok: "#16a34a",
-  error: "#f87171",
-  timeout: "#d97706",
-  interrupted: "#d97706",
-  stopped: "var(--text-dim)",
-  detached: "var(--accent)",
-};
-
-function formatSubagentTokens(value: number): string {
-  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
-  if (value >= 1_000) return `${(value / 1_000).toFixed(1)}K`;
-  return String(value);
-}
-
-/**
- * 结构化展示 pi-subagents 的运行结果。只读：不发起运行、不接管子会话，
- * 「打开子会话」只是跳转到侧栏已发现的只读子会话。
- */
-function SubagentResultCard({ summary, onOpenSubagentSession }: {
-  summary: SubagentResultSummary;
-  onOpenSubagentSession?: (sessionFile: string) => void;
-}) {
-  const { t } = useI18n();
-  const total = summary.totalUsage;
-
-  return (
-    <div style={{ borderTop: "1px solid rgba(34,197,94,0.15)", background: "var(--bg)" }}>
-      {(summary.chainAgents || total || summary.timedOut || summary.stopped) && (
-        <div
-          style={{
-            display: "flex",
-            flexWrap: "wrap",
-            alignItems: "center",
-            gap: "4px 10px",
-            padding: "6px 10px",
-            borderBottom: "1px solid var(--border)",
-            color: "var(--text-dim)",
-            fontFamily: "var(--font-mono)",
-            fontSize: 10.5,
-          }}
-        >
-          {summary.chainAgents && <span>{summary.chainAgents.join(" → ")}</span>}
-          {total && (
-            <span>
-              {t("subagent_totalTokens", {
-                input: formatSubagentTokens(total.input),
-                output: formatSubagentTokens(total.output),
-              })}
-            </span>
-          )}
-          {summary.totalCost !== undefined && summary.totalCost > 0 && <span>${summary.totalCost.toFixed(4)}</span>}
-          {summary.timedOut && <span style={{ color: "#d97706" }}>{t("subagent_statusTimeout")}</span>}
-          {summary.stopped && <span>{t("subagent_statusStopped")}</span>}
-        </div>
-      )}
-
-      <ul style={{ margin: 0, padding: 0, listStyle: "none" }}>
-        {summary.runs.map((run) => (
-          <SubagentRunRow key={run.index} run={run} onOpenSubagentSession={onOpenSubagentSession} />
-        ))}
-      </ul>
-    </div>
-  );
-}
-
-function SubagentRunRow({ run, onOpenSubagentSession }: {
-  run: SubagentRunSummary;
-  onOpenSubagentSession?: (sessionFile: string) => void;
-}) {
-  const { t } = useI18n();
-  const [showOutput, setShowOutput] = useState(false);
-  const output = run.finalOutput ?? run.error;
-
-  return (
-    <li style={{ padding: "7px 10px", borderTop: run.index === 0 ? "none" : "1px solid var(--border)" }}>
-      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "3px 8px", minWidth: 0 }}>
-        <span style={{ color: "var(--text)", fontFamily: "var(--font-mono)", fontSize: 11.5, fontWeight: 600 }}>
-          {run.agent ?? t("common_unknown")}
-        </span>
-        <span
-          style={{
-            padding: "0 5px",
-            borderRadius: 999,
-            border: `1px solid ${SUBAGENT_STATUS_COLORS[run.status]}`,
-            color: SUBAGENT_STATUS_COLORS[run.status],
-            fontSize: 9.5,
-            lineHeight: 1.6,
-            textTransform: "uppercase",
-          }}
-        >
-          {t(SUBAGENT_STATUS_KEYS[run.status])}
-        </span>
-        {run.acceptanceStatus && (
-          <span style={{ color: "var(--text-dim)", fontSize: 10.5 }}>
-            {t("subagent_acceptance", { status: run.acceptanceStatus })}
-          </span>
-        )}
-        {run.model && (
-          <span style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)", fontSize: 10.5, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {run.model}
-          </span>
-        )}
-        {run.nestedRuns !== undefined && (
-          <span style={{ color: "var(--text-dim)", fontSize: 10.5 }}>{t("subagent_nestedRuns", { count: run.nestedRuns })}</span>
-        )}
-      </div>
-
-      {run.task && (
-        <div
-          title={run.task}
-          style={{
-            marginTop: 2,
-            display: "-webkit-box",
-            WebkitBoxOrient: "vertical",
-            WebkitLineClamp: 2,
-            overflow: "hidden",
-            color: "var(--text-muted)",
-            fontSize: 11.5,
-            lineHeight: 1.45,
-          }}
-        >
-          {run.task}
-        </div>
-      )}
-
-      <div style={{ marginTop: 3, display: "flex", flexWrap: "wrap", alignItems: "center", gap: "3px 8px", color: "var(--text-dim)", fontFamily: "var(--font-mono)", fontSize: 10 }}>
-        {run.usage && (
-          <>
-            <span>{t("subagent_tokensInOut", { input: formatSubagentTokens(run.usage.input), output: formatSubagentTokens(run.usage.output) })}</span>
-            {run.usage.cacheRead > 0 && <span>{t("subagent_cacheRead", { count: formatSubagentTokens(run.usage.cacheRead) })}</span>}
-            {run.usage.turns > 0 && <span>{t("subagent_turns", { count: run.usage.turns })}</span>}
-            {run.usage.cost > 0 && <span>${run.usage.cost.toFixed(4)}</span>}
-          </>
-        )}
-        {run.failedModels && (
-          <span style={{ color: "#d97706" }}>{t("subagent_failedModels", { models: run.failedModels.join(", ") })}</span>
-        )}
-      </div>
-
-      {(output || (run.sessionFile && onOpenSubagentSession)) && (
-        <div style={{ marginTop: 4, display: "flex", flexWrap: "wrap", gap: 6 }}>
-          {output && (
-            <button
-              type="button"
-              onClick={() => setShowOutput((value) => !value)}
-              aria-expanded={showOutput}
-              style={{ padding: "1px 6px", border: "1px solid var(--border)", borderRadius: 5, background: "none", color: "var(--text-muted)", cursor: "pointer", font: "inherit", fontSize: 10.5 }}
-            >
-              {showOutput ? t("message_hideDetails") : t("subagent_showOutput")}
-            </button>
-          )}
-          {run.sessionFile && onOpenSubagentSession && (
-            <button
-              type="button"
-              onClick={() => onOpenSubagentSession(run.sessionFile as string)}
-              title={run.sessionFile}
-              style={{ padding: "1px 6px", border: "1px solid var(--border)", borderRadius: 5, background: "none", color: "var(--accent)", cursor: "pointer", font: "inherit", fontSize: 10.5 }}
-            >
-              {t("subagent_openSession")}
-            </button>
-          )}
-        </div>
-      )}
-
-      {showOutput && output && (
-        <pre
-          style={{
-            margin: "5px 0 0",
-            padding: "6px 8px",
-            maxHeight: 320,
-            overflow: "auto",
-            borderRadius: 5,
-            background: "var(--bg-subtle)",
-            color: run.finalOutput ? "var(--text-muted)" : "#f87171",
-            fontSize: 11.5,
-            lineHeight: 1.5,
-            whiteSpace: "pre-wrap",
-            wordBreak: "break-word",
-          }}
-        >
-          {output}
-        </pre>
-      )}
-    </li>
-  );
 }
 
 interface ResultDiff {
