@@ -35,6 +35,12 @@ export interface ToolExecutionSnapshot {
   toolName: string;
   /** 命令摘要：start.args.command（对象时取其内部）→ args 摘要字段 → undefined */
   command?: string;
+  /** 插件 renderCall 的 ANSI 行；仅在工具块展开时展示。 */
+  renderedCallLines?: string[];
+  /** 插件运行中 renderResult 的 ANSI 行；存在时优先于 output。 */
+  renderedLines?: string[];
+  /** 插件最终 renderResult 的 ANSI 行；存在时优先于结构化/文本结果。 */
+  renderedResultLines?: string[];
   /** 实时输出（partialResult replace 语义；end 兜底时来自 result 摘要） */
   output: string;
   /** 开始时间戳（ms）；无 start 记录由 end 兜底时与 endedAt 相同 */
@@ -55,6 +61,7 @@ export interface ToolExecutionStartInput {
   toolCallId?: unknown;
   toolName?: unknown;
   args?: unknown;
+  renderedCallLines?: unknown;
 }
 
 /** update 事件宽松输入。 */
@@ -63,6 +70,7 @@ export interface ToolExecutionUpdateInput {
   toolName?: unknown;
   args?: unknown;
   partialResult?: unknown;
+  renderedLines?: unknown;
 }
 
 /** end 事件宽松输入。 */
@@ -71,6 +79,7 @@ export interface ToolExecutionEndInput {
   toolName?: unknown;
   result?: unknown;
   isError?: unknown;
+  renderedResultLines?: unknown;
 }
 
 /** command 摘要回退字段：args.command 缺失/非字符串时按此顺序取第一个字符串值。 */
@@ -84,6 +93,20 @@ function validToolCallId(value: unknown): string | null {
 /** 校验字符串字段（toolName 等）；非法返回 undefined。 */
 function optionalString(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+/** tool_result 事件只补最终插件渲染，不提前固定 execution 状态。 */
+export interface ToolExecutionResultRenderInput {
+  toolCallId?: unknown;
+  renderedResultLines?: unknown;
+}
+
+/** ANSI 行只接受非空字符串数组；空数组或畸形载荷视为缺失，UI 继续走原回退。 */
+function optionalRenderedLines(value: unknown): string[] | undefined {
+  if (!Array.isArray(value) || value.length === 0 || !value.every((line) => typeof line === "string")) {
+    return undefined;
+  }
+  return [...value];
 }
 
 /**
@@ -145,15 +168,17 @@ export function applyToolExecutionStart(state: ToolExecutionBufferState, event: 
   const existing = state.get(id);
   const toolName = optionalString(event.toolName) ?? existing?.toolName ?? "";
   const command = extractToolCommand(event.args) ?? existing?.command;
+  const renderedCallLines = optionalRenderedLines(event.renderedCallLines) ?? existing?.renderedCallLines;
   if (existing?.status === "running") {
     // 重复 start 且仍运行中：不动 output/startedAt，只补齐缺失的展示字段。
-    if (toolName === existing.toolName && command === existing.command) return state;
-    return new Map(state).set(id, { ...existing, toolName, command });
+    if (toolName === existing.toolName && command === existing.command && renderedCallLines === existing.renderedCallLines) return state;
+    return new Map(state).set(id, { ...existing, toolName, command, renderedCallLines });
   }
   const snapshot: ToolExecutionSnapshot = {
     toolCallId: id,
     toolName,
     command,
+    renderedCallLines,
     output: "",
     startedAt: Date.now(),
     status: "running",
@@ -175,10 +200,11 @@ export function applyToolExecutionUpdate(state: ToolExecutionBufferState, event:
   if (!existing || existing.status !== "running") return state;
   const { text, truncated } = clampOutput(stringifyPartial(event.partialResult));
   const command = existing.command ?? extractToolCommand(event.args);
-  if (text === existing.output && truncated === (existing.truncated ?? false) && command === existing.command) {
+  const renderedLines = optionalRenderedLines(event.renderedLines);
+  if (text === existing.output && truncated === (existing.truncated ?? false) && command === existing.command && renderedLines === existing.renderedLines) {
     return state;
   }
-  return new Map(state).set(id, { ...existing, output: text, truncated: truncated || undefined, command });
+  return new Map(state).set(id, { ...existing, output: text, truncated: truncated || undefined, command, renderedLines });
 }
 
 /**
@@ -195,6 +221,7 @@ export function applyToolExecutionEnd(state: ToolExecutionBufferState, event: To
   const existing = state.get(id);
   const toolName = optionalString(event.toolName) ?? existing?.toolName ?? "";
   const status: ToolExecutionStatus = event.isError === true ? "error" : "success";
+  const renderedResultLines = optionalRenderedLines(event.renderedResultLines) ?? existing?.renderedResultLines;
   if (!existing) {
     const { text, truncated } = clampOutput(stringifyPartial(event.result));
     const snapshot: ToolExecutionSnapshot = {
@@ -204,18 +231,38 @@ export function applyToolExecutionEnd(state: ToolExecutionBufferState, event: To
       startedAt: now,
       endedAt: now,
       status,
+      renderedResultLines,
       truncated: truncated || undefined,
     };
     return new Map(state).set(id, snapshot);
   }
-  if (existing.status !== "running") return state; // 重复 end：幂等忽略
+  if (existing.status !== "running") {
+    // tool_execution_end 可能先于 tool_result 到达；终态保持不变，只允许后到的
+    // 插件最终渲染补齐快照。
+    if (!renderedResultLines || renderedResultLines === existing.renderedResultLines) return state;
+    return new Map(state).set(id, { ...existing, renderedResultLines });
+  }
   let { output, truncated } = existing;
   if (output.length === 0 && event.result !== null && event.result !== undefined) {
     const clamped = clampOutput(stringifyPartial(event.result));
     output = clamped.text;
     truncated = clamped.truncated;
   }
-  return new Map(state).set(id, { ...existing, toolName, output, truncated, endedAt: now, status });
+  return new Map(state).set(id, { ...existing, toolName, output, truncated, renderedResultLines, endedAt: now, status });
+}
+
+/**
+ * tool_result：只把 renderedResultLines 合并进已有快照。执行终态仍由
+ * tool_execution_end 单一负责，避免 tool_result 事件顺序变化导致运行状态提前结束。
+ */
+export function applyToolExecutionResultRender(state: ToolExecutionBufferState, event: ToolExecutionResultRenderInput): ToolExecutionBufferState {
+  if (typeof event !== "object" || event === null) return state;
+  const id = validToolCallId(event.toolCallId);
+  if (!id) return state;
+  const existing = state.get(id);
+  const renderedResultLines = optionalRenderedLines(event.renderedResultLines);
+  if (!existing || !renderedResultLines) return state;
+  return new Map(state).set(id, { ...existing, renderedResultLines });
 }
 
 /**

@@ -58,6 +58,8 @@ export interface ToolCallContent {
   toolCallId: string;
   toolName: string;
   input: Record<string, unknown>;
+  /** 插件 renderCall 在服务端 headless 渲染得到的 ANSI 行。 */
+  renderedCallLines?: string[];
 }
 
 export type AssistantContentBlock = TextContent | ImageContent | ThinkingContent | ToolCallContent;
@@ -98,6 +100,8 @@ export interface ToolResultMessage {
   content: (TextContent | ImageContent)[];
   isError?: boolean;
   details?: unknown;
+  /** 插件 renderResult 在服务端 headless 渲染得到的 ANSI 行。 */
+  renderedResultLines?: string[];
   timestamp?: number;
 }
 
@@ -107,6 +111,8 @@ export interface CustomMessage {
   content: string | (TextContent | ImageContent)[];
   display: boolean;
   details?: unknown;
+  /** 插件消息渲染器在服务端 headless 渲染得到的 ANSI 行。 */
+  renderedLines?: string[];
   timestamp?: number;
 }
 
@@ -166,7 +172,8 @@ export type ExtensionUiRequest =
       id: string;
       method: "notify";
       message: string;
-      notifyType?: "info" | "warning" | "error";
+      notifyType?: "info" | "success" | "warning" | "error";
+      activityRecord?: boolean;
     }
   | {
       type: "extension_ui_request";
@@ -218,6 +225,12 @@ export interface ExtensionWidgetItem {
   lines: string[];
   placement: "aboveEditor" | "belowEditor";
 }
+
+/** SSE 工具事件的插件 TUI 渲染扩展字段；服务端缺省时客户端维持原展示。 */
+export type ToolRenderedAgentEvent =
+  | { type: "tool_execution_update"; renderedLines?: string[] }
+  | { type: "tool_call"; renderedCallLines?: string[] }
+  | { type: "tool_result"; renderedResultLines?: string[] };
 
 export interface SessionMessageEntry extends SessionEntryBase {
   type: "message";

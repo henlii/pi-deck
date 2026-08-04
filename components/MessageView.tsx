@@ -14,6 +14,7 @@ import {
 import { getBranchSummaryFileMetadata } from "@/lib/branch-bookmarks";
 import { parseCompactionSummary } from "@/lib/compaction-summary";
 import { isEmptyThinkingBlock } from "@/lib/message-display";
+import { parseAnsiLine } from "@/lib/ansi";
 import type { ToolExecutionSnapshot, ToolExecutionStatus } from "@/lib/tool-execution-buffer";
 import { parseUnifiedPatch, type SplitDiffCell } from "@/lib/patch";
 import { parseSubagentResult, SUBAGENT_TOOL_NAME, type SubagentRunSummary, type SubagentResultSummary } from "@/lib/subagent-result";
@@ -783,6 +784,9 @@ function ToolCallBlock({ block, result, snapshot, duration, onOpenSubagentSessio
   const status = snapshot?.status;
   const statusColor = getToolStatusColor(status, isError);
   const command = getToolCommand(block, snapshot);
+  const renderedCallLines = getRenderableAnsiLines(snapshot?.renderedCallLines ?? block.renderedCallLines);
+  const renderedLiveLines = getRenderableAnsiLines(snapshot?.renderedLines);
+  const renderedResultLines = getRenderableAnsiLines(snapshot?.renderedResultLines ?? result?.renderedResultLines);
   const elapsedMs = snapshot
     ? Math.max(0, (snapshot.status === "running" ? now : (snapshot.endedAt ?? snapshot.startedAt)) - snapshot.startedAt)
     : duration === undefined ? undefined : duration * 1000;
@@ -797,7 +801,7 @@ function ToolCallBlock({ block, result, snapshot, duration, onOpenSubagentSessio
     const output = outputRef.current;
     if (!expanded || !output || !followOutputRef.current) return;
     output.scrollTop = output.scrollHeight;
-  }, [expanded, snapshot?.output]);
+  }, [expanded, snapshot?.output, snapshot?.renderedLines]);
   // pi-subagents 把每个子运行的模型、用量、验收与会话文件写在 details 里；
   // 文本内容通常只有一句占位，因此优先渲染结构化卡片，形状不符时回退文本。
   const subagentSummary = useMemo(
@@ -866,6 +870,10 @@ function ToolCallBlock({ block, result, snapshot, duration, onOpenSubagentSessio
         </div>
       )}
 
+      {expanded && renderedCallLines && (
+        <AnsiToolLines lines={renderedCallLines} statusColor={statusColor} />
+      )}
+
       {expanded && !isEditTool && (
         <div
           style={{
@@ -905,14 +913,16 @@ function ToolCallBlock({ block, result, snapshot, duration, onOpenSubagentSessio
               const output = event.currentTarget;
               followOutputRef.current = output.scrollHeight - output.scrollTop - output.clientHeight <= 24;
             }}
-            style={{ margin: 0, padding: "4px 10px 10px", maxHeight: 320, overflow: "auto", overscrollBehavior: "contain", color: snapshot.output ? "var(--text-muted)" : "var(--text-dim)", background: "var(--tool-bg)", fontFamily: "var(--font-mono)", fontSize: 11.5, lineHeight: 1.55, whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}
-          >{snapshot.output || t("message_toolWaitingOutput")}</pre>
+            style={{ margin: 0, padding: "4px 10px 10px", maxHeight: 320, overflow: "auto", overscrollBehavior: "contain", color: renderedLiveLines || snapshot.output ? "var(--text-muted)" : "var(--text-dim)", background: "var(--tool-bg)", fontFamily: "var(--font-mono)", fontSize: 11.5, lineHeight: 1.55, whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}
+          >{renderedLiveLines ? renderAnsiLines(renderedLiveLines, "tool-live") : snapshot.output || t("message_toolWaitingOutput")}</pre>
         </div>
       )}
 
       {/* ── Paired result — only shown when expanded ── */}
       {expanded && result && (
-        subagentSummary ? (
+        renderedResultLines ? (
+          <AnsiToolLines lines={renderedResultLines} statusColor={statusColor} />
+        ) : subagentSummary ? (
           <SubagentResultCard summary={subagentSummary} onOpenSubagentSession={onOpenSubagentSession} />
         ) : resultDiff ? (
           <PairedDiffResult
@@ -927,6 +937,40 @@ function ToolCallBlock({ block, result, snapshot, duration, onOpenSubagentSessio
         )
       )}
     </div>
+  );
+}
+
+/** 空数组或畸形数组视为缺失，保证插件渲染不可用时绝不遮住原始输出。 */
+function getRenderableAnsiLines(lines: unknown): string[] | null {
+  return Array.isArray(lines) && lines.length > 0 && lines.every((line) => typeof line === "string") ? lines : null;
+}
+
+function renderAnsiLine(line: string, keyPrefix: string): ReactNode[] {
+  return parseAnsiLine(line).map((segment, index) => (
+    Object.keys(segment.style).length > 0
+      ? <span key={`${keyPrefix}-${index}`} style={segment.style}>{segment.text}</span>
+      : segment.text
+  ));
+}
+
+function renderAnsiLines(lines: string[], keyPrefix: string): ReactNode[] {
+  return lines.map((line, index) => (
+    <span key={`${keyPrefix}-${index}`}>
+      {renderAnsiLine(line, `${keyPrefix}-${index}`)}
+      {index < lines.length - 1 ? "\n" : null}
+    </span>
+  ));
+}
+
+/** 插件 TUI 行沿用工具卡片的边框、底色和等宽排版，不引入新视觉语义。 */
+function AnsiToolLines({ lines, statusColor }: { lines: string[]; statusColor: string }) {
+  return (
+    <pre
+      tabIndex={0}
+      style={{ margin: 0, padding: "8px 10px", maxHeight: 320, overflow: "auto", borderTop: `1px solid color-mix(in srgb, ${statusColor} 24%, var(--border))`, background: "var(--bg-subtle)", color: "var(--text-muted)", fontFamily: "var(--font-mono)", fontSize: 12, lineHeight: 1.55, whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}
+    >
+      {renderAnsiLines(lines, "tool-rendered")}
+    </pre>
   );
 }
 
@@ -1800,6 +1844,7 @@ function CustomMessageView({ message, cwd, onOpenFile }: { message: CustomMessag
   const detailsText = hasDetails ? safeJson(message.details) : "";
   const title = message.customType || t("message_extensionDefaultType");
   const time = formatTime(message.timestamp);
+  const renderedLines = getRenderableAnsiLines(message.renderedLines);
 
   const copyContent = () => {
     copyText(text || detailsText).then(() => {
@@ -1816,7 +1861,7 @@ function CustomMessageView({ message, cwd, onOpenFile }: { message: CustomMessag
           borderRadius: 8,
           overflow: "hidden",
           background: isHiddenDisplay ? "var(--bg-subtle)" : "var(--bg)",
-          opacity: isHiddenDisplay && !contentExpanded ? 0.82 : 1,
+          opacity: !renderedLines && isHiddenDisplay && !contentExpanded ? 0.82 : 1,
         }}
       >
         <div
@@ -1838,7 +1883,22 @@ function CustomMessageView({ message, cwd, onOpenFile }: { message: CustomMessag
           {time && <span style={{ marginLeft: "auto", color: "var(--text-dim)", fontSize: 10 }}>{time}</span>}
         </div>
 
-        {contentExpanded ? (
+        {renderedLines ? (
+          <pre
+            style={{
+              margin: 0,
+              padding: "6px 9px",
+              color: "var(--text-muted)",
+              fontFamily: "var(--font-mono)",
+              fontSize: 12,
+              lineHeight: 1.55,
+              whiteSpace: "pre-wrap",
+              overflowWrap: "anywhere",
+            }}
+          >
+            {renderAnsiLines(renderedLines, "custom-rendered")}
+          </pre>
+        ) : contentExpanded ? (
           <div style={{ padding: "6px 9px" }}>
             {images.length > 0 && (
               <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: text ? 8 : 0 }}>
@@ -1878,7 +1938,7 @@ function CustomMessageView({ message, cwd, onOpenFile }: { message: CustomMessag
           </button>
         )}
 
-        <div
+        {!renderedLines && <div
           style={{
             display: "flex",
             alignItems: "center",
@@ -1932,9 +1992,9 @@ function CustomMessageView({ message, cwd, onOpenFile }: { message: CustomMessag
                 : <ChevronDown size={12} strokeWidth={1.8} />}
             </button>
           )}
-        </div>
+        </div>}
 
-        {hasDetails && ((isHiddenDisplay && contentExpanded) || (!isHiddenDisplay && detailsExpanded)) && (
+        {!renderedLines && hasDetails && ((isHiddenDisplay && contentExpanded) || (!isHiddenDisplay && detailsExpanded)) && (
           <pre
             style={{
               margin: 0,

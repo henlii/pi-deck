@@ -18,6 +18,7 @@ import { useI18n } from "@/lib/i18n";
 import { useDragDrop } from "@/hooks/useDragDrop";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import type { SessionStatsInfo } from "@/lib/pi-types";
+import type { SessionActivity } from "@/lib/session-activity";
 import {
   captureScrollDistance,
   getNextVisibleCount,
@@ -169,7 +170,7 @@ export function ChatWindow({ session, newSessionCwd, newSessionIntentId, guideDe
     retryInfo, contextUsage, forkingEntryId,
     isCompacting, compactError, compactResult, displayModel: displayModelValue, sessionStats,
     slashCommands, slashCommandsLoading, queuedMessages,
-    notices, extensionDialog, extensionInlineRequest, extensionCustomUi, extensionStatuses, extensionWidgets, respondToExtensionUi, dismissExtensionUiRequest, sendExtensionCustomInput,
+    notices, liveNoticeActivities, dismissNotice, toggleNoticePin, extensionDialog, extensionInlineRequest, extensionCustomUi, extensionStatuses, extensionWidgets, respondToExtensionUi, dismissExtensionUiRequest, sendExtensionCustomInput,
     todos,
     isAutoModelSelection,
     agentPhase, toolExecutionSnapshots,
@@ -443,6 +444,21 @@ export function ChatWindow({ session, newSessionCwd, newSessionIntentId, guideDe
 
   const aboveEditorWidgets = extensionWidgets.filter((widget) => widget.placement !== "belowEditor");
   const belowEditorWidgets = extensionWidgets.filter((widget) => widget.placement === "belowEditor");
+  const persistedActivities = messages.flatMap((message, index) => {
+    if (message.role !== "custom" || message.customType !== "pidance.activity" || !message.details) return [];
+    const activity = message.details as SessionActivity;
+    if (activity.version !== 1 || typeof activity.title !== "string" || typeof activity.content !== "string") return [];
+    return [{ key: entryIds[index] ?? `${activity.requestId ?? "activity"}-${index}`, activity, timestamp: message.timestamp }];
+  });
+  // notify 写盘成功后先使用 hook 的页内增量投影；agent_end 重载把同 requestId
+  // 带回 messages 后自动去重。这样详情入口即时可用，又不为一条 activity 全量重载。
+  const persistedRequestIds = new Set(persistedActivities.map((item) => item.activity.requestId).filter(Boolean));
+  const visibleActivities = [
+    ...persistedActivities,
+    ...liveNoticeActivities
+      .filter((item) => !item.activity.requestId || !persistedRequestIds.has(item.activity.requestId))
+      .map((item) => ({ key: `live-${item.activity.requestId ?? item.timestamp}`, ...item })),
+  ];
 
   if (loading) {
     return (
@@ -526,7 +542,7 @@ export function ChatWindow({ session, newSessionCwd, newSessionIntentId, guideDe
                 <span style={{ fontSize: 22, color: "var(--text)", fontWeight: 700, letterSpacing: 0, flexShrink: 0, whiteSpace: "nowrap" }}>Pidance</span>
               </div>
             </div>
-            <NoticeShelf notices={notices} align="right" />
+            <NoticeShelf notices={notices} activities={visibleActivities} onDismiss={dismissNotice} onTogglePin={toggleNoticePin} align="right" />
 
             <div className="mb-4">
               <NewSessionGuide
@@ -553,7 +569,7 @@ export function ChatWindow({ session, newSessionCwd, newSessionIntentId, guideDe
           }}
         >
           <div style={{ maxWidth: 820, margin: "0 auto" }}>
-            <NoticeShelf notices={notices} floating align="right" />
+            <NoticeShelf notices={notices} activities={visibleActivities} onDismiss={dismissNotice} onTogglePin={toggleNoticePin} floating align="right" />
           </div>
         </div>
         <div
@@ -846,7 +862,12 @@ function ExtensionWidgets({ widgets }: { widgets: Array<{ key: string; lines: st
             {widget.key}
           </div>
           <pre style={{ margin: 0, padding: "8px 9px", color: "var(--text-muted)", fontSize: 12, lineHeight: 1.5, whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "var(--font-mono)" }}>
-            {widget.lines.join("\n")}
+            {widget.lines.map((line, index, lines) => (
+              <Fragment key={index}>
+                {renderAnsiLine(line, `widget-${widget.key}-line-${index}`)}
+                {index < lines.length - 1 ? "\n" : null}
+              </Fragment>
+            ))}
           </pre>
         </div>
       ))}
@@ -854,68 +875,76 @@ function ExtensionWidgets({ widgets }: { widgets: Array<{ key: string; lines: st
   );
 }
 
-function NoticeShelf({ notices, floating = false, align = "left" }: { notices: NoticeItem[]; floating?: boolean; align?: "left" | "right" }) {
-  if (notices.length === 0) return null;
+type PersistedActivityItem = { key: string; activity: SessionActivity; timestamp?: number };
+
+function NoticeIconButton({ label, active = false, onClick, children }: { label: string; active?: boolean; onClick: () => void; children: ReactNode }) {
   return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        alignItems: align === "right" ? "flex-end" : "stretch",
-        marginBottom: floating ? 0 : 10,
-      }}
-    >
-      {notices.map((notice, index) => {
-        const color = notice.type === "error"
-          ? "#ef4444"
-          : notice.type === "warning"
-            ? "#d97706"
-            : notice.type === "success"
-              ? "#10b981"
-              : "var(--accent)";
+    <button type="button" aria-label={label} title={label} onClick={onClick} style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 28, height: 28, padding: 0, flexShrink: 0, border: "none", borderRadius: 7, background: active ? "var(--bg-selected)" : "transparent", color: active ? "var(--text)" : "var(--text-dim)", cursor: "pointer" }}>
+      {children}
+    </button>
+  );
+}
+
+function NoticeShelf({ notices, activities, onDismiss, onTogglePin, floating = false, align = "left" }: {
+  notices: NoticeItem[];
+  activities: PersistedActivityItem[];
+  onDismiss: (id: string) => void;
+  onTogglePin: (id: string) => void;
+  floating?: boolean;
+  align?: "left" | "right";
+}) {
+  const { t } = useI18n();
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [selectedRequestId, setSelectedRequestId] = useState<string | null>(null);
+  if (notices.length === 0 && activities.length === 0) return null;
+  const orderedNotices = [...notices].sort((a, b) => Number(b.pinned) - Number(a.pinned));
+  const visibleActivities = selectedRequestId ? activities.filter((item) => item.activity.requestId === selectedRequestId) : activities;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: align === "right" ? "flex-end" : "stretch", gap: 7, width: "100%", marginBottom: floating ? 0 : 10, pointerEvents: "auto" }}>
+      {activities.length > 0 && (
+        <button type="button" onClick={() => { setSelectedRequestId(null); setHistoryOpen((open) => !open); }} aria-expanded={historyOpen} style={{ display: "flex", alignItems: "center", gap: 7, padding: "5px 9px", border: "1px solid var(--border)", borderRadius: 999, background: "var(--bg-panel)", color: "var(--text-muted)", cursor: "pointer", fontSize: 11 }}>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v6h6"/><path d="M12 7v5l3 2"/></svg>
+          {t("notice_activityHistory", { count: activities.length })}
+        </button>
+      )}
+      {historyOpen && (
+        <section aria-label={t("notice_activityHistoryTitle")} style={{ width: "min(100%, 620px)", maxHeight: 360, overflow: "auto", border: "1px solid var(--border)", borderRadius: 14, background: "var(--bg)", boxShadow: "0 16px 40px color-mix(in srgb, var(--text) 14%, transparent)" }}>
+          <div style={{ position: "sticky", top: 0, zIndex: 1, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "9px 10px 9px 12px", borderBottom: "1px solid var(--border)", background: "var(--bg-panel)" }}>
+            <div>
+              <div style={{ color: "var(--text)", fontSize: 12, fontWeight: 650 }}>{t("notice_activityHistoryTitle")}</div>
+              <div style={{ color: "var(--text-dim)", fontSize: 10 }}>{t("notice_activityHistoryDescription")}</div>
+            </div>
+            <NoticeIconButton label={t("notice_close")} onClick={() => setHistoryOpen(false)}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg></NoticeIconButton>
+          </div>
+          {visibleActivities.length > 0 ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: 10 }}>
+              {[...visibleActivities].reverse().map(({ key, activity, timestamp }) => (
+                <article key={key} style={{ border: "1px solid var(--border)", borderLeft: `3px solid ${activity.kind === "warning" || activity.kind === "error" ? "var(--warning)" : "var(--accent)"}`, borderRadius: 9, background: "var(--bg-panel)", padding: "9px 10px" }}>
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 5 }}>
+                    <span style={{ color: "var(--text)", fontSize: 12, fontWeight: 650 }}>{activity.title}</span>
+                    {timestamp ? <time style={{ marginLeft: "auto", color: "var(--text-dim)", fontSize: 10 }}>{new Date(timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</time> : null}
+                  </div>
+                  <div style={{ color: "var(--text-muted)", fontSize: 12, lineHeight: 1.55, whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{activity.content}</div>
+                </article>
+              ))}
+            </div>
+          ) : <div style={{ padding: 16, color: "var(--text-muted)", fontSize: 12 }}>{t("notice_activityPending")}</div>}
+        </section>
+      )}
+      {orderedNotices.map((notice) => {
+        const important = notice.tier === "important";
+        const color = important ? "var(--warning)" : "var(--accent)";
         return (
-          <div
-            key={notice.id}
-            className="notice-shelf-item"
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 10,
-              minHeight: 60,
-              height: 60,
-              maxHeight: 60,
-              marginBottom: index === notices.length - 1 ? 0 : 6,
-              overflow: "hidden",
-              borderRadius: 14,
-              border: "1px solid color-mix(in srgb, var(--border) 70%, transparent)",
-              background: "var(--bg)",
-              color: "var(--text-muted)",
-              width: "fit-content",
-              maxWidth: "min(100%, 620px)",
-              boxShadow: floating
-                ? "0 1px 2px rgba(15,23,42,0.05), 0 10px 28px -14px rgba(15,23,42,0.24)"
-                : "0 1px 2px rgba(15,23,42,0.04), 0 8px 24px -12px rgba(15,23,42,0.10)",
-              fontSize: 18,
-              lineHeight: 1.45,
-              transformOrigin: "top center",
-              animation: notice.exiting
-                ? "notice-shelf-out 0.18s ease-in forwards"
-                : "notice-shelf-in 0.18s ease-out both",
-              padding: "0 12px",
-            }}
-          >
-            <span
-              style={{
-                width: 7,
-                height: 7,
-                borderRadius: "50%",
-                background: color,
-                flexShrink: 0,
-              }}
-            />
-            <span style={{ padding: "14px 0", minWidth: 0, maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              {notice.message}
-            </span>
+          <div key={notice.id} className="notice-shelf-item" role={notice.type === "error" ? "alert" : "status"} style={{ display: "flex", alignItems: important ? "flex-start" : "center", gap: important ? 9 : 8, minHeight: important ? 76 : 42, borderRadius: important ? 14 : 999, border: important ? `1px solid color-mix(in srgb, ${color} 38%, var(--border))` : "1px solid var(--border)", borderLeft: important ? `3px solid ${color}` : undefined, background: important ? "var(--bg-panel)" : "var(--bg)", color: "var(--text-muted)", width: important ? "min(100%, 620px)" : "fit-content", maxWidth: "min(100%, 620px)", boxShadow: floating ? "0 12px 32px color-mix(in srgb, var(--text) 13%, transparent)" : "0 8px 24px color-mix(in srgb, var(--text) 8%, transparent)", fontSize: important ? 13 : 12, lineHeight: 1.55, transformOrigin: "top right", animation: notice.exiting ? "notice-shelf-out 0.18s ease-in forwards" : "notice-shelf-in 0.18s ease-out both", padding: important ? "10px 8px 10px 11px" : "6px 7px 6px 11px" }}>
+            <span style={{ width: 7, height: 7, borderRadius: "50%", background: color, flexShrink: 0, marginTop: important ? 6 : 0 }} />
+            <div style={{ minWidth: 0, flex: 1 }}>
+              {important && <div style={{ marginBottom: 3, color, fontFamily: "var(--font-mono)", fontSize: 10, fontWeight: 700, letterSpacing: 0.7, textTransform: "uppercase" }}>{t(notice.type === "error" ? "notice_error" : "notice_warning")}{notice.pinned ? ` · ${t("notice_pinned")}` : ""}</div>}
+              <div style={{ color: important ? "var(--text)" : "var(--text-muted)", whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{notice.message}</div>
+              {important && notice.activityRecord && <button type="button" onClick={() => { setSelectedRequestId(notice.id); setHistoryOpen(true); }} style={{ marginTop: 7, padding: 0, border: "none", background: "transparent", color: "var(--accent)", cursor: "pointer", fontSize: 11, fontWeight: 600 }}>{t("notice_viewActivity")} →</button>}
+            </div>
+            {important && <NoticeIconButton label={notice.pinned ? t("notice_unpin") : t("notice_pin")} active={notice.pinned} onClick={() => onTogglePin(notice.id)}><svg width="14" height="14" viewBox="0 0 24 24" fill={notice.pinned ? "currentColor" : "none"} stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="m15 4 5 5-4 2-3 5-2 4-1-6-6-6 4-1 5-3 2-4Z"/><path d="m4 20 5-5"/></svg></NoticeIconButton>}
+            <NoticeIconButton label={t("notice_close")} onClick={() => onDismiss(notice.id)}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg></NoticeIconButton>
           </div>
         );
       })}

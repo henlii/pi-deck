@@ -6,7 +6,7 @@ function isObject(val: unknown): val is Record<string, unknown> {
 
 function normalizeToolCallBlock(block: unknown): ToolCallContent | null {
   if (!isObject(block) || block.type !== "toolCall") return null;
-  return {
+  const normalized: ToolCallContent = {
     type: "toolCall",
     toolCallId: typeof block.toolCallId === "string" ? block.toolCallId : (typeof block.id === "string" ? block.id : ""),
     toolName: typeof block.toolName === "string" ? block.toolName : (typeof block.name === "string" ? block.name : ""),
@@ -16,6 +16,10 @@ function normalizeToolCallBlock(block: unknown): ToolCallContent | null {
         ? block.arguments as Record<string, unknown>
         : {}),
   };
+  if (Array.isArray(block.renderedCallLines) && block.renderedCallLines.every((line) => typeof line === "string")) {
+    normalized.renderedCallLines = [...block.renderedCallLines] as string[];
+  }
+  return normalized;
 }
 
 export function normalizeToolCalls(msg: AgentMessage): AgentMessage {

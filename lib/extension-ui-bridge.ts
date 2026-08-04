@@ -123,7 +123,7 @@ export function clearAllExtensionUiBlocking(state: ExtensionUiState): ExtensionU
 }
 
 export type ExtensionUiEffect =
-  | { type: "notice"; id: string; message: string; noticeType: ExtensionUiNoticeType }
+  | { type: "notice"; id: string; message: string; noticeType: ExtensionUiNoticeType; activityRecord: boolean }
   | { type: "setTitle"; title: string }
   | { type: "insertText"; text: string };
 
@@ -148,7 +148,7 @@ export function applyExtensionUiRequest(
     case "notify":
       return {
         state,
-        effects: [{ type: "notice", id: request.id, message: request.message, noticeType: request.notifyType ?? "info" }],
+        effects: [{ type: "notice", id: request.id, message: request.message, noticeType: request.notifyType ?? "info", activityRecord: request.activityRecord === true }],
       };
     case "setStatus": {
       const index = state.statuses.findIndex((item) => item.key === request.statusKey);

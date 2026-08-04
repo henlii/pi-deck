@@ -3,6 +3,7 @@ import { resolveProjectTrustedForSession } from "./project-trust";
 import { KeybindingsManager as TuiKeybindingsManager, TUI_KEYBINDINGS } from "@earendil-works/pi-tui";
 import { randomUUID } from "crypto";
 import { existsSync, writeFileSync } from "fs";
+import { loadPiTheme, renderCustomMessageLines, renderToolCallLines, renderToolResultLines, renderWidgetFactoryLines } from "./tui-render-bridge";
 import { invalidateModelsCache } from "./models-cache";
 import { cacheSessionPath, invalidateSessionListCache } from "./session-reader";
 import type { SlashCommandInfo } from "@earendil-works/pi-coding-agent";
@@ -190,6 +191,25 @@ class PlainTextTheme extends Theme {
 const PLAIN_TEXT_THEME = new PlainTextTheme();
 const CUSTOM_UI_KEYBINDINGS = new TuiKeybindingsManager(TUI_KEYBINDINGS);
 
+/**
+ * 单个 toolCallId 的渲染上下文状态（P0-1，跨事件保持：
+ * tool_call → tool_execution_update → tool_result 共享同一入口）。
+ * 生命周期：首次渲染懒创建；tool_execution_end / agent_end / destroy 释放。
+ */
+type ToolRenderStateEntry = {
+  /** 渲染器共享状态对象（pi-subagents 读写 subagentResultAnimationTimer 等）。 */
+  state: Record<string, unknown>;
+  /** renderCall 槽「上一组件」（镜像 pi 的 renderedCallComponents）。 */
+  lastCallComponent: unknown;
+  /** renderResult 槽「上一组件」（镜像 pi 的 renderedResultComponents）。 */
+  lastResultComponent: unknown;
+  /** tool_execution_update 上次渲染时间戳（P1-6 节流用）。 */
+  lastPartialRenderAt: number | undefined;
+};
+
+/** P1-6：tool_execution_update 同一 toolCallId 渲染最短间隔（毫秒）。 */
+export const PARTIAL_RENDER_MIN_INTERVAL_MS = 100;
+
 function withExtensionTools(session: AgentSessionLike, toolNames: string[]): string[] {
   if (toolNames.length === 0) return [];
 
@@ -224,6 +244,17 @@ export class AgentSessionWrapper {
   private onDestroyCallback: (() => void) | null = null;
   private _alive = true;
   /**
+   * TUI 渲染桥主题（wrapper 创建时加载一次，失败 null）。
+   * null 时不尝试任何渲染，工具事件保持原样（前端回退纯文本逻辑）。
+   */
+  private renderBridgeTheme: Theme | null = loadPiTheme();
+  /**
+   * TUI 渲染桥工具渲染上下文状态（P0-1）：按 toolCallId 保持
+   * state/lastComponent 跨事件共享；随 wrapper 生命周期释放（见 destroy）。
+   * 放实例字段而非 globalThis：wrapper 有明确 destroy 生命周期，无需跨热重载。
+   */
+  private toolRenderStates = new Map<string, ToolRenderStateEntry>();
+  /**
    * notify 自动持久化去重状态（有界 FIFO）。
    * 生产路径每次 notify 现场 randomUUID，同 id 二次通常不发生；
    * 状态仍保证可测的「同 id 只写一次」与失败不 remember。
@@ -254,14 +285,233 @@ export class AgentSessionWrapper {
       this.resetIdleTimer();
       if (event.type === "agent_end") {
         invalidateSessionListCache();
+        // P0-1：运行结束，释放全部工具渲染上下文状态，防泄漏。
+        this.toolRenderStates.clear();
+      } else if (event.type === "tool_execution_end") {
+        // P0-1：单个工具执行结束，释放对应 toolCallId 状态。
+        this.releaseToolRenderState(event.toolCallId);
       }
-      this.emit(event);
+      this.emit(this.withRenderedToolLines(event));
       // Streaming / compaction / tool events flow through here; re-broadcast
       // the running-status snapshot so the sidebar can update live.
       notifyRunningChange();
     });
     this.resetIdleTimer();
     notifyRunningChange();
+  }
+
+  /**
+   * TUI 渲染桥：对工具相关事件与自定义消息事件在 emit 之前附加渲染行。
+   * 浅拷贝事件对象附加字段，不修改原对象；theme 加载失败 / 无渲染器 /
+   * 渲染失败时不附加字段，事件保持原样，前端回退现有纯文本逻辑。
+   *
+   * 防御性红线：渲染桥是附加能力，任何异常（含扩展对象结构异常、渲染器抛错、
+   * runner 内部错误）都必须吞掉并返回原事件——pi 的 _emit 对 listener 无
+   * try/catch 保护，此处抛错会中断整个事件广播循环，导致 SSE 断流。
+   */
+  private withRenderedToolLines(event: AgentEvent): AgentEvent {
+    try {
+      if (!this.renderBridgeTheme) return event;
+      switch (event.type) {
+        case "tool_execution_update": {
+          // P1-6：高频 partial 更新按 toolCallId 节流，防事件循环阻塞。
+          if (!this.shouldRenderPartialUpdate(event.toolCallId)) return event;
+          const def = this.getToolRenderDefinition(event.toolName);
+          if (!def) return event;
+          const context = this.buildToolRenderContext(
+            event.toolCallId,
+            event.args ?? event.input,
+            { isPartial: true, expanded: true, isError: event.isError === true, resultSlot: true },
+          );
+          if (!context) return event;
+          const lines = renderToolResultLines(
+            def,
+            event.partialResult,
+            { expanded: true, isPartial: true },
+            context,
+            (component) => this.updateToolRenderLastComponent(event.toolCallId, true, component),
+          );
+          return lines ? { ...event, renderedLines: lines } : event;
+        }
+        case "tool_call": {
+          const def = this.getToolRenderDefinition(event.toolName);
+          if (!def) return event;
+          const context = this.buildToolRenderContext(
+            event.toolCallId,
+            event.input,
+            { isPartial: false, expanded: true, isError: false, resultSlot: false },
+          );
+          if (!context) return event;
+          const lines = renderToolCallLines(
+            def,
+            event.input,
+            context,
+            (component) => this.updateToolRenderLastComponent(event.toolCallId, false, component),
+          );
+          return lines ? { ...event, renderedCallLines: lines } : event;
+        }
+        case "tool_result": {
+          const def = this.getToolRenderDefinition(event.toolName);
+          if (!def) return event;
+          const context = this.buildToolRenderContext(
+            event.toolCallId,
+            event.args ?? event.input,
+            { isPartial: false, expanded: true, isError: event.isError === true, resultSlot: true },
+          );
+          if (!context) return event;
+          // P1-3：结果对象补 isError（AgentToolResult 契约，tool-renderer.js:83-89）。
+          const lines = renderToolResultLines(
+            def,
+            {
+              content: event.content,
+              details: event.details,
+              isError: event.isError === true,
+              ...(event.usage !== undefined ? { usage: event.usage } : {}),
+            },
+            { expanded: true, isPartial: false },
+            context,
+            (component) => this.updateToolRenderLastComponent(event.toolCallId, true, component),
+          );
+          return lines ? { ...event, renderedResultLines: lines } : event;
+        }
+        case "message_start":
+        case "message_end": {
+          // 自定义消息渲染器桥接（阶段 C）：role=custom 且带 customType 时，取
+          // extensionRunner 注册的 MessageRenderer，headless 渲染出 ANSI 行附到
+          // 事件上；无渲染器 / 失败 / theme 为 null 时事件原样（前端回退现有
+          // CustomMessageView 文本逻辑）。
+          const msg = event.message as
+            | { role?: string; customType?: string }
+            | undefined;
+          if (msg?.role !== "custom" || typeof msg.customType !== "string" || msg.customType === "") {
+            return event;
+          }
+          const runner = this.inner.extensionRunner as
+            | { getMessageRenderer?: (customType: string) => unknown }
+            | undefined;
+          const renderer =
+            typeof runner?.getMessageRenderer === "function"
+              ? runner.getMessageRenderer(msg.customType)
+              : undefined;
+          const lines = renderCustomMessageLines(
+            renderer,
+            event.message,
+            this.renderBridgeTheme,
+          );
+          return lines ? { ...event, renderedLines: lines } : event;
+        }
+        default:
+          return event;
+      }
+    } catch {
+      // 渲染桥绝不允许阻断事件流：任何异常回退原事件。
+      return event;
+    }
+  }
+
+  /** 取原始 ToolDefinition（绕过 wrapToolDefinition 的渲染器剥离）。 */
+  private getToolRenderDefinition(toolName: unknown): unknown {
+    if (typeof toolName !== "string" || toolName === "") return undefined;
+    const runner = this.inner.extensionRunner as
+      | { getToolDefinition?: (name: string) => unknown }
+      | undefined;
+    return typeof runner?.getToolDefinition === "function"
+      ? runner.getToolDefinition(toolName)
+      : undefined;
+  }
+
+  /**
+   * P0-1：构造 ToolRenderContext 兼容对象（对齐 pi tool-renderer.js:41-56 /
+   * tool-execution.js:87-104）。state/lastComponent 取自 toolCallId 的稳定入口，
+   * 跨事件共享；invalidate no-op（web 端无需重渲染请求）。
+   * toolCallId 缺失/非法 → null（上层按无渲染器回退）。
+   */
+  private buildToolRenderContext(
+    toolCallId: unknown,
+    args: unknown,
+    opts: { isPartial: boolean; expanded: boolean; isError: boolean; resultSlot: boolean },
+  ): Record<string, unknown> | null {
+    const entry = this.getOrCreateToolRenderState(toolCallId);
+    if (!entry) return null;
+    return {
+      args,
+      toolCallId,
+      invalidate: () => {},
+      lastComponent: opts.resultSlot ? entry.lastResultComponent : entry.lastCallComponent,
+      state: entry.state,
+      cwd: this.getSessionCwd(),
+      executionStarted: true,
+      argsComplete: true,
+      isPartial: opts.isPartial,
+      expanded: opts.expanded,
+      showImages: false,
+      isError: opts.isError,
+    };
+  }
+
+  /** 取（或懒创建）toolCallId 的渲染状态入口；非法 toolCallId → null。 */
+  private getOrCreateToolRenderState(toolCallId: unknown): ToolRenderStateEntry | null {
+    if (typeof toolCallId !== "string" || toolCallId === "") return null;
+    let entry = this.toolRenderStates.get(toolCallId);
+    if (!entry) {
+      entry = {
+        state: {},
+        lastCallComponent: undefined,
+        lastResultComponent: undefined,
+        lastPartialRenderAt: undefined,
+      };
+      this.toolRenderStates.set(toolCallId, entry);
+    }
+    return entry;
+  }
+
+  /** 渲染后记录「上一组件」：resultSlot=true → renderResult 槽，否则 renderCall 槽。 */
+  private updateToolRenderLastComponent(toolCallId: unknown, resultSlot: boolean, component: unknown): void {
+    if (typeof toolCallId !== "string" || toolCallId === "") return;
+    const entry = this.toolRenderStates.get(toolCallId);
+    if (!entry) return;
+    if (resultSlot) entry.lastResultComponent = component;
+    else entry.lastCallComponent = component;
+  }
+
+  /** 运行结束（tool_execution_end / agent_end / destroy）时释放对应 toolCallId 状态。 */
+  private releaseToolRenderState(toolCallId: unknown): void {
+    if (typeof toolCallId === "string" && toolCallId !== "") {
+      this.toolRenderStates.delete(toolCallId);
+    }
+  }
+
+  /**
+   * P1-6：tool_execution_update 节流——同一 toolCallId 最短间隔内跳过渲染。
+   * 首次 update 也记录时间戳（否则前两次快速更新都逃过节流）。
+   */
+  private shouldRenderPartialUpdate(toolCallId: unknown): boolean {
+    if (typeof toolCallId !== "string" || toolCallId === "") return true;
+    const now = Date.now();
+    const entry = this.getOrCreateToolRenderState(toolCallId);
+    if (!entry) return true;
+    if (entry.lastPartialRenderAt !== undefined && now - entry.lastPartialRenderAt < PARTIAL_RENDER_MIN_INTERVAL_MS) {
+      return false;
+    }
+    entry.lastPartialRenderAt = now;
+    return true;
+  }
+
+  /**
+   * P1-2：会话真实项目 cwd——从会话 header 取（header.cwd 是项目目录；
+   * sessionFile 的 dirname 只是 ~/.pi/agent/sessions/<encoded>/ 不是项目目录）。
+   * 无 header / 缺字段 / 异常 → 回退 process.cwd()。
+   */
+  private getSessionCwd(): string {
+    try {
+      const header = this.inner.sessionManager.getHeader?.() as { cwd?: unknown } | null | undefined;
+      if (header && typeof header.cwd === "string" && header.cwd.trim() !== "") {
+        return header.cwd;
+      }
+    } catch {
+      // 忽略异常，回退 process.cwd()
+    }
+    return process.cwd();
   }
 
   setForceEmptySystemPrompt(force: boolean): void {
@@ -481,6 +731,10 @@ export class AgentSessionWrapper {
           this.promptRunning = false;
           invalidateSessionListCache();
           const errorMessage = error instanceof Error ? error.message : String(error);
+          // 诊断：输出完整堆栈定位 prompt 失败根因（如扩展源码 startsWith 错误）
+          if (error instanceof Error && error.stack) {
+            console.error(`[pidance] prompt failed: ${errorMessage}\n${error.stack}`);
+          }
           // best-effort 持久化；失败不阻断原 prompt_error
           this.tryAutoPersistActivity(
             mapPromptErrorToActivity({
@@ -925,6 +1179,8 @@ export class AgentSessionWrapper {
     for (const id of Array.from(this.activeCustomUis.keys())) this.closeCustomUi(id, undefined);
     this.pendingUiResponses.clear();
     this.pendingUiRequests.clear();
+    // P0-1：wrapper 销毁即释放全部渲染上下文状态（idle 超时亦走此路径）。
+    this.toolRenderStates.clear();
     this.onDestroyCallback?.();
     notifyRunningChange();
     getRetractedStack().delete(this.inner.sessionId);
@@ -1153,7 +1409,7 @@ export class AgentSessionWrapper {
         const id = randomUUID();
         // warning/error 经单一 owner 自动持久化；info/success/缺省 transient。
         // 同 requestId 只写一次（失败不 remember）；不同 id 同文案各写一次。
-        persistExtensionNotify(
+        const activityRecord = persistExtensionNotify(
           this.notifyPersistState,
           (input) => this.appendActivity(input),
           {
@@ -1168,6 +1424,7 @@ export class AgentSessionWrapper {
           method: "notify",
           message,
           notifyType: type,
+          activityRecord,
         } as ExtensionUiRequest as AgentEvent);
       },
       onTerminalInput: () => () => {},
@@ -1187,6 +1444,16 @@ export class AgentSessionWrapper {
       setWorkingIndicator: () => {},
       setHiddenThinkingLabel: () => {},
       setWidget: (key, content, options) => {
+        // 组件工厂形式（如 pi-subagents async widget 的 buildWidgetComponent）：headless
+        // 渲染为 ANSI 行后走现有 lines 通道；渲染失败静默（不设置不 emit）。
+        // **snapshot-only 范围（P1-7）**：每次 setWidget 调用时渲染一次静态行快照，
+        // 工厂的 state/invalidate 生命周期与事件驱动重渲染（pi M2）不支持——动态内容
+        // 需插件主动再次 setWidget 才更新；结果受 renderToLines 输出上限约束。
+        if (typeof content === "function") {
+          const lines = renderWidgetFactoryLines(content, this.renderBridgeTheme);
+          if (lines === null) return;
+          content = lines;
+        }
         if (content !== undefined && !Array.isArray(content)) return;
         if (content === undefined) {
           this.extensionWidgets.delete(key);

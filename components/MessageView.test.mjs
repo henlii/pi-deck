@@ -151,6 +151,44 @@ test("其它 customType 不误识别为 activity 卡片", () => {
   assert.ok(html.includes(">extension_debug</span>"));
 });
 
+test("custom 渲染桥：合法 ANSI 行优先，隐藏原始内容、详情与复制区", () => {
+  const html = renderMessage({
+    role: "custom",
+    customType: "extension_notice",
+    content: "原始文本",
+    display: true,
+    details: { raw: true },
+    renderedLines: ["\u001b[33m⚠ 插件控制提示\u001b[0m", "第二行"],
+  });
+
+  assert.ok(html.includes(">extension_notice</span>"));
+  assert.ok(html.includes("⚠ 插件控制提示"));
+  assert.ok(html.includes("第二行"));
+  assert.ok(!html.includes("原始文本"));
+  assert.ok(!html.includes("&quot;raw&quot;"));
+  assert.ok(!html.includes('aria-label="Copy message"'));
+  assert.ok(!html.includes('aria-label="Show details"'));
+  assert.match(html, /font-family:var\(--font-mono\)/);
+  assert.match(html, /white-space:pre-wrap/);
+});
+
+test("custom 渲染桥：空数组和非法载荷回退现有文本与详情逻辑", () => {
+  for (const renderedLines of [[], ["合法行", 42], "非法载荷"]) {
+    const html = renderMessage({
+      role: "custom",
+      customType: "extension_notice",
+      content: "回退文本",
+      display: true,
+      details: { fallback: true },
+      renderedLines,
+    });
+
+    assert.ok(html.includes("回退文本"));
+    assert.ok(html.includes('aria-label="Copy message"'));
+    assert.ok(html.includes('aria-label="Show details"'));
+  }
+});
+
 test("custom fallback 语义保持：compaction 仍走专用压缩卡片", () => {
   const message = {
     role: "custom",
@@ -196,6 +234,34 @@ test("实时工具：运行中默认展开终端输出，并优先展示快照�
   assert.ok(html.includes("Live output"));
   assert.ok(html.includes("Output truncated at 64 KB"));
   assert.match(html, /<pre[^>]*tabindex="0"[^>]*max-height:320px/);
+});
+
+test("TUI 渲染桥：ANSI 调用、实时与结果行优先于原始输出和结构化结果", () => {
+  const message = toolMessage("原始命令");
+  message.content[0].renderedCallLines = ["\u001b[36m插件调用\u001b[0m"];
+  const html = renderMessage(message, {
+    toolResults: new Map([["tool-1", {
+      role: "toolResult",
+      toolCallId: "tool-1",
+      content: [{ type: "text", text: "原始结果" }],
+      renderedResultLines: ["\u001b[32m插件结果\u001b[0m"],
+    }]]),
+    toolExecutionSnapshots: [{
+      toolCallId: "tool-1",
+      toolName: "bash",
+      output: "原始实时输出",
+      renderedLines: ["\u001b[33m插件实时输出\u001b[0m"],
+      startedAt: Date.now() - 500,
+      status: "running",
+    }],
+  });
+
+  assert.ok(html.includes("插件调用"));
+  assert.ok(html.includes("插件实时输出"));
+  assert.ok(html.includes("插件结果"));
+  assert.ok(!html.includes("原始实时输出"));
+  assert.ok(!html.includes("原始结果"));
+  assert.match(html, /color:[^;]*(?:rgb|#|var\()/);
 });
 
 test("实时工具：终态默认折叠为状态、命令与固定耗时摘要", () => {

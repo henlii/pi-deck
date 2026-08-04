@@ -14,6 +14,8 @@ import type {
 import type { ObservationalMemoryView } from "@/lib/om-ledger";
 import type { WorkspaceHistoryView } from "@/lib/workspace-history";
 import { normalizeToolCalls } from "@/lib/normalize";
+import { preserveCustomRenderedLines } from "@/lib/custom-rendered-lines";
+import type { SessionActivity } from "@/lib/session-activity";
 import { sendAgentCommand } from "@/lib/agent-client";
 import type { BranchActions } from "@/lib/branch-bookmarks";
 import type { ToolEntry } from "@/lib/tool-presets";
@@ -51,6 +53,7 @@ import {
   applyToolExecutionStart,
   applyToolExecutionUpdate,
   applyToolExecutionEnd,
+  applyToolExecutionResultRender,
   clearToolExecutions,
   getToolExecutionSnapshots,
   type ToolExecutionBufferState,
@@ -102,6 +105,18 @@ function streamReducer(state: StreamingState, action: StreamAction): StreamingSt
   }
 }
 
+/** 只为 custom 消息透传合法 ANSI 行；畸形载荷保持原消息以触发现有文本回退。 */
+function attachCustomRenderedLines(message: AgentMessage, renderedLines: unknown): AgentMessage {
+  if (
+    message.role !== "custom"
+    || !Array.isArray(renderedLines)
+    || !renderedLines.every((line) => typeof line === "string")
+  ) {
+    return message;
+  }
+  return { ...message, renderedLines };
+}
+
 interface AgentEvent {
   type: string;
   [key: string]: unknown;
@@ -147,7 +162,18 @@ export type NoticeItem = {
   id: string;
   message: string;
   type: NoticeType;
+  /** 轻提示自动退出；重要消息常驻，直到用户关闭。 */
+  tier: "transient" | "important";
+  /** 固定只适用于重要消息；固定项始终排在未固定重要消息之前。 */
+  pinned: boolean;
+  /** warning/error 会尝试写入 pidance.activity，可由通知历史恢复查看。 */
+  activityRecord: boolean;
   exiting?: boolean;
+};
+
+export type LiveNoticeActivity = {
+  activity: SessionActivity;
+  timestamp: number;
 };
 
 type NoticeState = {
@@ -157,7 +183,9 @@ type NoticeState = {
 
 type NoticeAction =
   | { type: "add"; notice: NoticeItem }
-  | { type: "mark_oldest_exiting" }
+  | { type: "dismiss"; id: string }
+  | { type: "toggle_pin"; id: string }
+  | { type: "mark_oldest_transient_exiting" }
   | { type: "remove"; id: string };
 
 export type AgentPhase =
@@ -257,8 +285,8 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function markOldestNoticeExiting(notices: NoticeItem[]): NoticeItem[] {
-  const index = notices.findIndex((notice) => !notice.exiting);
+function markOldestTransientNoticeExiting(notices: NoticeItem[]): NoticeItem[] {
+  const index = notices.findIndex((notice) => notice.tier === "transient" && !notice.exiting);
   if (index === -1) return notices;
   return notices.map((notice, i) => (
     i === index ? { ...notice, exiting: true } : notice
@@ -268,13 +296,13 @@ function markOldestNoticeExiting(notices: NoticeItem[]): NoticeItem[] {
 function fillPendingNotices(visible: NoticeItem[], pending: NoticeItem[]): NoticeState {
   let nextVisible = visible;
   let nextPending = pending;
-  while (nextPending.length > 0 && nextVisible.length < MAX_NOTICES) {
+  while (nextPending.length > 0 && nextVisible.filter((notice) => notice.tier === "transient").length < MAX_NOTICES) {
     const [next, ...rest] = nextPending;
     nextVisible = [...nextVisible, next];
     nextPending = rest;
   }
   if (nextPending.length > 0 && !nextVisible.some((notice) => notice.exiting)) {
-    nextVisible = markOldestNoticeExiting(nextVisible);
+    nextVisible = markOldestTransientNoticeExiting(nextVisible);
   }
   return { visible: nextVisible, pending: nextPending };
 }
@@ -282,18 +310,36 @@ function fillPendingNotices(visible: NoticeItem[], pending: NoticeItem[]): Notic
 function noticeReducer(state: NoticeState, action: NoticeAction): NoticeState {
   switch (action.type) {
     case "add": {
-      if (state.visible.some((notice) => notice.exiting) || state.visible.length >= MAX_NOTICES) {
+      if (action.notice.tier === "important") {
+        return { ...state, visible: [...state.visible, action.notice] };
+      }
+      const transientCount = state.visible.filter((notice) => notice.tier === "transient").length;
+      const transientExiting = state.visible.some((notice) => notice.tier === "transient" && notice.exiting);
+      if (transientExiting || transientCount >= MAX_NOTICES) {
         return {
-          visible: state.visible.some((notice) => notice.exiting)
+          visible: transientExiting
             ? state.visible
-            : markOldestNoticeExiting(state.visible),
+            : markOldestTransientNoticeExiting(state.visible),
           pending: [...state.pending, action.notice],
         };
       }
       return { ...state, visible: [...state.visible, action.notice] };
     }
-    case "mark_oldest_exiting":
-      return { ...state, visible: markOldestNoticeExiting(state.visible) };
+    case "dismiss":
+      return {
+        ...state,
+        visible: state.visible.map((notice) => notice.id === action.id ? { ...notice, exiting: true } : notice),
+        pending: state.pending.filter((notice) => notice.id !== action.id),
+      };
+    case "toggle_pin":
+      return {
+        ...state,
+        visible: state.visible.map((notice) => notice.id === action.id && notice.tier === "important"
+          ? { ...notice, pinned: !notice.pinned }
+          : notice),
+      };
+    case "mark_oldest_transient_exiting":
+      return { ...state, visible: markOldestTransientNoticeExiting(state.visible) };
     case "remove": {
       const visible = state.visible.filter((notice) => notice.id !== action.id);
       return fillPendingNotices(visible, state.pending);
@@ -424,6 +470,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const [slashCommands, setSlashCommands] = useState<SlashCommandInfo[]>([]);
   const [slashCommandsLoading, setSlashCommandsLoading] = useState(false);
   const [noticeState, dispatchNotice] = useReducer(noticeReducer, { visible: [], pending: [] });
+  // notify 持久活动的页内增量覆盖层：避免为了刷新一条 activity 全量 loadSession，
+  // 与运行中的 message_end / 流式 SSE 竞争并用磁盘旧快照覆盖较新消息。
+  const [liveNoticeActivities, setLiveNoticeActivities] = useState<LiveNoticeActivity[]>([]);
   const [sessionStatsOverride, setSessionStatsOverride] = useState<SessionStatsInfo | null>(null);
   const [extensionDialog, setExtensionDialog] = useState<ExtensionUiDialogRequest | null>(null);
   const [extensionInlineRequest, setExtensionInlineRequest] = useState<ExtensionUiInlineRequest | null>(null);
@@ -436,6 +485,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
   const eventSourceRef = useRef<EventSource | null>(null);
   const sessionIdRef = useRef<string | null>(session?.id ?? null);
+  const messagesSessionIdRef = useRef<string | null>(session?.id ?? null);
+  const entryIdsRef = useRef<string[]>([]);
   const agentRunningRef = useRef(false);
   const bashRunningRef = useRef(false);
   const branchBusyRef = useRef(false);
@@ -665,6 +716,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           setData(null);
           setActiveLeafId(null);
           setMessages([]);
+          entryIdsRef.current = [];
+          messagesSessionIdRef.current = sid;
           setEntryIds([]);
           setObservationalMemory(null);
           setWorkspaceHistory(null);
@@ -675,16 +728,23 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const d = await res.json() as SessionData;
       if (sessionIdRef.current !== sid) return null;
+      const nextEntryIds = d.context.entryIds ?? [];
+      const previousEntryIds = entryIdsRef.current;
+      const shouldPreserveRenderedLines = messagesSessionIdRef.current === sid;
       // 只有分支导航成功拿到整体会话、即将应用新 context 时才重置跟随；
       // 请求失败/取消不会改变当前阅读位置。
       if (resetBranchFollow) notifyAutoFollowBranchReset();
       setData(d);
       setActiveLeafId(d.leafId);
-      setMessages(d.context.messages);
+      setMessages((previous) => shouldPreserveRenderedLines
+        ? preserveCustomRenderedLines(previous, previousEntryIds, d.context.messages, nextEntryIds)
+        : d.context.messages);
       // 整体替换完成：调用方（agent_end 收尾）可在此延长 settle 窗口 / 标记 end-pin，
       // 覆盖异步返回晚于 settle 窗口时的高度突变（流式占位消失 → 钳位跳变）。
       onMessagesReplaced?.();
-      setEntryIds(d.context.entryIds ?? []);
+      entryIdsRef.current = nextEntryIds;
+      messagesSessionIdRef.current = sid;
+      setEntryIds(nextEntryIds);
       setObservationalMemory(d.observationalMemory ?? null);
       setWorkspaceHistory(d.workspaceHistory ?? null);
       setCurrentModelOverride(null);
@@ -740,10 +800,17 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         observationalMemory?: ObservationalMemoryView | null;
         workspaceHistory?: WorkspaceHistoryView | null;
       };
+      const nextEntryIds = d.context.entryIds ?? [];
+      const previousEntryIds = entryIdsRef.current;
+      const shouldPreserveRenderedLines = messagesSessionIdRef.current === sid;
       // 仅在成功拿到新 context、即将写入 state 时重置跟随；fetch 失败不遗留 pending。
       notifyAutoFollowBranchReset();
-      setMessages(d.context.messages);
-      setEntryIds(d.context.entryIds ?? []);
+      setMessages((previous) => shouldPreserveRenderedLines
+        ? preserveCustomRenderedLines(previous, previousEntryIds, d.context.messages, nextEntryIds)
+        : d.context.messages);
+      entryIdsRef.current = nextEntryIds;
+      messagesSessionIdRef.current = sid;
+      setEntryIds(nextEntryIds);
       // leaf 切换时同步 om / workspace-history 投影；字段缺省时清空，避免旧 leaf 数据残留
       setObservationalMemory(d.observationalMemory ?? null);
       setWorkspaceHistory(d.workspaceHistory ?? null);
@@ -796,6 +863,10 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           cwd: ensureCwd,
+          // 必须带 type:"ensure_session"：createNew 据此只创建 runtime 不发送首条
+          // prompt；缺失时 promptCommand 为空对象 → session.send({}) → Unsupported
+          // command: undefined（08705ad 曾误删此字段，导致新会话创建 500）。
+          type: "ensure_session",
           ...(selectedModel ? { provider: selectedModel.provider, modelId: selectedModel.modelId } : {}),
           ...(thinkingLevel !== "auto" ? { thinkingLevel } : {}),
         }),
@@ -922,15 +993,20 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     }
   }, [capabilities.canSendSessionCommands]);
 
-  const addNotice = useCallback((notice: { id?: string; message: string; type?: NoticeType }) => {
+  const addNotice = useCallback((notice: { id?: string; message: string; type?: NoticeType; activityRecord?: boolean }) => {
     const message = notice.message.trim();
     if (!message) return;
+    const type = notice.type ?? "info";
+    const important = type === "warning" || type === "error";
     dispatchNotice({
       type: "add",
       notice: {
         id: notice.id ?? createNoticeId(),
         message,
-        type: notice.type ?? "info",
+        type,
+        tier: important ? "important" : "transient",
+        pinned: false,
+        activityRecord: notice.activityRecord === true,
       },
     });
   }, []);
@@ -973,7 +1049,23 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     commitExtensionUiState(result.state);
     for (const effect of result.effects) {
       if (effect.type === "notice") {
-        addNotice({ id: effect.id, message: effect.message, type: effect.noticeType });
+        addNotice({ id: effect.id, message: effect.message, type: effect.noticeType, activityRecord: effect.activityRecord });
+        if (effect.activityRecord) {
+          // 服务端已确认写盘，直接并入独立活动投影供 M4 历史面板读取。这里不能调用
+          // loadSession：其异步磁盘快照可能晚于 message_end 返回并覆盖较新的 SSE 消息。
+          const activity: SessionActivity = {
+            version: 1,
+            kind: effect.noticeType === "error" ? "error" : "warning",
+            title: effect.noticeType === "error" ? "Extension error" : "Extension warning",
+            content: effect.message,
+            source: "extension.ui.notify",
+            requestId: effect.id,
+            metadata: { notifyType: effect.noticeType },
+          };
+          setLiveNoticeActivities((current) => current.some((item) => item.activity.requestId === effect.id)
+            ? current
+            : [...current, { activity, timestamp: Date.now() }]);
+        }
       } else if (effect.type === "setTitle") {
         document.title = effect.title;
       } else {
@@ -1213,7 +1305,12 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           break;
         }
         if (msg) {
-          dispatch({ type: "update", message: normalizeToolCalls(msg as AgentMessage) });
+          messagesSessionIdRef.current = sessionIdRef.current;
+          const renderedMessage = attachCustomRenderedLines(
+            msg as AgentMessage,
+            (event as AgentEvent & { renderedLines?: unknown }).renderedLines,
+          );
+          dispatch({ type: "update", message: normalizeToolCalls(renderedMessage) });
         }
         setAgentPhase(null);
         break;
@@ -1243,7 +1340,12 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
             return [...prev, delivered];
           });
         } else if (completed) {
-          setMessages((prev) => [...prev, normalizeToolCalls(completed)]);
+          messagesSessionIdRef.current = sessionIdRef.current;
+          const renderedMessage = attachCustomRenderedLines(
+            completed,
+            (event as AgentEvent & { renderedLines?: unknown }).renderedLines,
+          );
+          setMessages((prev) => [...prev, normalizeToolCalls(renderedMessage)]);
         }
         dispatch({ type: "reset" });
         setAgentPhase({ kind: "waiting_model" });
@@ -1264,6 +1366,26 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         // P4a 实时输出：驱动工具执行缓冲（replace 语义见 lib 层）；agentPhase 不随
         // update 变化，实时内容由缓冲投影提供。end 后迟到的 update 在 lib 层安全忽略。
         commitToolExecutions(applyToolExecutionUpdate(toolExecutionBufferRef.current, event as ToolExecutionUpdateInput));
+        break;
+      }
+      case "tool_call": {
+        // 插件 renderCall 由服务端附在 tool_call；复用 start 合并语义，既可补齐
+        // 已有 execution_start 快照，也可在事件顺序变化时创建兜底快照。
+        commitToolExecutions(applyToolExecutionStart(toolExecutionBufferRef.current, {
+          toolCallId: event.toolCallId,
+          toolName: event.toolName,
+          args: event.input ?? event.args,
+          renderedCallLines: event.renderedCallLines,
+        }));
+        break;
+      }
+      case "tool_result": {
+        // 最终插件渲染收敛进同一快照；若 execution_end 已先到，lib 层只补渲染行，
+        // 不改写既有终态。缺字段时仍由原 tool_execution_end / 消息结果负责。
+        commitToolExecutions(applyToolExecutionResultRender(toolExecutionBufferRef.current, {
+          toolCallId: event.toolCallId,
+          renderedResultLines: event.renderedResultLines,
+        }));
         break;
       }
       case "tool_execution_end": {
@@ -1765,6 +1887,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       ...clearAllExtensionUiBlocking(current),
       customUi: null,
     });
+    setLiveNoticeActivities([]);
   }, [session?.id, newSessionCwd, commitExtensionUiState]);
 
   useEffect(() => {
@@ -2031,10 +2154,10 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       }, NOTICE_EXIT_ANIMATION_MS);
       return () => clearTimeout(t);
     }
-    const oldest = noticeState.visible[0];
+    const oldest = noticeState.visible.find((notice) => notice.tier === "transient" && !notice.exiting);
     if (!oldest) return;
     const t = setTimeout(() => {
-      dispatchNotice({ type: "mark_oldest_exiting" });
+      dispatchNotice({ type: "mark_oldest_transient_exiting" });
     }, NOTICE_VISIBLE_MS);
     return () => clearTimeout(t);
   }, [noticeState.visible]);
@@ -2050,7 +2173,11 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     retryInfo, contextUsage, systemPrompt, forkingEntryId,
     isCompacting, compactError, compactResult, currentModel, displayModel, sessionStats,
     slashCommands, slashCommandsLoading, queuedMessages,
-    notices: noticeState.visible, extensionDialog, extensionInlineRequest, extensionCustomUi, extensionStatuses, extensionWidgets, respondToExtensionUi, dismissExtensionUiRequest, sendExtensionCustomInput,
+    notices: noticeState.visible,
+    liveNoticeActivities,
+    dismissNotice: (id: string) => dispatchNotice({ type: "dismiss", id }),
+    toggleNoticePin: (id: string) => dispatchNotice({ type: "toggle_pin", id }),
+    extensionDialog, extensionInlineRequest, extensionCustomUi, extensionStatuses, extensionWidgets, respondToExtensionUi, dismissExtensionUiRequest, sendExtensionCustomInput,
     todos,
     isAutoModelSelection: isNew && newSessionModel === null,
     agentPhase,

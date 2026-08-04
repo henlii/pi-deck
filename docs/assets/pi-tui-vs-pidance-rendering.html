@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>pi TUI 渲染效果 vs Pidance 映射后渲染效果</title>
+<style>
+  :root {
+    /* 页面基础 */
+    --page-bg: #f4f5f7;
+    --panel-bg: #ffffff;
+    --panel-border: #d8dbe0;
+    --text: #1f2430;
+    --text-dim: #8a90a0;
+    --accent: #4f6ef7;
+
+    /* Pidance 卡片语义色（近似 globals.css 变量） */
+    --p-border: #d8dbe0;
+    --p-bg-subtle: #f4f5f7;
+    --p-bg-panel: #ffffff;
+    --p-text-muted: #5c6370;
+    --p-text-dim: #8a90a0;
+    --p-accent: #4f6ef7;
+    --p-success: #2f9e63;
+    --p-warning: #d97706;
+    --p-tool-bg: #fbfbfc;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    padding: 32px 20px 48px;
+    background: var(--page-bg);
+    color: var(--text);
+    font-family: "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+    line-height: 1.5;
+  }
+
+  header.page-title { max-width: 1180px; margin: 0 auto 8px; }
+  header.page-title h1 { font-size: 20px; margin: 0 0 4px; }
+  header.page-title p { margin: 0; color: var(--text-dim); font-size: 12.5px; }
+
+  .scene-label {
+    max-width: 1180px; margin: 28px auto 8px;
+    font-size: 13px; font-weight: 650; color: var(--text);
+    display: flex; align-items: center; gap: 8px;
+  }
+  .scene-label::after { content: ""; flex: 1; height: 1px; background: var(--panel-border); }
+
+  .compare {
+    max-width: 1180px; margin: 0 auto;
+    display: grid; grid-template-columns: 1fr 1fr; gap: 16px;
+  }
+  @media (max-width: 900px) { .compare { grid-template-columns: 1fr; } }
+
+  .col {
+    background: var(--panel-bg);
+    border: 1px solid var(--panel-border);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+  .col-head {
+    display: flex; align-items: center; gap: 8px;
+    padding: 9px 14px; font-size: 12.5px; font-weight: 650;
+    border-bottom: 1px solid var(--panel-border);
+  }
+  .col-head .badge {
+    font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 99px;
+    letter-spacing: 0.3px;
+  }
+  .col-head .badge.tui { background: #1a1d24; color: #9fb2ff; }
+  .col-head .badge.web { background: #e7ebff; color: #3f5ad4; }
+  .col-head .sub { margin-left: auto; font-weight: 400; font-size: 11px; color: var(--text-dim); }
+
+  .col-body { padding: 14px; }
+
+  /* ── pi TUI 终端画布 ── */
+  .terminal {
+    background: #17191f;
+    border-radius: 8px;
+    padding: 12px 12px 14px;
+    font-family: "SF Mono", "Cascadia Code", Consolas, "Noto Sans Mono CJK SC", monospace;
+    font-size: 12px;
+    line-height: 1.55;
+    overflow-x: auto;
+    white-space: pre;
+    color: #c9cdd6;
+  }
+  .t-row { display: block; }
+  /* ANSI 语义色模拟 */
+  .t-dim   { color: #6a7180; }
+  .t-muted { color: #8b93a3; }
+  .t-accent{ color: #7d9bff; }
+  .t-warn  { color: #e8b45a; }
+  .t-ok    { color: #62c98a; }
+  .t-bad   { color: #f28b82; }
+  .t-title { color: #c9cdd6; font-weight: 700; }
+  .t-bg-pending { background: #23364f; }
+  .t-bg-ok     { background: #1e3a2c; }
+  .t-bg-err    { background: #45262a; }
+  .t-bg-muted  { background: #262a33; }
+  .t-glyph-run { color: #7d9bff; }
+  .t-glyph-done{ color: #62c98a; }
+  .t-glyph-idle{ color: #6a7180; }
+  .t-sep { color: #4a4f5c; }
+  .t-toolout { color: #aab3c5; }
+
+  /* ── Pidance Web 卡片 ── */
+  .web-wrap { display: flex; flex-direction: column; gap: 10px; }
+
+  .p-toolcard {
+    border-radius: 7px; overflow: hidden; font-size: 12px;
+    border: 1px solid color-mix(in srgb, var(--p-accent) 34%, var(--p-border));
+    background: color-mix(in srgb, var(--p-accent) 5%, #fff);
+    font-family: "SF Mono", "Cascadia Code", Consolas, "Noto Sans Mono CJK SC", monospace;
+  }
+  .p-toolcard.ok {
+    border-color: color-mix(in srgb, var(--p-success) 34%, var(--p-border));
+    background: color-mix(in srgb, var(--p-success) 5%, #fff);
+  }
+  .p-toolcard .head {
+    display: flex; align-items: center; gap: 7px;
+    padding: 6px 10px; color: var(--p-text-muted);
+  }
+  .p-toolcard .head .icon { width: 14px; height: 14px; border-radius: 4px; background: var(--p-accent); opacity: 0.85; flex-shrink: 0; }
+  .p-toolcard.ok .head .icon { background: var(--p-success); }
+  .p-toolcard .head .pulse {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--p-accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--p-accent) 16%, transparent);
+    flex-shrink: 0;
+  }
+  .p-toolcard .head .name { color: var(--p-accent); font-weight: 600; font-size: 11px; flex-shrink: 0; }
+  .p-toolcard.ok .head .name { color: var(--p-success); }
+  .p-toolcard .head .cmd {
+    flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    color: var(--p-text-dim); font-size: 11px;
+  }
+  .p-toolcard .head .status { font-size: 10px; font-weight: 600; color: var(--p-accent); flex-shrink: 0; }
+  .p-toolcard.ok .head .status { color: var(--p-success); }
+  .p-toolcard .head .time { font-size: 11px; color: var(--p-text-dim); flex-shrink: 0; }
+  .p-toolcard .head .chev { color: var(--p-text-dim); flex-shrink: 0; font-size: 9px; }
+
+  .p-toolcard .args {
+    padding: 8px 10px; border-top: 1px solid color-mix(in srgb, var(--p-accent) 22%, var(--p-border));
+    background: var(--p-bg-subtle);
+  }
+  .p-toolcard.ok .args { border-top-color: color-mix(in srgb, var(--p-success) 22%, var(--p-border)); }
+  .p-toolcard .args .label { color: var(--p-text-dim); font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 4px; }
+  .p-toolcard .args code { display: block; color: var(--text); font-size: 11.5px; white-space: pre-wrap; font-family: inherit; }
+
+  .p-toolcard .live {
+    border-top: 1px solid color-mix(in srgb, var(--p-accent) 24%, var(--p-border));
+    background: var(--p-tool-bg);
+  }
+  .p-toolcard .live .label {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 6px 10px 4px; color: var(--p-text-dim); font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em;
+  }
+  .p-toolcard .live pre {
+    margin: 0; padding: 4px 10px 10px; max-height: 96px; overflow: auto;
+    color: var(--p-text-muted); font-size: 11.5px; font-family: inherit; white-space: pre-wrap;
+  }
+
+  /* subagent 结构化卡片 */
+  .p-subcard { border-top: 1px solid var(--p-border); background: #fcfcfd; padding: 8px 10px; font-family: inherit; }
+  .p-subcard .row1 { display: flex; align-items: center; gap: 6px; font-size: 11.5px; }
+  .p-subcard .agent { font-weight: 700; color: var(--text); }
+  .p-subcard .chip {
+    font-size: 9.5px; padding: 1px 7px; border-radius: 99px; background: #eef1f6; color: #5c6370;
+  }
+  .p-subcard .chip.model { background: #e7ebff; color: #3f5ad4; }
+  .p-subcard .stats { margin-top: 4px; font-size: 10.5px; color: var(--p-text-dim); }
+  .p-subcard .stats b { color: #4a5160; font-weight: 600; }
+  .p-subcard .meta { margin-top: 5px; font-size: 10.5px; color: var(--p-text-dim); display: flex; gap: 6px; align-items: center; }
+  .p-subcard .meta .link { color: var(--p-accent); text-decoration: underline; cursor: pointer; }
+
+  /* widget 面板 */
+  .p-widget {
+    border: 1px solid var(--p-border); border-radius: 7px; background: var(--p-bg-panel); overflow: hidden;
+  }
+  .p-widget .w-head {
+    padding: 5px 9px; border-bottom: 1px solid var(--p-border);
+    color: var(--p-text-dim); font-size: 11px; font-family: "SF Mono", Consolas, monospace;
+  }
+  .p-widget pre {
+    margin: 0; padding: 8px 9px; color: var(--p-text-muted); font-size: 12px;
+    white-space: pre-wrap; font-family: "SF Mono", Consolas, monospace;
+  }
+
+  /* 消息流内 ⚠ 卡片 */
+  .p-notice {
+    margin: 8px 0; overflow: hidden; border: 1px solid color-mix(in srgb, var(--p-warning) 30%, var(--p-border));
+    border-radius: 9px; background: color-mix(in srgb, var(--p-warning) 4%, var(--p-bg-panel));
+  }
+  .p-notice .n-head {
+    display: flex; min-height: 30px; align-items: center; gap: 8px;
+    padding: 5px 8px 5px 10px; border-bottom: 1px solid var(--p-border);
+  }
+  .p-notice .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--p-warning); flex-shrink: 0; }
+  .p-notice .n-title { flex: 1; font-size: 12px; font-weight: 650; color: var(--text); }
+  .p-notice .n-meta { font-size: 9px; color: var(--p-text-dim); letter-spacing: 0.35px; text-transform: uppercase; font-family: "SF Mono", Consolas, monospace; }
+  .p-notice .n-body { padding: 8px 10px; font-size: 12px; color: var(--p-text-muted); }
+
+  .arrow-note {
+    grid-column: 1 / -1;
+    font-size: 12px; color: var(--text-dim);
+    background: #eef1f6; border: 1px dashed var(--panel-border);
+    border-radius: 8px; padding: 8px 14px;
+  }
+  .arrow-note code { background: #fff; border: 1px solid var(--panel-border); border-radius: 4px; padding: 0 5px; font-size: 11px; }
+
+  footer { max-width: 1180px; margin: 28px auto 0; font-size: 11.5px; color: var(--text-dim); }
+</style>
+</head>
+<body>
+
+<header class="page-title">
+  <h1>pi TUI 渲染效果 vs Pidance 映射后渲染效果</h1>
+  <p>以 pi-subagents 的 <code>subagent</code> 工具为例：同一份插件渲染逻辑，左栏为 pi TUI 终端呈现，右栏为 Pidance 渲染桥（headless render → ANSI 行 → SSE → renderAnsiLine）映射后的 Web 呈现。</p>
+</header>
+
+<!-- ═════════════ 场景 1：工具调用行 + 运行中的结果块 ═════════════ -->
+<div class="scene-label">场景 1 · 工具调用行 + 运行中的结果块（renderCall / renderResult 进行中）</div>
+<div class="compare">
+  <div class="col">
+    <div class="col-head">
+      <span class="badge tui">TUI</span> pi 终端
+      <span class="sub">Component.render(width) → ANSI 行</span>
+    </div>
+    <div class="col-body">
+      <div class="terminal"><span class="t-row"><span class="t-sep">┌─</span> <span class="t-title">subagent</span> <span class="t-accent">code-reviewer</span></span>
+<span class="t-row"><span class="t-sep">│</span></span>
+<span class="t-row"><span class="t-sep">│</span> <span class="t-bg-pending">◐ <span class="t-title">code-reviewer</span> <span class="t-dim">·</span> <span class="t-toolout">⟳ 12</span> <span class="t-dim">·</span> <span class="t-toolout">↑120k ↓8k R300k W12k</span> <span class="t-dim">·</span> <span class="t-toolout">$0.0042</span> <span class="t-dim">·</span> <span class="t-muted">claude-sonnet-4-6</span></span></span>
+<span class="t-row"><span class="t-sep">│</span>   <span class="t-dim">⎿  Running: reviewing git diff --stat …</span></span>
+<span class="t-row"><span class="t-sep">│</span>   <span class="t-accent">  Enter to view live output</span></span>
+<span class="t-row"><span class="t-sep">│</span>   <span class="t-dim">  output: ~/work/repo/<b class="t-dim">run-3</b>/session.jsonl</span></span>
+<span class="t-row"><span class="t-sep">└─</span> <span class="t-glyph-run">◐</span> <span class="t-title">subagent</span> <span class="t-accent">code-reviewer</span> <span class="t-dim">·</span> <span class="t-toolout">12s</span></span></div>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="col-head">
+      <span class="badge web">PIDANCE</span> Web 渲染
+      <span class="sub">ANSI 行 → renderAnsiLine → React</span>
+    </div>
+    <div class="col-body">
+      <div class="web-wrap">
+        <div class="p-toolcard">
+          <div class="head">
+            <span class="icon"></span><span class="pulse"></span>
+            <span class="name">subagent</span>
+            <span class="cmd">code-reviewer · task="Review the pending git diff…"</span>
+            <span class="status">进行中</span>
+            <span class="time">12s</span>
+            <span class="chev">▾</span>
+          </div>
+          <div class="args">
+            <div class="label">参数</div>
+            <code>{agent: "code-reviewer", task: "Review the pending git diff in this repo"}</code>
+          </div>
+          <div class="live">
+            <div class="label"><span>实时输出</span><span>截断</span></div>
+            <pre>◐ code-reviewer · ⟳ 12 · ↑120k ↓8k R300k W12k · $0.0042 · claude-sonnet-4-6
+  ⎿  Running: reviewing git diff --stat …
+  Enter to view live output
+  output: ~/work/repo/run-3/session.jsonl</pre>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═════════════ 场景 2：完成的结果块 ═════════════ -->
+<div class="scene-label">场景 2 · 完成的结果块（renderResult 成功态 → SubagentResultCard）</div>
+<div class="compare">
+  <div class="col">
+    <div class="col-head">
+      <span class="badge tui">TUI</span> pi 终端
+      <span class="sub">Box toolSuccessBg + 输出预览 + session 路径</span>
+    </div>
+    <div class="col-body">
+      <div class="terminal"><span class="t-row"><span class="t-sep">┌─</span> <span class="t-title">subagent</span> <span class="t-accent">code-reviewer</span></span>
+<span class="t-row"><span class="t-sep">│</span></span>
+<span class="t-row"><span class="t-sep">│</span> <span class="t-bg-ok">✔ <span class="t-title">code-reviewer</span> <span class="t-dim">·</span> <span class="t-toolout">⟳ 24</span> <span class="t-dim">·</span> <span class="t-toolout">↑240k ↓16k R620k W24k</span> <span class="t-dim">·</span> <span class="t-toolout">$0.0086</span> <span class="t-dim">·</span> <span class="t-muted">claude-sonnet-4-6</span></span></span>
+<span class="t-row"><span class="t-sep">│</span>   <span class="t-dim">⎿  Review complete: 2 issues found</span></span>
+<span class="t-row"><span class="t-sep">│</span>   <span class="t-dim">     1. [high] missing error handling in upload.ts:42</span></span>
+<span class="t-row"><span class="t-sep">│</span>   <span class="t-dim">  session: ~/work/repo/<b class="t-dim">run-3</b>/session.jsonl</span></span>
+<span class="t-row"><span class="t-sep">└─</span> <span class="t-glyph-done">✔</span> <span class="t-title">subagent</span> <span class="t-accent">code-reviewer</span> <span class="t-dim">·</span> <span class="t-toolout">46s</span></span></div>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="col-head">
+      <span class="badge web">PIDANCE</span> Web 渲染
+      <span class="sub">ToolCallBlock 完成态 → SubagentResultCard（结构化）</span>
+    </div>
+    <div class="col-body">
+      <div class="web-wrap">
+        <div class="p-toolcard ok">
+          <div class="head">
+            <span class="icon"></span>
+            <span class="name">subagent</span>
+            <span class="cmd">code-reviewer · task="Review the pending git diff…"</span>
+            <span class="status">成功</span>
+            <span class="time">46s</span>
+            <span class="chev">▾</span>
+          </div>
+          <div class="p-subcard">
+            <div class="row1">
+              <span style="color:var(--p-success)">✔</span>
+              <span class="agent">code-reviewer</span>
+              <span class="chip model">claude-sonnet-4-6</span>
+              <span class="chip">24 turns</span>
+            </div>
+            <div class="stats">↑<b>240k</b> ↓<b>16k</b> R<b>620k</b> W<b>24k</b> · <b>$0.0086</b> · ctx <b>118k</b></div>
+            <div class="meta">
+              <span>Review complete: 2 issues found</span>
+              <span class="link">打开会话 run-3</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═════════════ 场景 3：async widget ═════════════ -->
+<div class="scene-label">场景 3 · Async 后台运行 widget（setWidget 组件工厂）</div>
+<div class="compare">
+  <div class="col">
+    <div class="col-head">
+      <span class="badge tui">TUI</span> pi 终端
+      <span class="sub">setWidget("subagent-async", 工厂) → 编辑器上方</span>
+    </div>
+    <div class="col-body">
+      <div class="terminal"><span class="t-row"><span class="t-glyph-run">●</span> <span class="t-accent">Async agents</span> <span class="t-dim">· background</span></span>
+<span class="t-row"><span class="t-sep">├─</span> <span class="t-glyph-run">◐</span> <span class="t-title">web-researcher</span> <span class="t-dim">·</span> <span class="t-toolout">↑86k ↓6k</span></span>
+<span class="t-row"><span class="t-sep">│</span>   <span class="t-dim">⎿  Reading docs: https://…/extensions.md</span></span>
+<span class="t-row"><span class="t-sep">└─</span> <span class="t-glyph-done">✔</span> <span class="t-title">code-reviewer</span> <span class="t-dim">·</span> <span class="t-toolout">↑240k ↓16k</span></span>
+<span class="t-row">    <span class="t-dim">  ⎿  done · 2 issues found</span></span></div>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="col-head">
+      <span class="badge web">PIDANCE</span> Web 渲染
+      <span class="sub">ExtensionWidgets 面板（渲染桥补组件工厂后）</span>
+    </div>
+    <div class="col-body">
+      <div class="web-wrap">
+        <div class="p-widget">
+          <div class="w-head">subagent-async</div>
+          <pre>● Async agents · background
+├─ ◐ web-researcher · ↑86k ↓6k
+│    ⎿  Reading docs: https://…/extensions.md
+└─ ✔ code-reviewer · ↑240k ↓16k
+     ⎿  done · 2 issues found</pre>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═════════════ 场景 4：自定义消息 ═════════════ -->
+<div class="scene-label">场景 4 · 自定义消息（registerMessageRenderer ⚠ 控制提示）</div>
+<div class="compare">
+  <div class="col">
+    <div class="col-head">
+      <span class="badge tui">TUI</span> pi 终端
+      <span class="sub">SubagentControlNoticeComponent → 消息流条目</span>
+    </div>
+    <div class="col-body">
+      <div class="terminal"><span class="t-row"><span class="t-warn">╭─ ⚠ Subagent cancelled: web-researcher ──────────────────────────╮</span></span>
+<span class="t-row"><span class="t-warn">│  The subagent was cancelled after the 2nd parallel task.          │</span></span>
+<span class="t-row"><span class="t-warn">│  Remaining tasks were not started.                                │</span></span>
+<span class="t-row"><span class="t-warn">╰───────────────────────────────────────────────────────────────────╯</span></span></div>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="col-head">
+      <span class="badge web">PIDANCE</span> Web 渲染
+      <span class="sub">消息流内联卡片（InlineExtensionCard 样式）</span>
+    </div>
+    <div class="col-body">
+      <div class="web-wrap">
+        <div class="p-notice">
+          <div class="n-head">
+            <span class="dot"></span>
+            <span class="n-title">⚠ Subagent cancelled: web-researcher</span>
+            <span class="n-meta">extension · message</span>
+          </div>
+          <div class="n-body">
+            The subagent was cancelled after the 2nd parallel task.<br>
+            Remaining tasks were not started.
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═════════════ 映射通道说明 ═════════════ -->
+<div class="arrow-note">
+  <b>映射通道</b>：插件渲染函数（renderCall / renderResult / setWidget 工厂 / registerMessageRenderer）
+  → Pidance server 端 headless 执行 <code>Component.render(width)</code> → <b>ANSI 行</b>
+  → 经 <code>extension_ui_request</code> SSE 推送 → 前端 <code>renderAnsiLine()</code>
+  （ChatWindow.tsx:928，已存在）转成 <span style="color:var(--p-accent)">React 内联样式</span>。
+  左栏与右栏内容完全同源 —— 同一份插件代码、同一组语义色，只是终端字符 vs Web 卡片两种呈现。
+</div>
+
+<footer>
+  说明：左栏为 pi TUI 实际渲染形态（源自 pi-subagents 0.35.1 的 renderSubagentResult /
+  buildWidgetComponent / SubagentControlNoticeComponent 源码结构，ANSI 色按语义还原）；
+  右栏为 Pidance 渲染桥建立后的目标形态（近似现有 ToolCallBlock / ExtensionWidgets /
+  InlineExtensionCard 的视觉语言）。交互式部件（select/confirm/input/editor/custom）不走此通道，
+  仍由现有 extension-ui-bridge 处理。详见 <code>docs/pi-subagent-tui-rendering-mapping.md</code>。
+</footer>
+
+</body>
+</html>
