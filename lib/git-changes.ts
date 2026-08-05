@@ -13,10 +13,48 @@ import {
   parseGitPorcelainV1,
   type GitPorcelainEntry,
 } from "./git-status";
+import { buildDiffCacheKey } from "./git-refresh";
 
 const execFileAsync = promisify(execFile);
 const GIT_TIMEOUT_MS = 10_000;
 const GIT_STATUS_MAX_BUFFER = 8 * 1024 * 1024;
+
+// ============================================================================
+// Git 数据响应缓存（P1-3 定向刷新）
+//
+// diff 与 status 分离缓存、分离失效：
+//   - diff：按 (cwd, filePath) 键控，以 (mtimeMs, size) 校验——文件未变时
+//     同内容重复请求零 git 调用；单文件修改只重抓该文件（mtime/size 变化
+//     即定向失效该条目）。
+//   - status：按 cwd 键控的短 TTL 防抖——聚合视图在全量刷新场景（agent
+//     结束后 / 文件保存后）合并高频重复请求，但不与 diff 缓存互相污染。
+// 缓存为模块级 Map（热重载自动清空，丢失无害，仅影响下次冷抓速度）。
+// ============================================================================
+
+interface GitDiffCacheEntry {
+  mtimeMs: number;
+  size: number;
+  response: GitFileDiffResponse;
+}
+
+interface GitStatusCacheEntry {
+  fetchedAt: number;
+  response: GitStatusResponse;
+}
+
+const gitDiffCache = new Map<string, GitDiffCacheEntry>();
+const gitStatusCache = new Map<string, GitStatusCacheEntry>();
+const STATUS_CACHE_TTL_MS = 800;
+
+/** 定向失效单文件 diff 缓存条目（文件保存/删除等明确知道路径的事件用）。 */
+export function invalidateGitFileDiff(cwd: string, filePath: string): void {
+  gitDiffCache.delete(buildDiffCacheKey(cwd, filePath));
+}
+
+/** 失效某 cwd 的 status 缓存（该仓库内容已变化时用）。 */
+export function invalidateGitStatus(cwd: string): void {
+  gitStatusCache.delete(cwd);
+}
 
 async function git(cwd: string, args: string[], maxBuffer = GIT_STATUS_MAX_BUFFER): Promise<string> {
   const { stdout } = await execFileAsync("git", ["-C", cwd, ...args], {
@@ -55,6 +93,17 @@ async function readStatusEntries(repositoryRoot: string): Promise<GitPorcelainEn
 }
 
 export async function getGitStatus(cwd: string): Promise<GitStatusResponse> {
+  const now = Date.now();
+  const cached = gitStatusCache.get(cwd);
+  if (cached && now - cached.fetchedAt < STATUS_CACHE_TTL_MS) {
+    return cached.response;
+  }
+  const response = await getGitStatusUncached(cwd);
+  gitStatusCache.set(cwd, { fetchedAt: now, response });
+  return response;
+}
+
+async function getGitStatusUncached(cwd: string): Promise<GitStatusResponse> {
   const repositoryRoot = await findRepositoryRoot(cwd);
   if (!repositoryRoot) {
     return { isGitRepository: false, repositoryRoot: null, files: [] };
@@ -121,7 +170,11 @@ async function createTrackedFilePatch(
   }
 }
 
-export async function getGitFileDiff(cwd: string, filePath: string): Promise<GitFileDiffResponse> {
+export async function getGitFileDiff(
+  cwd: string,
+  filePath: string,
+  options: { force?: boolean } = {},
+): Promise<GitFileDiffResponse> {
   const repositoryRoot = await findRepositoryRoot(cwd);
   if (!repositoryRoot || !isWithinPath(repositoryRoot, filePath)) return { supported: false };
 
@@ -130,17 +183,33 @@ export async function getGitFileDiff(cwd: string, filePath: string): Promise<Git
   try {
     stat = fs.lstatSync(resolvedFilePath);
   } catch {
+    // 文件已删除：定向失效对应缓存条目，返回不支持。
+    invalidateGitFileDiff(cwd, filePath);
     return { supported: false };
   }
   if (!stat.isFile() || stat.size > TEXT_PREVIEW_MAX_BYTES) return { supported: false };
 
+  // 响应缓存：文件 (mtimeMs, size) 未变时直接复用上次 patch，零 git 调用。
+  // mtime/size 变化即该文件 diff 定向失效——单文件修改只重抓对应 diff。
+  const cacheKey = buildDiffCacheKey(cwd, filePath);
+  const cached = gitDiffCache.get(cacheKey);
+  if (!options.force && cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) {
+    return cached.response;
+  }
+
   const relativePath = toGitPath(path.relative(repositoryRoot, resolvedFilePath));
   const entries = await readStatusEntries(repositoryRoot);
   const entry = entries.find((candidate) => candidate.path === relativePath);
-  if (!entry) return { supported: false };
+  if (!entry) {
+    invalidateGitFileDiff(cwd, filePath);
+    return { supported: false };
+  }
 
   const { status } = classifyGitStatus(entry);
-  if (status === "deleted") return { supported: false };
+  if (status === "deleted") {
+    invalidateGitFileDiff(cwd, filePath);
+    return { supported: false };
+  }
 
   const currentBuffer = fs.readFileSync(resolvedFilePath);
   if (hasNullByte(currentBuffer)) return { supported: false };
@@ -159,6 +228,9 @@ export async function getGitFileDiff(cwd: string, filePath: string): Promise<Git
     }
   }
 
-  if (!patch.includes("\n@@ ")) return { supported: false };
-  return { supported: true, status, patch };
+  const response: GitFileDiffResponse = patch.includes("\n@@ ")
+    ? { supported: true, status, patch }
+    : { supported: false };
+  gitDiffCache.set(cacheKey, { mtimeMs: stat.mtimeMs, size: stat.size, response });
+  return response;
 }

@@ -335,6 +335,8 @@ export interface SessionInfo {
   projectRoot?: string;
   /** Branch name when cwd is a linked git worktree (not the main checkout) */
   worktreeBranch?: string;
+  /** 归档时间（ISO）。存在即视为已归档：普通列表/Recent/搜索默认排除，聊天只读。 */
+  archivedAt?: string;
 }
 
 export interface SessionContext {

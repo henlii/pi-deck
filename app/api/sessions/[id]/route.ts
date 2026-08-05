@@ -149,6 +149,8 @@ export async function DELETE(
     const parentRoot = resolve(filePath.slice(0, -6));
     const skippedSubagents = deleteValidatedSubagents(verifiedChildren, parentRoot, invalidateSessionPathCache);
     invalidateSessionPathCache(id);
+    // 永久删除成功后同步清理归档 sidecar（D8.4）；删除失败时 sidecar 保留。
+    sessionService.removeArchiveRecordAfterPermanentDelete(id);
     invalidateSessionListCache();
     return NextResponse.json({ ok: true, skippedSubagents });
   } catch (error) {

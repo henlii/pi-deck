@@ -22,6 +22,7 @@ import { resolveLocalFileHref } from "@/lib/file-links";
 import { markdownPreviewRehypePlugins, markdownPreviewRemarkPlugins } from "@/lib/markdown";
 import { parseUnifiedPatch } from "@/lib/patch";
 import type { GitFileDiffResponse } from "@/lib/git-types";
+import { affectedPathsMatchFile } from "@/lib/git-refresh";
 import { canRedo, canUndo, type FileBuffer, type FileEditorAction } from "@/lib/file-editor-state";
 import { useI18n } from "@/lib/i18n";
 
@@ -34,7 +35,8 @@ interface Props {
   dispatchBuffer?: Dispatch<FileEditorAction>;
   onSave?: () => Promise<boolean>;
   onOpenFile?: (filePath: string) => void;
-  gitRefreshKey?: number;
+  /** 受影响文件路径集合：命中当前文件时定向重抓该文件 diff（SSE watch 的兜底）。 */
+  gitAffectedPaths?: string[] | null;
 }
 
 interface FileData {
@@ -709,7 +711,7 @@ function DocumentViewer({ filePath, cwd, sourceSessionId }: Props) {
   );
 }
 
-export function FileViewer({ filePath, cwd, sourceSessionId, writable, buffer, dispatchBuffer, onSave, onOpenFile, gitRefreshKey }: Props) {
+export function FileViewer({ filePath, cwd, sourceSessionId, writable, buffer, dispatchBuffer, onSave, onOpenFile, gitAffectedPaths }: Props) {
   if (isImagePath(filePath)) {
     return <ImageViewer filePath={filePath} cwd={cwd} sourceSessionId={sourceSessionId} />;
   }
@@ -719,10 +721,10 @@ export function FileViewer({ filePath, cwd, sourceSessionId, writable, buffer, d
   if (isDocumentPreviewPath(filePath)) {
     return <DocumentViewer filePath={filePath} cwd={cwd} sourceSessionId={sourceSessionId} />;
   }
-  return <TextFileViewer filePath={filePath} cwd={cwd} sourceSessionId={sourceSessionId} writable={writable} buffer={buffer} dispatchBuffer={dispatchBuffer} onSave={onSave} onOpenFile={onOpenFile} gitRefreshKey={gitRefreshKey} />;
+  return <TextFileViewer filePath={filePath} cwd={cwd} sourceSessionId={sourceSessionId} writable={writable} buffer={buffer} dispatchBuffer={dispatchBuffer} onSave={onSave} onOpenFile={onOpenFile} gitAffectedPaths={gitAffectedPaths} />;
 }
 
-function TextFileViewer({ filePath, cwd, sourceSessionId, writable = false, buffer, dispatchBuffer, onSave, onOpenFile, gitRefreshKey }: Props) {
+function TextFileViewer({ filePath, cwd, sourceSessionId, writable = false, buffer, dispatchBuffer, onSave, onOpenFile, gitAffectedPaths }: Props) {
   const { isDark } = useTheme();
   const { t } = useI18n();
   const [data, setData] = useState<FileData | null>(null);
@@ -840,9 +842,14 @@ function TextFileViewer({ filePath, cwd, sourceSessionId, writable = false, buff
     };
   }, [filePath, fetchContent, fetchGitDiff, sourceSessionId]);
 
+  // 受影响路径集合命中当前文件时定向重抓该文件 diff（SSE watch 的兜底：
+  // 覆盖 watcher 未建立/事件丢失场景）。null 或未命中不重抓——agent 结束
+  // 不再触发全仓 diff 重抓，单文件修改只失效对应 diff。
   useEffect(() => {
-    void fetchGitDiff(filePath);
-  }, [fetchGitDiff, filePath, gitRefreshKey]);
+    if (gitAffectedPaths && affectedPathsMatchFile(gitAffectedPaths, filePath)) {
+      void fetchGitDiff(filePath);
+    }
+  }, [fetchGitDiff, filePath, gitAffectedPaths]);
 
   useEffect(() => () => {
     if (savedFlashTimerRef.current) clearTimeout(savedFlashTimerRef.current);

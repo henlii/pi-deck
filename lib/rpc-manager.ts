@@ -26,6 +26,7 @@ import {
   type NotifyPersistState,
 } from "./session-activity-events";
 import { sessionService } from "./session-service";
+import { shouldInheritModel } from "./model-selection";
 
 // ============================================================================
 // Types
@@ -848,9 +849,20 @@ export class AgentSessionWrapper {
           newSessionFile = forkedPath;
         }
 
-        const newSessionId = SessionManager.open(newSessionFile, sessionDir).getSessionId();
+        const forkedManager = SessionManager.open(newSessionFile, sessionDir);
+        const newSessionId = forkedManager.getSessionId();
         cacheSessionPath(newSessionId, newSessionFile);
         invalidateSessionListCache();
+        // P1-2：fork 继承父会话模型选择——新文件没有 model_change（空 fork 或
+        // fork 点在 model_change 之后）时，把源会话当前模型写入新文件，保证
+        // fork 后用户手动选择不回落默认。
+        const sourceModel = this.inner.model;
+        if (sourceModel && shouldInheritModel(
+          forkedManager.getEntries().some((e) => e.type === "model_change"),
+          { provider: sourceModel.provider, modelId: sourceModel.id },
+        )) {
+          forkedManager.appendModelChange(sourceModel.provider, sourceModel.id);
+        }
         this.destroy();
         return { cancelled: false, newSessionId };
       }

@@ -71,6 +71,10 @@ function AppShellInner() {
   const [refreshKey, setRefreshKey] = useState(0);
   const [sessionKey, setSessionKey] = useState(0);
   const [explorerRefreshKey, setExplorerRefreshKey] = useState(0);
+  /** 受影响文件路径集合（P1-3 diff 定向刷新）：
+   *  文件保存等明确知道路径的事件写入具体路径；agent 结束置 null（无文件信息，
+   *  打开文件的 diff 由各自 SSE watch 定向刷新，不再全仓重抓）。 */
+  const [gitAffectedPaths, setGitAffectedPaths] = useState<string[] | null>(null);
   /** 新建会话客户端意图：点击新会话只建 intent，首次写操作才 POST /api/agent/new。 */
   const [newSessionIntent, setNewSessionIntent] = useState<NewSessionIntent | null>(null);
   const newSessionIntentRef = useRef<NewSessionIntent | null>(null);
@@ -334,6 +338,8 @@ function AppShellInner() {
         baseline: { size: body.size, mtimeMs: body.mtimeMs },
       });
       setExplorerRefreshKey((value) => value + 1);
+      // diff 定向失效：只携带本次保存的文件路径（新数组引用保证连续保存也触发）。
+      setGitAffectedPaths((prev) => [...new Set([...(prev ?? []), buffer.filePath])]);
       // 若保存过程中继续输入，服务器保存成功但 tab 仍有新草稿，不能用于“保存并关闭”。
       const latest = getBuffer(fileEditorStateRef.current, key);
       return Boolean(latest && latest.revision === requestRevision && !latest.dirty);
@@ -623,7 +629,11 @@ function AppShellInner() {
 
   const handleAgentEnd = useCallback(() => {
     setRefreshKey((k) => k + 1);
+    // status 全量刷新（聚合视图，服务端有短 TTL 防抖）；
+    // 打开文件的 diff 不再全仓重抓——由各 FileViewer 的 SSE watch 定向刷新，
+    // gitAffectedPaths 置 null 表示本 run 无明确的文件路径信息。
     setExplorerRefreshKey((k) => k + 1);
+    setGitAffectedPaths(null);
   }, []);
 
   const handleSessionForked = useCallback((newSessionId: string, prefill?: string) => {
@@ -1211,7 +1221,7 @@ function AppShellInner() {
               buffer={activeFileTab.bufferKey ? getBuffer(fileEditorState, activeFileTab.bufferKey) : undefined}
               dispatchBuffer={dispatchFileEditorAction}
               onSave={activeFileTab.bufferKey ? () => saveFileBuffer(activeFileTab.bufferKey!) : undefined}
-              gitRefreshKey={explorerRefreshKey}
+              gitAffectedPaths={gitAffectedPaths}
               onOpenFile={(filePath) => handleOpenFile(filePath, getFileName(filePath), activeFileTab.sourceSessionId, activeFileTab.writable === true)}
             />
           </div>

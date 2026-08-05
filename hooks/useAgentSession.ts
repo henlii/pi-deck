@@ -32,6 +32,7 @@ import { useNoticeState } from "@/hooks/useNoticeState";
 import { parseTodos } from "@/lib/todo-parser";
 import { getSessionCapabilities } from "@/components/session-capabilities";
 import { useSessionCommands } from "@/hooks/useSessionCommands";
+import { resolveDisplayModel, settleModelOverride } from "@/lib/model-selection";
 import {
   PROGRAMMATIC_SMOOTH_IGNORE_MS,
   RUN_SETTLE_MS,
@@ -513,7 +514,11 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     });
   }
 
-  const currentModel = currentModelOverride ?? data?.context.model ?? pendingModel ?? null;
+  // P1-2：显示模型按固定优先级解析——用户手动选择（override）最高，其次
+  // 新会话发送中携带的选择（pending），再其次磁盘持久化 model_change
+  // （context.model），最后才是默认配置。extension 通知/subagent 完成提示/
+  // activity/custom 消息都不会写入 override，因此不会覆盖用户选择。
+  const currentModel = resolveDisplayModel(currentModelOverride, pendingModel, data?.context.model);
   const displayModel = isNew ? (newSessionModel ?? newSessionDefaultModel) : currentModel;
 
   const sessionStats = useMemo(() => {
@@ -600,7 +605,11 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       entryIdsRef.current = nextEntryIds;
       messagesSessionIdRef.current = sid;
       setEntryIds(nextEntryIds);
-      setCurrentModelOverride(null);
+      // P1-2：override 不再无条件清除——改为「吸附」：磁盘 model_change 已与
+      // 用户选择一致时让磁盘权威接管（清除 override）；磁盘缺失/不一致（写盘
+      // 竞态、fork 后新会话无 model_change）时保留 override，防止 run 结束 /
+      // reload / subagent 完成等内部 loadSession 把用户选择覆盖回落默认。
+      setCurrentModelOverride((prev) => settleModelOverride(prev, d.context.model));
       setError(null);
       if (d.context.thinkingLevel && d.context.thinkingLevel !== "off") {
         setThinkingLevel(d.context.thinkingLevel as ThinkingLevelOption);
