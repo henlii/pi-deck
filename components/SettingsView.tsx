@@ -5,8 +5,6 @@ import { ViewportDialog } from "./ui/ViewportDialog";
 import { ModelsConfig } from "./ModelsConfig";
 import { SkillsConfig } from "./SkillsConfig";
 import { PluginsConfig } from "./PluginsConfig";
-import { MemoryConfig } from "./MemoryConfig";
-import { AgentsConfig } from "./AgentsConfig";
 import { AgentDefaultsConfig } from "./AgentDefaultsConfig";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useTheme } from "@/hooks/useTheme";
@@ -41,10 +39,6 @@ function settingsPageLabelKey(id: SettingsPageId) {
       return "common_appearance";
     case "models":
       return "common_models";
-    case "memory":
-      return "common_memory";
-    case "agents":
-      return "common_agents";
     case "defaults":
       return "common_defaults";
     case "skills":
@@ -369,10 +363,6 @@ export function SettingsView({ cwd, sessionId, onClose, onModelsChanged, onPlugi
         return <AppearancePage />;
       case "models":
         return <ModelsConfig embedded onClose={onModelsChanged ?? onClose} />;
-      case "memory":
-        return <MemoryConfig cwd={cwd} />;
-      case "agents":
-        return <AgentsConfig cwd={cwd} />;
       case "defaults":
         return <AgentDefaultsConfig cwd={cwd} />;
       case "skills":

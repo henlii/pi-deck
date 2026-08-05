@@ -5,7 +5,7 @@
  * - 会话切换（fuzzy 匹配名称/首消息/路径）
  * - 新建会话（当前项目）
  * - 文件搜索（/api/file-index，2+ 字符触发）
- * - 设置页导航（模型/技能/插件/记忆）
+ * - 设置页导航（模型/技能/插件）
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useI18n } from "@/lib/i18n";
@@ -18,7 +18,7 @@ type SessionHit = {
 	session: SessionInfo;
 };
 type FileHit = { path: string; name: string };
-type SettingsPage = "models" | "skills" | "plugins" | "memory";
+type SettingsPage = "models" | "skills" | "plugins";
 
 type Props = {
 	open: boolean;
@@ -199,12 +199,6 @@ export function CommandPalette({
 				kind: "action",
 				title: t("palette_settingsPlugins"),
 				run: () => onOpenSettings("plugins"),
-			},
-			{
-				key: "set-memory",
-				kind: "action",
-				title: t("palette_settingsMemory"),
-				run: () => onOpenSettings("memory"),
 			},
 		];
 		if (!q) {

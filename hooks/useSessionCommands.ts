@@ -119,8 +119,7 @@ export interface UseSessionCommandsOptions {
 /**
  * 分支 / 新会话命令集（P3a 自 useAgentSession 迁出）：
  * handleFork / handleNavigate / handleLeafChange / handleBranchHere /
- * handleBranchFromAssistant / handleNewSessionFromHere / handleNewSessionFromAnswer /
- * navigateBranch / setBranchLabel，外加 branchActions 与 branchBusy。
+ * handleBranchFromAssistant / navigateBranch / setBranchLabel，外加 branchActions 与 branchBusy。
  * 命令逻辑不直接持 React state，全部经显式注入的依赖执行。
  */
 export function useSessionCommands(options: UseSessionCommandsOptions) {
@@ -262,71 +261,6 @@ export function useSessionCommands(options: UseSessionCommandsOptions) {
   }, [addNotice, isReadOnly, agentRunningRef, bashRunningRef, branchBusyRef, sessionIdRef, setBranchBusy, sendAgentCommand, loadSession]);
 
   /**
-   * 用户「从此处开始新会话」：fork（SDK before-entry：createBranchedSession(user.parentId)）
-   * 创建线性新会话（不含该 user 及其后、不含其他分支），切换会话并预填该用户消息。
-   */
-  const handleNewSessionFromHere = useCallback(async (entryId: string, text: string) => {
-    const gate = gateBranchAction({
-      readOnly: isReadOnly,
-      busy: agentRunningRef.current || bashRunningRef.current || branchBusyRef.current,
-    });
-    if (!gate.allowed) return;
-    const sid = sessionIdRef.current;
-    if (!sid) return;
-    branchBusyRef.current = true;
-    setBranchBusy(true);
-    try {
-      const result = await sendAgentCommand<BranchCommandResult>(sid, {
-        type: "fork",
-        entryId,
-      });
-      const plan = planForkResult(result, text);
-      if (plan.kind === "switch-session") {
-        onSessionForked?.(plan.sessionId, plan.prefill);
-      }
-    } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
-      addNotice({ type: "error", message });
-    } finally {
-      branchBusyRef.current = false;
-      setBranchBusy(false);
-    }
-  }, [addNotice, isReadOnly, agentRunningRef, bashRunningRef, branchBusyRef, sessionIdRef, setBranchBusy, sendAgentCommand, onSessionForked]);
-
-  /**
-   * Assistant「基于此回答开始新会话」：create_session_from_leaf（SDK through-entry：
-   * 含轮末 turnEnd 的路径克隆），切换新会话；不预填输入框。
-   */
-  const handleNewSessionFromAnswer = useCallback(async (entryId: string) => {
-    const gate = gateBranchAction({
-      readOnly: isReadOnly,
-      busy: agentRunningRef.current || bashRunningRef.current || branchBusyRef.current,
-    });
-    if (!gate.allowed) return;
-    const sid = sessionIdRef.current;
-    if (!sid) return;
-    branchBusyRef.current = true;
-    setBranchBusy(true);
-    try {
-      const result = await sendAgentCommand<BranchCommandResult>(sid, {
-        type: "create_session_from_leaf",
-        entryId,
-      });
-      const plan = planForkResult(result);
-      if (plan.kind === "switch-session") {
-        // assistant 不预填：不传 prefill。
-        onSessionForked?.(plan.sessionId);
-      }
-    } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
-      addNotice({ type: "error", message });
-    } finally {
-      branchBusyRef.current = false;
-      setBranchBusy(false);
-    }
-  }, [addNotice, isReadOnly, agentRunningRef, bashRunningRef, branchBusyRef, sessionIdRef, setBranchBusy, sendAgentCommand, onSessionForked]);
-
-  /**
    * 带选项的分支切换（D3）：直接 / 默认摘要 / 自定义焦点。
    * 取消或中止保留当前 context；成功后整体重新 GET，让 tree/active leaf/context/
    * branch_summary 即时一致。SDK 导航到 user message 返回的 editorText 回填输入框，
@@ -417,8 +351,6 @@ export function useSessionCommands(options: UseSessionCommandsOptions) {
     handleLeafChange,
     handleBranchHere,
     handleBranchFromAssistant,
-    handleNewSessionFromHere,
-    handleNewSessionFromAnswer,
     navigateBranch,
     setBranchLabel,
     branchActions,
