@@ -1,45 +1,210 @@
-# 主题令牌与颜色模式
+# Pidance UI 主题令牌
 
-Pidance 已有 `--bg`、`--bg-panel`、`--bg-hover`、`--bg-selected`、`--border`、`--text`、`--text-muted`、`--text-dim`、`--accent`、`--accent-hover`、`--user-bg`、`--assistant-bg`、`--tool-bg`、`--bg-subtle`、`--warning`、`--font-mono` 变量。建议保留这些公开语义名，不让组件直接依赖某个主题的色值。
+两套方向保持 Pidance 现有 `--bg / --text / --accent` 命名骨架，并补充 surface、状态、焦点和阴影变量。组件只引用语义变量，不在组件内出现主题色值。
 
-## 使用方式
+## A · Chamber 原生
+
+### 浅色
 
 ```css
-:root { /* 默认主题 + 浅色 */ }
-html.dark { /* 默认主题 + 深色 */ }
-html[data-theme="spectrum"] { /* 光谱舱浅色 */ }
-html.dark[data-theme="spectrum"] { /* 光谱舱深色 */ }
-html[data-theme="phosphor"] { /* 磷光终端浅色 */ }
-html.dark[data-theme="phosphor"] { /* 磷光终端深色 */ }
+:root[data-theme="light"][data-skin="chamber-native"] {
+  --bg: #fdfcfa;
+  --bg-panel: #f7f6f4;
+  --bg-elevated: #ffffff;
+  --bg-hover: #0000000d;
+  --bg-selected: #b350172b;
+  --bg-subtle: #f4f3f1;
+  --border: #e5e1de;
+  --border-strong: #cbc7c2;
+  --text: #393a34;
+  --text-muted: #5c5c54;
+  --text-dim: #797970;
+  --accent: #b35017;
+  --accent-hover: #9a4310;
+  --accent-foreground: #ffffff;
+  --user-bg: #f7f2ee;
+  --assistant-bg: #fdfcfa;
+  --tool-bg: #efeeec80;
+  --code-bg: #f4f3f1;
+  --status-running: #b35017;
+  --status-unread: #2d72c4;
+  --status-success: #5f8d3d;
+  --status-warning: #8d6c15;
+  --status-danger: #b7493f;
+  --focus: #b35017;
+  --focus-ring: #b3501755;
+  --overlay: #39393420;
+  --shadow-float: 0 18px 50px #39393424;
+  --shadow-input: 0 1px 2px #39393412, 0 0 0 1px #ffffff80 inset;
+}
 ```
 
-`mode` 只控制亮暗：`light`、`dark`、`system`。`system` 在运行时解析 `prefers-color-scheme`，但保存的偏好仍应保持 `system`，方便系统变化后自动更新。
+### 深色
 
-## 具体令牌
+```css
+:root[data-theme="dark"][data-skin="chamber-native"] {
+  --bg: #120f0e;
+  --bg-panel: #171615;
+  --bg-elevated: #1c1a18;
+  --bg-hover: #ffffff12;
+  --bg-selected: #b9a5992b;
+  --bg-subtle: #171616;
+  --border: #242323;
+  --border-strong: #504e4c;
+  --text: #c9c5ba;
+  --text-muted: #8f8b81;
+  --text-dim: #77736b;
+  --accent: #da7c47;
+  --accent-hover: #eb8c57;
+  --accent-foreground: #120f0e;
+  --user-bg: #25170e;
+  --assistant-bg: #120f0e;
+  --tool-bg: #120f0e80;
+  --code-bg: #0e0c0b;
+  --status-running: #da7c47;
+  --status-unread: #479fe6;
+  --status-success: #76ad4f;
+  --status-warning: #c67f13;
+  --status-danger: #da5b4a;
+  --focus: #da7c47;
+  --focus-ring: #da7c4755;
+  --overlay: #00000099;
+  --shadow-float: 0 20px 60px #00000070;
+  --shadow-input: 0 1px 2px #00000040, 0 0 0 1px #ffffff08 inset;
+}
+```
 
-| 变量 | 墨纸浅色 | 墨纸深色 | 光谱浅色 | 光谱深色 | 磷光浅色 | 磷光深色 | 语义 |
-|---|---|---|---|---|---|---|---|
-| `--bg` | `#f7f4ed` | `#24221f` | `#eef3fb` | `#0b1124` | `#f1f5f1` | `#070b08` | 页面与聊天背景 |
-| `--bg-panel` | `#eee9df` | `#302d28` | `#e3eaf5` | `#0e162b` | `#e5ece6` | `#0d1510` | 侧栏、面板 |
-| `--bg-hover` | `#e7dfd3` | `#3a3530` | `#d9e3f2` | `#17233e` | `#dce8de` | `#142018` | 悬停 |
-| `--bg-selected` | `#ded6c9` | `#463b34` | `#cbdcf0` | `#1d3154` | `#c5ddc9` | `#1b3020` | 当前项 |
-| `--border` | `#d9d3c7` | `#514a42` | `#c9d4e7` | `#293957` | `#b7cdbb` | `#37503d` | 分隔和边界 |
-| `--text` | `#292722` | `#eee8df` | `#17233b` | `#dce6ff` | `#172119` | `#d7e3d9` | 主文字 |
-| `--text-muted` | `#7d776c` | `#aaa095` | `#607294` | `#8b9abf` | `#5f7263` | `#8ca191` | 次要文字 |
-| `--text-dim` | `#9a9387` | `#766e64` | `#8392ae` | `#65779e` | `#809182` | `#627566` | 辅助文字 |
-| `--accent` | `#da5b42` | `#ee785d` | `#157d73` | `#6ce8ce` | `#16813c` | `#8dff9c` | 主动作／焦点 |
-| `--accent-hover` | `#b64431` | `#ff9478` | `#0c625b` | `#95f4df` | `#0d612d` | `#c0ffc5` | 强调悬停 |
-| `--user-bg` | `#eee7dc` | `#3d342e` | `#dbe5f6` | `#192746` | `#dce9de` | `#142018` | 用户消息 |
-| `--assistant-bg` | `#fbf9f4` | `#24221f` | `#f5f8fc` | `#0b1124` | `#f7faf7` | `#070b08` | Pi 消息 |
-| `--tool-bg` | `#f2eee5` | `#302d28` | `#111b32` | `#101a30` | `#edf4ee` | `#101912` | 工具调用 |
-| `--warning` | `#a85c16` | `#efad55` | `#9a6400` | `#f2c15e` | `#9a6400` | `#ffd06a` | 警告 |
+## B · Pidance 融合
 
-## 辅助语义
+### 浅色
 
-建议补充但不让组件自造变量：`--success: #4c8a5b / #76d69a`、`--danger: #c84949 / #ff8c8c`、`--focus-ring: color-mix(in srgb, var(--accent) 65%, transparent)`。文字与背景的普通文本目标至少 4.5:1，大字号至少 3:1；磷光主题仍应让长段正文使用柔和的浅灰，而不是纯绿。
+```css
+:root[data-theme="light"][data-skin="pidance-fusion"] {
+  --bg: #fbfcfd;
+  --bg-panel: #f3f6f7;
+  --bg-elevated: #ffffff;
+  --bg-hover: #163b4d0a;
+  --bg-selected: #2e6f9520;
+  --bg-subtle: #eef2f3;
+  --border: #dce4e6;
+  --border-strong: #bdcbd0;
+  --text: #263439;
+  --text-muted: #607077;
+  --text-dim: #819096;
+  --accent: #286e98;
+  --accent-hover: #1e5c82;
+  --accent-foreground: #ffffff;
+  --user-bg: #eaf2f7;
+  --assistant-bg: #fbfcfd;
+  --tool-bg: #f0f5f4;
+  --code-bg: #172126;
+  --status-running: #27836e;
+  --status-unread: #286e98;
+  --status-success: #49805d;
+  --status-warning: #9a6a1a;
+  --status-danger: #b34f58;
+  --focus: #286e98;
+  --focus-ring: #286e9844;
+  --overlay: #18343d30;
+  --shadow-float: 0 18px 48px #163b4d20;
+  --shadow-input: 0 1px 2px #163b4d12, 0 0 0 1px #ffffff inset;
+}
+```
 
-## 主题切换体验
+### 深色
 
-- 切换按钮同时显示当前主题名称和亮／暗图标，不能只显示太阳或月亮。
-- 使用现有 View Transitions circular wipe 时保留 `prefers-reduced-motion: reduce` 关闭动画。
-- 颜色模式、主题、消息密度、减少动效属于 UI 偏好；不得写入 Pi session schema。
+```css
+:root[data-theme="dark"][data-skin="pidance-fusion"] {
+  --bg: #101719;
+  --bg-panel: #141d20;
+  --bg-elevated: #192428;
+  --bg-hover: #d8edf212;
+  --bg-selected: #6ba7c426;
+  --bg-subtle: #172124;
+  --border: #263337;
+  --border-strong: #46585e;
+  --text: #ced8d8;
+  --text-muted: #8d9c9e;
+  --text-dim: #708084;
+  --accent: #69a7ca;
+  --accent-hover: #7fb8d6;
+  --accent-foreground: #0f1719;
+  --user-bg: #162832;
+  --assistant-bg: #101719;
+  --tool-bg: #121d1f;
+  --code-bg: #0b1113;
+  --status-running: #5eb39b;
+  --status-unread: #69a7ca;
+  --status-success: #79ad78;
+  --status-warning: #d0a356;
+  --status-danger: #dd777e;
+  --focus: #69a7ca;
+  --focus-ring: #69a7ca55;
+  --overlay: #00000099;
+  --shadow-float: 0 20px 60px #00000066;
+  --shadow-input: 0 1px 2px #0000003d, 0 0 0 1px #ffffff08 inset;
+}
+```
+
+## 共通非颜色令牌
+
+```css
+:root {
+  --font-ui: "Aptos", "Segoe UI Variable", "Noto Sans SC", sans-serif;
+  --font-reading: "Source Han Sans SC", "Noto Sans SC", sans-serif;
+  --font-mono: "Cascadia Code", "SFMono-Regular", "Noto Sans Mono CJK SC", monospace;
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 9px;
+  --radius-lg: 13px;
+  --radius-pill: 999px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --sidebar-width: 268px;
+  --workspace-width: 320px;
+  --rail-width: 40px;
+  --chat-max-width: 760px;
+  --motion-fast: 150ms ease;
+  --motion-normal: 250ms ease;
+  --motion-drawer: 280ms cubic-bezier(.22, 1, .36, 1);
+}
+```
+
+## 细节规范
+
+### 排版
+
+| 角色 | 桌面 | 手机 | 规则 |
+|---|---:|---:|---|
+| 会话／控件 | 12.5px / 1.4 | 14px / 1.4 | 常规 400；选中不加粗，避免截断抖动。 |
+| 正文 | 14px / 1.72 | 15px / 1.68 | 桌面每行 60–75 字符，手机 35–55 字符。 |
+| 小标题 | 16px / 1.35 | 17px / 1.35 | 600，段前留 20px。 |
+| 辅助信息 | 11px / 1.35 | 12px / 1.35 | 状态计时使用等宽数字。 |
+| 代码 | 12.5px / 1.65 | 12px / 1.6 | 禁止以更小字号塞入更多内容。 |
+
+### 结构与状态
+
+- 侧栏会话行高 30px，项目行 32px；子层每级缩进 16px，最多直显 4 层，更多层沿同一导线滚动。
+- 选中态使用完整行 `--bg-selected`，当前会话标题用 `--accent`；不增加左侧彩条，避免与树导线冲突。
+- 运行态：6px `--status-running` 静态圆点 + 右侧“1分 24秒”；未读态：6px `--status-unread` 圆点 + 无障碍文本。状态不可只靠颜色。
+- 用户消息最大宽 86%，使用 `--user-bg` 和 1px 边框；助手消息不设容器背景。
+- 工具卡圆角 9px、1px 边框；收起高度 38px，展开内容上方再加 1px 分割线。
+- 输入框桌面最小 92px、手机最小 88px；聚焦时边框变为 `--focus` 并显示 3px 半透明 ring。
+- 常驻按钮桌面最小 32×32px；移动端所有点击目标至少 44×44px。
+
+### 动效
+
+- 页面载入只做一次：侧栏、聊天、右栏依次以 30ms 间隔淡入；位移不超过 6px。
+- 抽屉只动画 `transform` 与 `opacity`，不动画宽度；遮罩和抽屉同步进出。
+- 会话运行点不呼吸、不闪烁；只在 idle → running 切换时做一次 150ms scale 反馈。
+- `prefers-reduced-motion: reduce` 时取消位移、缩放与列表 stagger，仅保留即时状态变化。
+
+### 对比与焦点
+
+- 正文／背景、控件标签／surface 目标对比度 ≥ 4.5:1；边界不是信息唯一载体。
+- 所有键盘焦点使用 2px `--focus` outline + 2px offset；不得用 `outline: none` 后不补替代。
+- Git 增删、运行／未读、成功／错误均同时配图标或文字，不以红绿或蓝橙单独编码。
