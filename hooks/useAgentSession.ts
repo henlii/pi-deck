@@ -23,11 +23,10 @@ import {
   applyExtensionUiRequest,
   clearAllExtensionUiBlocking,
   clearExtensionUiRequest,
-  createEmptyExtensionUiState,
   projectBlockingHead,
-  type ExtensionUiState,
 } from "@/lib/extension-ui-bridge";
 import type { ExtensionUiInlineRequest, ExtensionUiBlockingRequest } from "@/lib/extension-ui-bridge";
+import { useExtensionUiState, type ExtensionUiDialogRequest, type ExtensionUiCustomRequest } from "@/hooks/useExtensionUiState";
 import { parseTodos } from "@/lib/todo-parser";
 import { getSessionCapabilities } from "@/components/session-capabilities";
 import { useSessionCommands } from "@/hooks/useSessionCommands";
@@ -149,8 +148,6 @@ function normalizeQueuedMessages(q?: { steering?: string[]; followUp?: string[] 
   return { steering: q?.steering ?? [], followUp: q?.followUp ?? [] };
 }
 
-type ExtensionUiDialogRequest = Extract<ExtensionUiRequest, { method: "select" | "confirm" | "input" | "editor" }>;
-type ExtensionUiCustomRequest = Extract<ExtensionUiRequest, { method: "custom" }>;
 // 通知状态机纯逻辑已抽至 lib/notice-reducer.ts；此处再导出保持既有消费方（如 ChatWindow）兼容。
 export type { NoticeItem, NoticeType } from "@/lib/notice-reducer";
 
@@ -378,11 +375,11 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   // 与运行中的 message_end / 流式 SSE 竞争并用磁盘旧快照覆盖较新消息。
   const [liveNoticeActivities, setLiveNoticeActivities] = useState<LiveNoticeActivity[]>([]);
   const [sessionStatsOverride, setSessionStatsOverride] = useState<SessionStatsInfo | null>(null);
-  const [extensionDialog, setExtensionDialog] = useState<ExtensionUiDialogRequest | null>(null);
-  const [extensionInlineRequest, setExtensionInlineRequest] = useState<ExtensionUiInlineRequest | null>(null);
-  const [extensionCustomUi, setExtensionCustomUi] = useState<ExtensionUiCustomRequest | null>(null);
-  const [extensionStatuses, setExtensionStatuses] = useState<ExtensionStatusItem[]>([]);
-  const [extensionWidgets, setExtensionWidgets] = useState<ExtensionWidgetItem[]>([]);
+  // extension UI 展示状态（#17 D5c）：5 state + ref + 3 更新回调已抽至 useExtensionUiState。
+  const {
+    extensionDialog, extensionInlineRequest, extensionCustomUi, extensionStatuses, extensionWidgets,
+    extensionUiStateRef, commitExtensionUiState, patchExtensionUiState, dismissExtensionUiRequest,
+  } = useExtensionUiState();
   const [queuedMessages, setQueuedMessages] = useState<QueuedMessages>({ steering: [], followUp: [] });
   // 分支切换/总结进行中：树节点、发送与再次导航全部暂停，避免与 navigateTree 并发写。
   const [branchBusy, setBranchBusy] = useState(false);
@@ -516,29 +513,6 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
    */
   const finishingPromptRunIdRef = useRef<number | null>(null);
   const optimisticUserMessageKeyRef = useRef<string | null>(null);
-  const extensionUiStateRef = useRef<ExtensionUiState>(createEmptyExtensionUiState({
-    customUi: extensionCustomUi,
-    statuses: extensionStatuses,
-    widgets: extensionWidgets,
-  }));
-  const commitExtensionUiState = useCallback((next: ExtensionUiState) => {
-    extensionUiStateRef.current = next;
-    setExtensionDialog(next.dialog);
-    setExtensionInlineRequest(next.inlineRequest ?? null);
-    setExtensionCustomUi(next.customUi);
-    setExtensionStatuses(next.statuses);
-    setExtensionWidgets(next.widgets);
-  }, []);
-  const patchExtensionUiState = useCallback((patch: Partial<ExtensionUiState>) => {
-    commitExtensionUiState({ ...extensionUiStateRef.current, ...patch });
-  }, [commitExtensionUiState]);
-  /** 按 id 移除阻塞请求并推进队列；不发送协议响应（本地过期 / 服务端已结算） */
-  const dismissExtensionUiRequest = useCallback((requestId: string) => {
-    const currentState = extensionUiStateRef.current;
-    const nextState = clearExtensionUiRequest(currentState, requestId);
-    if (nextState === currentState) return;
-    commitExtensionUiState(nextState);
-  }, [commitExtensionUiState]);
 
   const todos = useMemo(() => {
     const todoMessages = streamState.streamingMessage
@@ -869,7 +843,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     } catch (e) {
       console.error("Failed to send extension UI response:", e);
     }
-  }, [capabilities.canSendSessionCommands, commitExtensionUiState]);
+  }, [capabilities.canSendSessionCommands, commitExtensionUiState, extensionUiStateRef]);
 
   const sendExtensionCustomInput = useCallback(async (request: ExtensionUiCustomRequest, data: string) => {
     if (!capabilities.canSendSessionCommands) return;
@@ -886,7 +860,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     } catch (e) {
       console.error("Failed to send extension custom UI input:", e);
     }
-  }, [capabilities.canSendSessionCommands]);
+  }, [capabilities.canSendSessionCommands, extensionUiStateRef]);
 
   const addNotice = useCallback((notice: { id?: string; message: string; type?: NoticeType; activityRecord?: boolean }) => {
     const message = notice.message.trim();
@@ -967,7 +941,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         opts.chatInputRef?.current?.insertText(effect.text);
       }
     }
-  }, [addNotice, commitExtensionUiState, opts.chatInputRef]);
+  }, [addNotice, commitExtensionUiState, opts.chatInputRef, extensionUiStateRef]);
 
   /**
    * 将 /api/agent 状态快照的附属字段应用到本地 state（散落重复点的统一收口）。
@@ -1783,7 +1757,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       customUi: null,
     });
     setLiveNoticeActivities([]);
-  }, [session?.id, newSessionCwd, commitExtensionUiState]);
+  }, [session?.id, newSessionCwd, commitExtensionUiState, extensionUiStateRef]);
 
   useEffect(() => {
     if (session) {
