@@ -44,6 +44,14 @@ export function parseRightPanelOpen(value: unknown): boolean {
   return value === true;
 }
 
+/**
+ * 容错解析「最近会话区」开/关：默认开启；仅显式 boolean false 才关闭。
+ * 旧数据缺字段 / 脏数据（0、"false" 等）一律保持默认开启。
+ */
+export function parseShowRecentSessions(value: unknown): boolean {
+  return value !== false;
+}
+
 export interface SidebarPreferences {
   displayMode: SidebarDisplayMode;
   /** 已折叠项目根路径（projectRoot）。 */
@@ -60,6 +68,8 @@ export interface SidebarPreferences {
   rightPanelOpen: boolean;
   /** 右侧内容面板宽度（px，不含图标栏）；损坏/越界值解析时 clamp。 */
   rightPanelWidth: number;
+  /** 「最近会话」区开/关（项目列表上方的快捷入口）；默认开启。 */
+  showRecentSessions: boolean;
 }
 
 export const DEFAULT_SIDEBAR_PREFERENCES: SidebarPreferences = {
@@ -71,6 +81,7 @@ export const DEFAULT_SIDEBAR_PREFERENCES: SidebarPreferences = {
   sidebarWidth: SIDEBAR_WIDTH_DEFAULT,
   rightPanelOpen: false,
   rightPanelWidth: RIGHT_PANEL_WIDTH_DEFAULT,
+  showRecentSessions: true,
 };
 
 export const STORAGE_KEY = "pidance:sidebar-preferences";
@@ -133,6 +144,8 @@ export function parseSidebarPreferences(raw: unknown): SidebarPreferences {
     // 旧数据无右栏字段：右栏默认关闭、宽度默认。
     rightPanelOpen: parseRightPanelOpen(record.rightPanelOpen),
     rightPanelWidth: clampRightPanelWidth(record.rightPanelWidth),
+    // 旧数据无最近会话字段：默认开启（仅显式 false 关闭）。
+    showRecentSessions: parseShowRecentSessions(record.showRecentSessions),
   };
 }
 
@@ -146,6 +159,7 @@ export function serializeSidebarPreferences(prefs: SidebarPreferences): string {
     sidebarWidth: clampSidebarWidth(prefs.sidebarWidth),
     rightPanelOpen: parseRightPanelOpen(prefs.rightPanelOpen),
     rightPanelWidth: clampRightPanelWidth(prefs.rightPanelWidth),
+    showRecentSessions: parseShowRecentSessions(prefs.showRecentSessions),
   });
 }
 

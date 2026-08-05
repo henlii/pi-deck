@@ -74,6 +74,7 @@ export const zhCN: Record<TranslationKey, string> = {
   sidebar_selectProject: '选择项目',
   sidebar_searchSessions: '搜索会话',
   sidebar_displayOptions: '显示选项',
+  sidebar_recentSessions: '最近会话',
   sidebar_standard: '标准',
   sidebar_compact: '紧凑',
   sidebar_collapseAll: '全部折叠',

@@ -30,6 +30,7 @@ import {
 import { loadCachedSessionList, saveCachedSessionList } from "@/lib/session-list-cache";
 import {
   bumpGroupVisibleCount,
+  deriveRecentSessions,
   getGroupVisibleCount,
   getVisibleTopLevelNodes,
   mergeOptimisticSessions,
@@ -203,6 +204,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   }, []);
 
   const displayMode = prefs.displayMode;
+  const showRecentSessions = prefs.showRecentSessions;
   const collapsedProjectRoots = useMemo(() => new Set(prefs.collapsedProjectRoots), [prefs.collapsedProjectRoots]);
   const collapsedWorktreePaths = useMemo(() => new Set(prefs.collapsedWorktreePaths), [prefs.collapsedWorktreePaths]);
   // 已关闭项目集合：仅影响侧栏可见性与自动选择，绝不触碰会话/目录/Git 数据
@@ -761,6 +763,42 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     onSelectSession(s);
   }, [onSelectSession, selectCwd]);
 
+  /** 会话删除收口：树与最近区共用同一处理（乐观删除 + 回流刷新）。 */
+  const handleSessionDeletedLocal = useCallback((id: string) => {
+    setDeletedIds((prev) => {
+      const next = new Set(prev);
+      next.add(id);
+      return next;
+    });
+    setPendingIds((prev) => {
+      if (!prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+    setPendingById((prev) => {
+      if (!prev.has(id)) return prev;
+      const next = new Map(prev);
+      next.delete(id);
+      return next;
+    });
+    onSessionDeleted?.(id);
+    loadSessions();
+  }, [onSessionDeleted, loadSessions]);
+
+  /** 「最近会话」区开/关：唯一写入入口经偏好 seam。 */
+  const setShowRecentSessions = useCallback((show: boolean) => {
+    updatePrefs((prev) => (prev.showRecentSessions === show ? prev : { ...prev, showRecentSessions: show }));
+  }, [updatePrefs]);
+
+  /** 最近会话：按 modified 降序取 top 5；排除 subagent 子会话与已关闭项目。 */
+  const recentSessions = useMemo(
+    () => (showRecentSessions
+      ? deriveRecentSessions({ sessions: allSessions, closedProjectRoots: closedRoots })
+      : []),
+    [showRecentSessions, allSessions, closedRoots],
+  );
+
   const handleNewSession = useCallback((targetCwd = selectedCwd) => {
     if (!targetCwd) return;
     // Generate a temporary UUID client-side — no backend call needed.
@@ -1190,6 +1228,12 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                     label={t("sidebar_expandAll")}
                     onClick={() => { expandAll(); setDisplayMenuOpen(false); }}
                   />
+                  <div style={{ borderTop: "1px solid var(--border)", margin: "2px 0" }} />
+                  <DisplayMenuItem
+                    label={t("sidebar_recentSessions")}
+                    checked={showRecentSessions}
+                    onClick={() => { setShowRecentSessions(!showRecentSessions); setDisplayMenuOpen(false); }}
+                  />
                 </div>
               </AnimatedDropdown>
             </div>
@@ -1354,6 +1398,35 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
             </div>
           )
         )}
+        {/* 最近会话区：项目列表上方的纯快捷入口（OpenChamber Recent zone 语义）。
+            搜索激活时隐藏，只显示匹配树；不参与树的分组/折叠状态，
+            选中态、运行/未读徽标与树内同会话共享同一数据源。 */}
+        {!searchActive && recentSessions.length > 0 && (
+          <div style={{ paddingBottom: 4, borderBottom: "1px solid var(--border)", marginBottom: 4 }}>
+            <div style={{
+              display: "flex", alignItems: "center", gap: 5, height: 26,
+              paddingLeft: 14, paddingRight: 8,
+              color: "var(--text-dim)", fontSize: 10.5, fontWeight: 600,
+              letterSpacing: "0.04em", textTransform: "uppercase",
+            }}>
+              {t("sidebar_recentSessions")}
+            </div>
+            {recentSessions.map((s) => (
+              <SessionItem
+                key={s.id}
+                session={s}
+                isSelected={s.id === selectedSessionId}
+                isRunning={runningSessionIds.has(s.id) || subagentRunningIds.has(s.id)}
+                isUnread={unreadSessionIds.has(s.id)}
+                onClick={() => handleSelectSessionFromList(s)}
+                onRenamed={loadSessions}
+                onDeleted={handleSessionDeletedLocal}
+                depth={0}
+                displayMode={displayMode}
+              />
+            ))}
+          </div>
+        )}
         {visibleTree.map((project) => (
           <ProjectSection
             key={project.root}
@@ -1380,27 +1453,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
             onEditProject={() => handleOpenEditProject(project.root)}
             onCloseProject={() => handleCloseProject(project.root)}
             onRenamed={loadSessions}
-            onSessionDeleted={(id) => {
-              setDeletedIds((prev) => {
-                const next = new Set(prev);
-                next.add(id);
-                return next;
-              });
-              setPendingIds((prev) => {
-                if (!prev.has(id)) return prev;
-                const next = new Set(prev);
-                next.delete(id);
-                return next;
-              });
-              setPendingById((prev) => {
-                if (!prev.has(id)) return prev;
-                const next = new Map(prev);
-                next.delete(id);
-                return next;
-              });
-              onSessionDeleted?.(id);
-              loadSessions();
-            }}
+            onSessionDeleted={handleSessionDeletedLocal}
             onToggleCollapse={toggleSessionCollapse}
             groupVisibleCounts={groupVisibleCounts}
             onShowMore={(groupKey) => setGroupVisibleCounts((counts) => bumpGroupVisibleCount(counts, groupKey))}

@@ -193,6 +193,52 @@ export function buildWorktreePreloadGeneration(wtRefreshKey: number): string {
   return `wt:${Math.max(0, Math.floor(wtRefreshKey))}`;
 }
 
+// ── 最近会话区 ─────────────────────────────────────────────────────────────
+
+/** 最近区默认展示的会话数。 */
+export const RECENT_SESSIONS_LIMIT = 5;
+
+export interface DeriveRecentSessionsInput {
+  /** 全量会话列表（服务端 + 乐观合并后）；排序语义由本函数内部保证。 */
+  sessions: readonly SessionInfo[];
+  /** 已关闭项目根集合：这些项目内的会话不进入最近区（用户已隐藏）。 */
+  closedProjectRoots?: ReadonlySet<string>;
+  /** 附加排除 id（如已删除、仅显示占位等）。 */
+  excludeIds?: ReadonlySet<string>;
+  /** 展示条数上限；损坏/负数回退默认 5。 */
+  limit?: number;
+}
+
+/**
+ * 最近会话派生（OpenChamber Recent zone 语义的纯逻辑版）：
+ * 按 modified 降序取最近 N 个会话，作为项目列表上方的纯快捷入口。
+ *
+ * 排除规则：
+ * - subagent 子会话（`session.subagent` 存在）——子会话只读、不参与最近区
+ * - 已关闭项目（`closedProjectRoots`）内的会话——用户已从侧栏隐藏
+ * - `excludeIds` 显式排除的 id
+ *
+ * 本函数不修改输入数组；输入是否已排序不影响结果（内部先稳定排序）。
+ */
+export function deriveRecentSessions(input: DeriveRecentSessionsInput): SessionInfo[] {
+  const {
+    sessions,
+    closedProjectRoots,
+    excludeIds,
+    limit = RECENT_SESSIONS_LIMIT,
+  } = input;
+  const n = Math.max(0, Math.floor(limit));
+  const filtered = sessions.filter((s) => {
+    if (s.subagent) return false;
+    if (excludeIds?.has(s.id)) return false;
+    const projectRoot = s.projectRoot ?? s.cwd;
+    if (projectRoot && closedProjectRoots?.has(projectRoot)) return false;
+    return true;
+  });
+  const sorted = filtered.slice().sort(compareSessionsByActivity);
+  return sorted.slice(0, n);
+}
+
 // ── 项目 worktree 快照 ─────────────────────────────────────────────────────
 
 export type ProjectWorktreeStatus = "idle" | "loading" | "ready" | "error";

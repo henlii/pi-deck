@@ -74,6 +74,7 @@ export const en = {
   sidebar_selectProject: 'Select project',
   sidebar_searchSessions: 'Search sessions',
   sidebar_displayOptions: 'Display options',
+  sidebar_recentSessions: 'Recent',
   sidebar_standard: 'Standard',
   sidebar_compact: 'Compact',
   sidebar_collapseAll: 'Collapse all',

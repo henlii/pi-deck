@@ -359,3 +359,74 @@ test("upsertCanonicalProjectWorktreeSnapshot：请求 root 不存在时 remove �
   assert.deepEqual(Object.keys(changed), ["/repo"]);
   assert.equal(changed["/repo"].worktrees.length, 2);
 });
+
+// ── 最近会话区 ─────────────────────────────────────────────────────────────
+
+test("最近会话：按 modified 降序取 top N，默认 5；不修改输入数组", async () => {
+  const m = await load();
+  const list = [
+    session("old", { modified: "2026-07-01T00:00:00.000Z" }),
+    session("newer", { modified: "2026-07-10T00:00:00.000Z" }),
+    session("mid", { modified: "2026-07-05T00:00:00.000Z" }),
+    session("newest", { modified: "2026-07-12T00:00:00.000Z" }),
+    session("mid2", { modified: "2026-07-06T00:00:00.000Z" }),
+    session("sixth", { modified: "2026-07-04T00:00:00.000Z" }),
+  ];
+  const recent = m.deriveRecentSessions({ sessions: list });
+  assert.deepEqual(recent.map((s) => s.id), ["newest", "newer", "mid2", "mid", "sixth"]);
+  // 输入未被修改
+  assert.equal(list.length, 6);
+  // 自定义 limit
+  const top3 = m.deriveRecentSessions({ sessions: list, limit: 3 });
+  assert.deepEqual(top3.map((s) => s.id), ["newest", "newer", "mid2"]);
+});
+
+test("最近会话：输入乱序也能正确派生（内部稳定排序）", async () => {
+  const m = await load();
+  const list = [
+    session("b", { modified: "2026-07-08T00:00:00.000Z" }),
+    session("a", { modified: "2026-07-12T00:00:00.000Z" }),
+    session("c", { modified: "2026-07-10T00:00:00.000Z" }),
+  ];
+  assert.deepEqual(
+    m.deriveRecentSessions({ sessions: list, limit: 2 }).map((s) => s.id),
+    ["a", "c"],
+  );
+});
+
+test("最近会话：排除 subagent 子会话与已关闭项目内的会话", async () => {
+  const m = await load();
+  const list = [
+    session("root-recent", { modified: "2026-07-12T00:00:00.000Z", projectRoot: "/repo-a" }),
+    session("subagent", {
+      modified: "2026-07-13T00:00:00.000Z",
+      projectRoot: "/repo-a",
+      subagent: { parentSessionId: "parent", runId: "r1", runIndex: 1 },
+    }),
+    session("closed-project", { modified: "2026-07-11T00:00:00.000Z", projectRoot: "/repo-closed" }),
+    session("closed-fallback-cwd", { modified: "2026-07-10T00:00:00.000Z", cwd: "/repo-closed-2" }),
+  ];
+  const recent = m.deriveRecentSessions({
+    sessions: list,
+    closedProjectRoots: new Set(["/repo-closed", "/repo-closed-2"]),
+  });
+  assert.deepEqual(recent.map((s) => s.id), ["root-recent"]);
+});
+
+test("最近会话：excludeIds 与损坏 limit 容错", async () => {
+  const m = await load();
+  const list = [
+    session("a", { modified: "2026-07-12T00:00:00.000Z" }),
+    session("b", { modified: "2026-07-11T00:00:00.000Z" }),
+    session("c", { modified: "2026-07-10T00:00:00.000Z" }),
+  ];
+  assert.deepEqual(
+    m.deriveRecentSessions({ sessions: list, excludeIds: new Set(["a"]) }).map((s) => s.id),
+    ["b", "c"],
+  );
+  assert.deepEqual(m.deriveRecentSessions({ sessions: list, limit: 0 }).map((s) => s.id), []);
+  assert.deepEqual(m.deriveRecentSessions({ sessions: list, limit: -3 }).map((s) => s.id), []);
+  assert.deepEqual(m.deriveRecentSessions({ sessions: list, limit: 2.9 }).map((s) => s.id), ["a", "b"]);
+  // 空输入安全空态
+  assert.deepEqual(m.deriveRecentSessions({ sessions: [] }), []);
+});
