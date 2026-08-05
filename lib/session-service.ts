@@ -21,7 +21,6 @@ import { computeTurnEnd } from "./turn-end";
 import type { SessionInfo } from "./types";
 import { shouldInheritModel } from "./model-selection";
 import {
-  ArchiveConflictError,
   createArchiveActions,
   listArchiveRecords,
   partitionSessionsByArchiveState,

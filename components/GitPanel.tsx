@@ -52,7 +52,7 @@ export function GitPanel({ cwd, status, loading, error, onOpenFile }: Props) {
   if (sortedFiles.length === 0) {
     return (
       <div style={{ padding: "18px 12px", display: "flex", flexDirection: "column", alignItems: "center", gap: 6, color: "var(--text-dim)" }}>
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#4ade80" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--status-success)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
           <polyline points="20 6 9 17 4 12" />
         </svg>
         <span style={{ fontSize: 12 }}>{t("git_clean")}</span>
@@ -122,7 +122,7 @@ function GitFileRow({ file, cwd, onOpenFile }: {
 
 function PanelHint({ children, tone = "dim" }: { children: React.ReactNode; tone?: "dim" | "error" }) {
   return (
-    <div style={{ padding: "14px 12px", fontSize: 11.5, lineHeight: 1.5, color: tone === "error" ? "#f87171" : "var(--text-dim)" }}>
+    <div style={{ padding: "14px 12px", fontSize: 11.5, lineHeight: 1.5, color: tone === "error" ? "var(--status-danger)" : "var(--text-dim)" }}>
       {children}
     </div>
   );

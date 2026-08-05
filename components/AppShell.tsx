@@ -890,7 +890,7 @@ function AppShellInner() {
           position: "fixed",
           inset: 0,
           zIndex: 199,
-          background: "rgba(0,0,0,0.4)",
+          background: "var(--overlay)",
           opacity: sidebarOpen ? 1 : 0,
           pointerEvents: sidebarOpen ? "auto" : "none",
           transition: "opacity 0.25s ease",
@@ -938,7 +938,7 @@ function AppShellInner() {
       {/* Center: chat */}
       <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: 0 }}>
         {/* Top bar with sidebar toggle */}
-        <div style={{ display: "flex", alignItems: "center", flexShrink: 0, borderBottom: "1px solid var(--border)", height: 36, background: "var(--bg-panel)" }}>
+        <div className="app-top-bar">
           <button
             onClick={handleSidebarToggle}
             title={sidebarOpen ? t("app_hideSidebar") : t("app_showSidebar")}
@@ -1008,8 +1008,8 @@ function AppShellInner() {
             let ctxStr: string | null = null;
             if (contextUsage?.contextWindow) {
               const pct = contextUsage.percent;
-              if (pct !== null && pct > 90) ctxColor = "#ef4444";
-              else if (pct !== null && pct > 70) ctxColor = "rgba(234,179,8,0.95)";
+              if (pct !== null && pct > 90) ctxColor = "var(--status-danger)";
+              else if (pct !== null && pct > 70) ctxColor = "var(--status-warning)";
               ctxStr = pct !== null ? `${pct.toFixed(0)}% / ${fmt(contextUsage.contextWindow)}` : `? / ${fmt(contextUsage.contextWindow)}`;
             }
 
@@ -1156,7 +1156,7 @@ function AppShellInner() {
               </div>
             ) : initialCwdStatus === "error" ? (
               <div role="alert" style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, padding: 24, color: "var(--text-muted)", textAlign: "center" }}>
-                <div style={{ fontSize: 14, color: "#dc2626" }}>{t("app_workspaceUnavailable")}</div>
+                <div style={{ fontSize: 14, color: "var(--status-danger)" }}>{t("app_workspaceUnavailable")}</div>
                 <div style={{ maxWidth: "min(720px, 100%)", overflowWrap: "anywhere", fontFamily: "var(--font-mono)", fontSize: 12 }}>{initialNavigation.requestedCwd}</div>
                 <div style={{ maxWidth: 720, fontSize: 12 }}>{initialCwdError}</div>
               </div>
@@ -1188,7 +1188,7 @@ function AppShellInner() {
         onClick={() => setRightPanelOpen(false)}
         style={{
           position: "fixed", inset: 0, zIndex: 199,
-          background: "rgba(0,0,0,0.4)",
+          background: "var(--overlay)",
           opacity: isMobile && rightPanelOpen ? 1 : 0,
           pointerEvents: isMobile && rightPanelOpen ? "auto" : "none",
           transition: "opacity 0.25s ease",

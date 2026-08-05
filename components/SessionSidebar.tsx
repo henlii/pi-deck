@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useState, useCallback, useMemo, useRef } from "react";
+import { createContext, useContext, useEffect, useLayoutEffect, useState, useCallback, useMemo, useRef } from "react";
 import type { SessionInfo } from "@/lib/types";
 import { displayCwd, getRecentProjects } from "@/lib/project-context";
 import {
@@ -64,6 +64,7 @@ import {
   PathLabel,
   PiWebTitle,
   RefreshIcon,
+  RunningDurationText,
   RunningSessionIndicator,
   SearchIcon,
   SidebarIconButton,
@@ -75,6 +76,19 @@ import {
 } from "@/components/session-sidebar/display";
 import { ProjectRowMenu, SessionRowMenu } from "@/components/session-sidebar/menus";
 import { useWorktreePreload } from "@/hooks/useWorktreePreload";
+import { trackRunningStartedAt } from "@/lib/running-duration";
+
+/**
+ * 共享运行计时上下文（P1-5）：
+ * - startedAt：sessionId → 首次见到 running 的时刻（first-seen 近似）；
+ *   刷新后 SSE 重建、无记录时，行内回退显示「运行中」而非伪造时长。
+ * - now：共享 1Hz ticker 的最新时间；无 running 会话时 ticker 停止。
+ * 每个展开会话行经 context 读取，不逐行建 interval。
+ */
+const RunningTimeContext = createContext<{ startedAt: ReadonlyMap<string, number>; now: number }>({
+  startedAt: new Map(),
+  now: 0,
+});
 
 declare global {
   interface Window {
@@ -151,11 +165,27 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   const wtNewInputRef = useRef<HTMLInputElement>(null);
   const [sessionRefreshDone, setSessionRefreshDone] = useState(false);
   const [runningSessionIds, setRunningSessionIds] = useState<Set<string>>(() => new Set());
-  const [unreadSessionIds, setUnreadSessionIds] = useState<Set<string>>(() => loadUnreadSessionIds());
-  // 搜索：查询与开关均为组件瞬时态，不写入偏好
   // subagent 活跃运行（子会话 + 等待中的主会话）；由 /api/subagent-runs 推导。
   const [subagentRunningIds, setSubagentRunningIds] = useState<Set<string>>(() => new Set());
   const subagentPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // ── P1-5 共享运行计时：1Hz ticker + first-seen 时间跟踪（见 RunningTimeContext）──
+  const [runningNow, setRunningNow] = useState(() => Date.now());
+  const [runningStartedAt, setRunningStartedAt] = useState<ReadonlyMap<string, number>>(() => new Map());
+  const hasRunningSessions = runningSessionIds.size > 0 || subagentRunningIds.size > 0;
+  useEffect(() => {
+    if (!hasRunningSessions) return;
+    const timer = setInterval(() => setRunningNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [hasRunningSessions]);
+  useEffect(() => {
+    const now = Date.now();
+    setRunningNow(now);
+    setRunningStartedAt((prev) =>
+      trackRunningStartedAt(prev, [...runningSessionIds, ...subagentRunningIds], now),
+    );
+  }, [runningSessionIds, subagentRunningIds]);
+  const [unreadSessionIds, setUnreadSessionIds] = useState<Set<string>>(() => loadUnreadSessionIds());
+  // 搜索：查询与开关均为组件瞬时态，不写入偏好
   const [sessionQuery, setSessionQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   /** meta = 名称/首消息；fulltext = 消息正文（服务端 FTS/JSONL）。 */
@@ -1151,6 +1181,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   }, [worktreeSnapshots, worktreeMetadata, wtBusy, t]);
 
   return (
+    <RunningTimeContext.Provider value={{ startedAt: runningStartedAt, now: runningNow }}>
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
       {/* Header：品牌 + 全图标工具栏（OpenChamber 规格 24×24 / 图标 18 / 6px 圆角） */}
       <div
@@ -1802,6 +1833,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
         </form>
       </ViewportDialog>
       </div>
+    </RunningTimeContext.Provider>
     );
   }
 
@@ -1904,6 +1936,13 @@ function ProjectSection({
   const collapseLabel = collapsed
     ? t("sidebar_expandProjectNamed", { project: projectName })
     : t("sidebar_collapseProjectNamed", { project: projectName });
+  // 聚合运行圆点：项目内（含各 worktree 组）任一会话运行中即显示；不显示单个时长。
+  const projectHasRunning = useMemo(() => {
+    const running = new Set([...runningSessionIds, ...subagentRunningIds]);
+    const anyRunning = (nodes: SessionDisplayNode[]): boolean =>
+      nodes.some((node) => running.has(node.session.id) || anyRunning(node.children));
+    return anyRunning(project.mainTree) || project.worktrees.some((group) => anyRunning(group.tree));
+  }, [project, runningSessionIds, subagentRunningIds]);
 
   return (
     <div>
@@ -1957,6 +1996,7 @@ function ProjectSection({
             fontFamily: "var(--font-mono)",
           }}
         />
+        {projectHasRunning && <RunningSessionIndicator size={10} />}
         {trustEntry && (
           <ProjectTrustBadge
             status={trustEntry.status}
@@ -2197,6 +2237,13 @@ function WorktreeGroupSection({
   const collapseLabel = collapsed
     ? t("sidebar_expandWorktreeNamed", { name: label })
     : t("sidebar_collapseWorktreeNamed", { name: label });
+  // 聚合运行圆点：组内任一会话运行中即显示；不显示单个时长。
+  const groupHasRunning = useMemo(() => {
+    const running = new Set([...runningSessionIds, ...subagentRunningIds]);
+    const anyRunning = (nodes: SessionDisplayNode[]): boolean =>
+      nodes.some((node) => running.has(node.session.id) || anyRunning(node.children));
+    return anyRunning(group.tree);
+  }, [group, runningSessionIds, subagentRunningIds]);
 
   return (
     <div>
@@ -2250,6 +2297,7 @@ function WorktreeGroupSection({
             fontFamily: "var(--font-mono)",
           }}
         />
+        {groupHasRunning && <RunningSessionIndicator size={10} />}
         {trustEntry && (
           <ProjectTrustBadge status={trustEntry.status} projectName={label} onClick={onOpenTrust} />
         )}
@@ -2462,6 +2510,11 @@ function SessionItem({
   const inputRef = useRef<HTMLInputElement>(null);
 
   const capabilities = getSessionCapabilities(session);
+  // P1-5：共享运行计时上下文（first-seen startedAt + 1Hz now）；刷新后无记录 → undefined。
+  const runningTime = useContext(RunningTimeContext);
+  const runningStartedAt = session.id ? runningTime.startedAt.get(session.id) : undefined;
+  // 折叠的父会话（聚合节点）只显示圆点，不显示单个时长。
+  const showRunningDuration = isRunning === true && !(hasChildren && collapsed);
   // 尚未展开索引的 subagent 会话首消息为占位符，才用 agent/run 兜底；
   // 已有真实首消息时沿用内容标题，agent/run 由下方徽章补充，避免信息重复。
   const firstMessage = session.firstMessage.trim();
@@ -2683,6 +2736,10 @@ function SessionItem({
               {/* 状态指示置前：运行中 / 未读显示在标题之前（OpenChamber 风格） */}
               {isRunning && <RunningSessionIndicator size={10} />}
               {!isRunning && isUnread && <UnreadSessionIndicator size={10} />}
+              {/* Compact：运行时长内联在圆点后（行右侧信息区）；折叠父组只留圆点 */}
+              {showRunningDuration && compact && (
+                <RunningDurationText startedAt={runningStartedAt} now={runningTime.now} running />
+              )}
               <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>
                 {title}
               </span>
@@ -2698,6 +2755,10 @@ function SessionItem({
             </div>
             {!compact && (
               <div style={{ marginTop: 1, display: "flex", alignItems: "center", gap: 8, color: "var(--text-dim)", fontSize: 10.5, minWidth: 0 }}>
+              {/* P1-5 运行时长：展开行 secondary 信息区右侧（modified 前）；折叠父组只留圆点 */}
+              {showRunningDuration && (
+                <RunningDurationText startedAt={runningStartedAt} now={runningTime.now} running />
+              )}
               <span title={session.modified}>{formatRelativeTime(session.modified, t)}</span>
               <span>{t("sidebar_messagesCount", { count: session.messageCount })}</span>
               {/* 子代理徽章：文字先表达类型，agent 名与 run 次序补充上下文。 */}

@@ -74,16 +74,7 @@ function NeedsProjectHint({ hint }: { hint: "skills" | "plugins" }) {
   const { t } = useI18n();
   void hint;
   return (
-    <div style={{
-      height: "100%",
-      display: "flex",
-      flexDirection: "column",
-      alignItems: "center",
-      justifyContent: "center",
-      gap: 10,
-      padding: 24,
-      textAlign: "center",
-    }}>
+    <div className="settings-empty-state">
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--text-dim)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
         <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" />
       </svg>
@@ -106,21 +97,12 @@ function SegmentedChoice<T extends string>({
   onChange: (value: T) => void;
 }) {
   return (
-    <div style={{ marginBottom: 22 }}>
+    <div className="settings-choice">
       <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text)", marginBottom: 8 }}>{label}</div>
       <div
+        className="settings-segmented-control"
         role="group"
         aria-label={label}
-        style={{
-          display: "flex",
-          gap: 2,
-          padding: 2,
-          border: "1px solid var(--border)",
-          borderRadius: 9,
-          background: "var(--bg-panel)",
-          width: "fit-content",
-          maxWidth: "100%",
-        }}
       >
         {options.map((option) => {
           const active = option.value === value;
@@ -128,22 +110,9 @@ function SegmentedChoice<T extends string>({
             <button
               key={option.value}
               type="button"
+              className={`settings-segmented-option${active ? " is-active" : ""}`}
               aria-pressed={active}
               onClick={() => onChange(option.value)}
-              style={{
-                minWidth: 96,
-                height: 30,
-                padding: "0 14px",
-                border: "none",
-                borderRadius: 7,
-                background: active ? "var(--bg-selected)" : "transparent",
-                color: active ? "var(--text)" : "var(--text-muted)",
-                fontWeight: active ? 600 : 400,
-                fontSize: 12.5,
-                cursor: "pointer",
-                whiteSpace: "nowrap",
-                transition: "background 0.12s, color 0.12s",
-              }}
             >
               {option.label}
             </button>
@@ -158,7 +127,7 @@ function AppearancePage() {
   const { mode, themeStyle, setTheme, setThemeStyle } = useTheme();
   const { locale, setLocale, t } = useI18n();
   return (
-    <div style={{ padding: "18px 20px" }}>
+    <div className="settings-page-content">
       <SegmentedChoice
         label={t("appearance_colorMode")}
         options={[
@@ -253,7 +222,7 @@ function TrustPage({ cwd }: { cwd: string | null }) {
   const mono: React.CSSProperties = { fontFamily: "var(--font-mono)", fontSize: 11.5, wordBreak: "break-all" };
 
   return (
-    <div style={{ padding: "18px 20px" }}>
+    <div className="settings-page-content">
       <div style={{ fontSize: 11, color: "var(--text-dim)", lineHeight: 1.6, marginBottom: 18 }}>
         {t("trust_appliesNextSession")}
       </div>
@@ -289,7 +258,7 @@ function TrustPage({ cwd }: { cwd: string | null }) {
 
       <div style={sectionTitle}>{t("trust_decisionsTitle")}</div>
       {failed || list?.error ? (
-        <div style={{ fontSize: 12, color: "#dc2626" }}>
+        <div style={{ fontSize: 12, color: "var(--status-danger)" }}>
           {t("trust_loadFailed")}
           {list?.error ? `: ${list.error}` : ""}
         </div>
@@ -319,8 +288,8 @@ function TrustPage({ cwd }: { cwd: string | null }) {
                   fontSize: 10.5,
                   padding: "1px 7px",
                   borderRadius: 999,
-                  border: `1px solid ${entry.decision ? "var(--border)" : "#dc262655"}`,
-                  color: entry.decision ? "var(--text-dim)" : "#dc2626",
+                  border: `1px solid ${entry.decision ? "var(--border)" : "color-mix(in srgb, var(--status-danger) 40%, var(--border))"}`,
+                  color: entry.decision ? "var(--text-dim)" : "var(--status-danger)",
                 }}
               >
                 {entry.decision ? t("trust_decisionTrusted") : t("trust_decisionDistrusted")}
@@ -387,31 +356,19 @@ export function SettingsView({ cwd, sessionId, onClose, onModelsChanged, onAuthS
   };
 
   const navList = (
-    <div style={{ display: "flex", flexDirection: "column", gap: 2, padding: isMobile ? "10px 10px" : "10px 8px" }}>
+    <div className="settings-nav-list">
       {pages.map((page) => {
         const active = page.id === activePageInfo.id;
         return (
           <button
             key={page.id}
             type="button"
+            className={`settings-nav-item${!isMobile && active ? " is-active" : ""}`}
             aria-current={!isMobile && active ? "page" : undefined}
             onClick={() => selectPage(page.id)}
             style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              width: "100%",
               minHeight: isMobile ? 44 : 34,
-              padding: isMobile ? "0 12px" : "0 10px",
-              border: "none",
-              borderRadius: 7,
-              background: !isMobile && active ? "var(--bg-selected)" : "transparent",
-              color: !isMobile && active ? "var(--text)" : "var(--text-muted)",
-              fontWeight: !isMobile && active ? 600 : 400,
-              fontSize: 13,
-              textAlign: "left",
-              cursor: "pointer",
-              transition: "background 0.12s, color 0.12s",
+              padding: isMobile ? "0 12px" : "0 10px 0 12px",
             }}
           >
             <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -470,15 +427,15 @@ export function SettingsView({ cwd, sessionId, onClose, onModelsChanged, onAuthS
       headerActions={mobileBackAction}
       contentPadding="0"
     >
-      <div style={{ display: "flex", height: "min(72dvh, 660px)", minHeight: 0 }}>
+      <div className="settings-layout">
         {isMobile ? (
           mobileView.page === null ? (
             <nav aria-label={t("common_settings")} style={{ flex: 1, overflowY: "auto" }}>
               {navList}
             </nav>
           ) : (
-            <section aria-label={t(settingsPageLabelKey(activePageInfo.id))} style={{ flex: 1, minWidth: 0, overflow: "hidden", display: "flex", flexDirection: "column" }}>
-              <div style={{ flex: 1, minHeight: 0, overflowY: "auto", display: "flex", flexDirection: "column" }}>
+            <section aria-label={t(settingsPageLabelKey(activePageInfo.id))} className="settings-content-pane">
+              <div className="settings-scroll-region">
                 {renderPageContent()}
               </div>
             </section>
@@ -497,8 +454,8 @@ export function SettingsView({ cwd, sessionId, onClose, onModelsChanged, onAuthS
             >
               {navList}
             </nav>
-            <section aria-label={t(settingsPageLabelKey(activePageInfo.id))} style={{ flex: 1, minWidth: 0, overflow: "hidden", display: "flex", flexDirection: "column" }}>
-              <div style={{ flex: 1, minHeight: 0, overflowY: "auto", display: "flex", flexDirection: "column" }}>
+            <section aria-label={t(settingsPageLabelKey(activePageInfo.id))} className="settings-content-pane">
+              <div className="settings-scroll-region">
                 {renderPageContent()}
               </div>
             </section>

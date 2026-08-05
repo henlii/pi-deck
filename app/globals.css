@@ -1227,6 +1227,149 @@ span.linenumber {
   }
 }
 
+/* 设置：Chamber 原生的安静双栏、完整选中面与清晰内容节奏。 */
+.settings-layout {
+  display: flex;
+  height: min(72dvh, 660px);
+  min-height: 0;
+}
+.settings-nav-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 8px;
+}
+.settings-nav-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 400;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.settings-nav-item:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.settings-nav-item.is-active {
+  background: var(--bg-selected);
+  color: var(--text);
+  font-weight: 600;
+}
+.settings-nav-item.is-active::before {
+  position: absolute;
+  top: 7px;
+  bottom: 7px;
+  left: 3px;
+  width: 2px;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  content: "";
+}
+.settings-content-pane,
+.settings-scroll-region {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+}
+.settings-content-pane {
+  overflow: hidden;
+  background: var(--bg);
+}
+.settings-scroll-region {
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+.settings-page-content {
+  width: min(100%, 700px);
+  padding: 24px 28px 32px;
+}
+.settings-choice {
+  margin-bottom: 26px;
+}
+.settings-segmented-control {
+  display: flex;
+  width: fit-content;
+  max-width: 100%;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-panel);
+  box-shadow: var(--shadow-input);
+}
+.settings-segmented-option {
+  min-width: 96px;
+  height: 32px;
+  padding: 0 14px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12.5px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, box-shadow 0.12s;
+}
+.settings-segmented-option:hover {
+  color: var(--text);
+}
+.settings-segmented-option.is-active {
+  background: var(--bg-elevated);
+  color: var(--text);
+  box-shadow: 0 1px 3px color-mix(in srgb, var(--text) 12%, transparent);
+  font-weight: 600;
+}
+.settings-empty-state {
+  display: flex;
+  height: 100%;
+  padding: 32px 24px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  text-align: center;
+}
+
+/* 顶栏和右侧工作区共用紧凑桌面节奏；触屏端扩大命中区。 */
+.app-top-bar {
+  display: flex;
+  height: 36px;
+  align-items: center;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-panel);
+}
+.workspace-header {
+  display: flex;
+  height: 40px;
+  padding: 0 8px 0 12px;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 4px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-panel);
+}
+.workspace-navigation-rail {
+  display: flex;
+  padding: 8px 0;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  border-left: 1px solid var(--border);
+  background: var(--bg);
+}
+
 /* ── 右侧工作区 ── */
 /* 拖拽调宽手柄（桌面；移动端禁用） */
 .workspace-resize-handle {
@@ -1265,6 +1408,14 @@ span.linenumber {
   opacity: 0;
   visibility: hidden;
   transition: opacity 0.12s, visibility 0.12s;
+}
+.file-row {
+  border-radius: var(--radius-xs);
+  transition: background 0.12s;
+}
+.file-row:hover,
+.file-row:focus-within {
+  background: var(--bg-hover);
 }
 .file-row:hover .file-row-actions,
 .file-row:focus-within .file-row-actions {
@@ -1320,6 +1471,8 @@ span.linenumber {
   color: var(--text);
   font-size: 12px;
   text-align: left;
+  border-radius: var(--radius-xs);
+  transition: background 0.12s, color 0.12s;
 }
 .git-file-row:hover {
   background: var(--bg-hover);
@@ -1346,6 +1499,53 @@ span.linenumber {
     content: "";
     position: absolute;
     inset: -4px -2px;
+  }
+}
+
+@media (max-width: 640px) {
+  .app-top-bar {
+    height: 44px;
+  }
+  .app-top-bar > button {
+    width: 44px !important;
+    height: 44px !important;
+  }
+  .workspace-header {
+    height: 44px;
+    padding-right: 6px;
+  }
+  .workspace-header .sidebar-icon-btn,
+  .workspace-navigation-rail .sidebar-icon-btn {
+    width: 36px;
+    height: 36px;
+  }
+  .workspace-navigation-rail {
+    gap: 8px;
+    padding-top: 8px;
+  }
+  .settings-layout {
+    height: min(78dvh, 680px);
+  }
+  .settings-nav-list {
+    padding: 10px;
+  }
+  .settings-page-content {
+    padding: 20px 16px 28px;
+  }
+  .settings-segmented-control {
+    width: 100%;
+    overflow-x: auto;
+  }
+  .settings-segmented-option {
+    min-width: 0;
+    height: 40px;
+    flex: 1 0 auto;
+  }
+  .chat-input-shell {
+    padding: 9px 8px 9px 12px !important;
+  }
+  .chat-input-shell button {
+    min-height: 40px;
   }
 }
 

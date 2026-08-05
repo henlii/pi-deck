@@ -1176,8 +1176,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
         {retryInfo && (
           <div style={{
             marginBottom: 8, padding: "5px 10px",
-            background: "rgba(234,179,8,0.08)", border: "1px solid rgba(234,179,8,0.25)",
-            borderRadius: 6, fontSize: 12, color: "rgba(180,130,0,0.9)",
+            background: "color-mix(in srgb, var(--status-warning) 8%, transparent)", border: "1px solid color-mix(in srgb, var(--status-warning) 28%, transparent)",
+            borderRadius: 6, fontSize: 12, color: "var(--status-warning)",
             display: "flex", alignItems: "center", gap: 6,
           }}>
             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
@@ -1190,8 +1190,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
         {compactResultText && (
           <div style={{
             marginBottom: 8, padding: "5px 10px",
-            background: "rgba(16,185,129,0.08)", border: "1px solid rgba(16,185,129,0.24)",
-            borderRadius: 6, fontSize: 12, color: "rgba(5,150,105,0.95)",
+            background: "color-mix(in srgb, var(--status-success) 8%, transparent)", border: "1px solid color-mix(in srgb, var(--status-success) 28%, transparent)",
+            borderRadius: 6, fontSize: 12, color: "var(--status-success)",
             display: "flex", alignItems: "center", gap: 6,
           }}>
             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
@@ -1475,7 +1475,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
               alignItems: "center",
               background: "var(--bg-elevated)",
               border: `1px solid ${bashMode ? "var(--tool-bg)" : isStreaming && (onSteer || onFollowUp)
-                ? "rgba(234,179,8,0.4)"
+                ? "color-mix(in srgb, var(--status-warning) 45%, var(--border-strong))"
                 : "var(--border-strong)"}`,
               borderRadius: "var(--radius-lg)",
               padding: "10px 10px 10px 14px",
@@ -1546,10 +1546,10 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   style={{
                     display: "flex", alignItems: "center", gap: 5,
                     padding: "7px 12px",
-                    background: canQueueStreamingMessage ? "rgba(234,179,8,0.12)" : "none",
-                    border: "1px solid rgba(234,179,8,0.35)",
+                    background: canQueueStreamingMessage ? "color-mix(in srgb, var(--status-warning) 12%, transparent)" : "none",
+                    border: "1px solid color-mix(in srgb, var(--status-warning) 35%, transparent)",
                     borderRadius: 8,
-                    color: canQueueStreamingMessage ? "rgba(180,130,0,1)" : "var(--text-dim)",
+                    color: canQueueStreamingMessage ? "var(--status-warning)" : "var(--text-dim)",
                     cursor: canQueueStreamingMessage ? "pointer" : "not-allowed",
                     fontSize: 13, fontWeight: 600, letterSpacing: "-0.01em",
                     transition: "background 0.12s",
@@ -1571,10 +1571,10 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   style={{
                     display: "flex", alignItems: "center", gap: 5,
                     padding: "7px 12px",
-                    background: canQueueStreamingMessage ? "rgba(129,140,248,0.12)" : "none",
-                    border: "1px solid rgba(129,140,248,0.35)",
+                    background: canQueueStreamingMessage ? "color-mix(in srgb, var(--status-unread) 12%, transparent)" : "none",
+                    border: "1px solid color-mix(in srgb, var(--status-unread) 35%, transparent)",
                     borderRadius: 8,
-                    color: canQueueStreamingMessage ? "rgba(99,102,241,1)" : "var(--text-dim)",
+                    color: canQueueStreamingMessage ? "var(--status-unread)" : "var(--text-dim)",
                     cursor: canQueueStreamingMessage ? "pointer" : "not-allowed",
                     fontSize: 13, fontWeight: 600, letterSpacing: "-0.01em",
                     transition: "background 0.12s",
@@ -2029,7 +2029,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 {compactError && createPortal(
                   <div ref={compactBubbleRef} style={{
                     ...compactOverlay.style,
-                    background: "#1f2937", color: "#f87171",
+                    background: "var(--bg-elevated)", color: "var(--status-danger)",
                     fontSize: 11, padding: "4px 8px", borderRadius: 5,
                     whiteSpace: "normal", overflowWrap: "break-word",
                     pointerEvents: "none",
@@ -2047,22 +2047,22 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                     padding: isMobile ? "0 6px" : "8px 12px",
                     width: isMobile ? "auto" : undefined,
                     height: 32,
-                    background: isCompacting ? "rgba(239,68,68,0.08)" : "none",
+                    background: isCompacting ? "color-mix(in srgb, var(--status-danger) 8%, transparent)" : "none",
                     border: "none",
                     borderRadius: 9,
-                    color: isCompacting ? "#ef4444" : "var(--text-muted)",
+                    color: isCompacting ? "var(--status-danger)" : "var(--text-muted)",
                     cursor: (isStreaming && !isCompacting) ? "not-allowed" : "pointer",
                     fontSize: 12, opacity: (isStreaming && !isCompacting) ? 0.5 : 1,
                     transition: "background 0.12s, color 0.12s",
                   }}
                   onMouseEnter={(e) => {
                     if (isStreaming && !isCompacting) return;
-                    e.currentTarget.style.background = isCompacting ? "rgba(239,68,68,0.16)" : "var(--bg-hover)";
-                    e.currentTarget.style.color = isCompacting ? "#ef4444" : "var(--text)";
+                    e.currentTarget.style.background = isCompacting ? "color-mix(in srgb, var(--status-danger) 16%, transparent)" : "var(--bg-hover)";
+                    e.currentTarget.style.color = isCompacting ? "var(--status-danger)" : "var(--text)";
                   }}
                   onMouseLeave={(e) => {
-                    e.currentTarget.style.background = isCompacting ? "rgba(239,68,68,0.08)" : "none";
-                    e.currentTarget.style.color = isCompacting ? "#ef4444" : "var(--text-muted)";
+                    e.currentTarget.style.background = isCompacting ? "color-mix(in srgb, var(--status-danger) 8%, transparent)" : "none";
+                    e.currentTarget.style.color = isCompacting ? "var(--status-danger)" : "var(--text-muted)";
                   }}
                   title={isCompacting ? t("input_stopCompaction") : t("input_compactContext")}
                   data-tooltip={isCompacting ? t("input_stopCompaction") : t("input_compactContext")}
@@ -2091,17 +2091,17 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   display: "flex", alignItems: "center", gap: 6,
                   padding: "8px 14px",
                   height: 32,
-                  background: "rgba(239,68,68,0.08)",
-                  border: "1px solid rgba(239,68,68,0.3)",
+                  background: "color-mix(in srgb, var(--status-danger) 8%, transparent)",
+                  border: "1px solid color-mix(in srgb, var(--status-danger) 30%, transparent)",
                   borderRadius: 9,
-                  color: "#ef4444",
+                  color: "var(--status-danger)",
                   cursor: "pointer",
                   fontSize: 12, fontWeight: 600,
                   whiteSpace: "nowrap", letterSpacing: "-0.01em",
                   transition: "background 0.12s",
                 }}
-                onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(239,68,68,0.16)"; }}
-                onMouseLeave={(e) => { e.currentTarget.style.background = "rgba(239,68,68,0.08)"; }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = "color-mix(in srgb, var(--status-danger) 16%, transparent)"; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = "color-mix(in srgb, var(--status-danger) 8%, transparent)"; }}
               >
                 <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
                   <rect x="1.5" y="1.5" width="7" height="7" rx="1.5" fill="currentColor" />

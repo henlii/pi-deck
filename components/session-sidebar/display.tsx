@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useI18n } from "@/lib/i18n";
+import { formatRunningDuration } from "@/lib/running-duration";
 import {
   GROUP_VISIBLE_PAGE_SIZE,
   canShowFewerTopLevel,
@@ -577,6 +578,46 @@ export function RunningSessionIndicator({ size = 14 }: { size?: number }) {
       }}
     >
       <span aria-hidden="true" style={{ display: "block", width: 6, height: 6, borderRadius: "50%", background: "currentColor" }} />
+    </span>
+  );
+}
+
+/**
+ * 展开会话行的运行时长（P1-5）：静态圆点 + 时长文本。
+ * - running + startedAt（首次见到 running 的时刻）：显示如「2m 14s」；
+ * - running + 无 startedAt（刷新后 SSE 重建，无法确认真实开始时间）：
+ *   显示「运行中」而不是伪造时长；
+ * - 非 running：不渲染。
+ * 折叠的父组/项目/worktree 行只使用 RunningSessionIndicator（聚合圆点），
+ * 不渲染本组件——单个时长无法代表多个任务。
+ */
+export function RunningDurationText({ startedAt, now, running }: {
+  startedAt?: number;
+  now: number;
+  running: boolean;
+}) {
+  const { t } = useI18n();
+  if (!running) return null;
+  return (
+    <span
+      title={t("sidebar_running")}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 4,
+        flexShrink: 0,
+        color: "var(--status-running)",
+        fontSize: 10,
+        fontVariantNumeric: "tabular-nums",
+        whiteSpace: "nowrap",
+      }}
+    >
+      <RunningSessionIndicator size={10} />
+      <span>
+        {startedAt !== undefined
+          ? formatRunningDuration(Math.max(0, now - startedAt), t)
+          : t("sidebar_running")}
+      </span>
     </span>
   );
 }

@@ -198,7 +198,7 @@ export function AgentDefaultsConfig({ cwd }: AgentDefaultsConfigProps) {
   if (error && !data) {
     return (
       <div style={{ padding: "18px 20px" }}>
-        <div style={{ fontSize: 12, color: "#dc2626", marginBottom: 10 }}>
+        <div style={{ fontSize: 12, color: "var(--status-danger)", marginBottom: 10 }}>
           {t("defaults_loadFailed")}: {error}
         </div>
         <button
@@ -232,7 +232,7 @@ export function AgentDefaultsConfig({ cwd }: AgentDefaultsConfigProps) {
       </div>
 
       {error && (
-        <div style={{ fontSize: 12, color: "#dc2626", marginBottom: 12 }}>
+        <div style={{ fontSize: 12, color: "var(--status-danger)", marginBottom: 12 }}>
           {t("defaults_saveFailed")}: {error}
         </div>
       )}
@@ -384,7 +384,7 @@ export function AgentDefaultsConfig({ cwd }: AgentDefaultsConfigProps) {
             borderRadius: 7,
             border: `1px solid ${dirty ? "var(--accent)" : "var(--border)"}`,
             background: dirty ? "var(--accent)" : "var(--bg-panel)",
-            color: dirty ? "#fff" : "var(--text-muted)",
+            color: dirty ? "var(--accent-foreground)" : "var(--text-muted)",
             cursor: !dirty || saving ? "not-allowed" : "pointer",
             fontSize: 12,
             fontWeight: 600,
@@ -417,4 +417,4 @@ export function AgentDefaultsConfig({ cwd }: AgentDefaultsConfigProps) {
     </div>
   );
 }
-
+
