@@ -132,6 +132,7 @@ export const zhCN: Record<TranslationKey, string> = {
   sidebar_exportSessionHtml: '导出 HTML',
   sidebar_exportSessionJsonl: '导出完整 JSONL',
   sidebar_subagentReadOnly: '子 Agent 会话只读',
+  sidebar_subagentBadge: '子代理',
   sidebar_messagesCount: '{count} 条消息',
   sidebar_runCount: '第 {count} 次运行',
   sidebar_readOnly: '只读',

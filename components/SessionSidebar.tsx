@@ -1402,7 +1402,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
             搜索激活时隐藏，只显示匹配树；不参与树的分组/折叠状态，
             选中态、运行/未读徽标与树内同会话共享同一数据源。 */}
         {!searchActive && recentSessions.length > 0 && (
-          <div style={{ paddingBottom: 4, borderBottom: "1px solid var(--border)", marginBottom: 4 }}>
+          <div style={{ paddingBottom: 5, borderBottom: "1px solid var(--border)", marginBottom: 5 }}>
             <div style={{
               display: "flex", alignItems: "center", gap: 5, height: 26,
               paddingLeft: 14, paddingRight: 8,
@@ -1921,10 +1921,12 @@ function ProjectSection({
         style={{
           display: "flex",
           alignItems: "center",
-          gap: 5,
-          height: 30,
-          paddingLeft: 6,
+          gap: 6,
+          height: 32,
+          margin: "1px 6px",
+          paddingLeft: 2,
           paddingRight: 8,
+          borderRadius: 6,
           cursor: "pointer",
           background: "transparent",
           color: "var(--text-muted)",
@@ -1945,8 +1947,8 @@ function ProjectSection({
           text={projectName}
           style={{
             flex: 1,
-            fontSize: 12,
-            fontWeight: 500,
+            fontSize: 12.5,
+            fontWeight: 600,
             fontFamily: "var(--font-mono)",
           }}
         />
@@ -1993,7 +1995,7 @@ function ProjectSection({
       {!collapsed && (
         <div>
           {/* 主仓会话：主 worktree 隐式，直接列在项目下 */}
-          <div style={{ paddingLeft: 10 }}>
+          <div style={{ paddingLeft: 8 }}>
             {getVisibleTopLevelNodes(
               project.mainTree,
               getGroupVisibleCount(groupVisibleCounts, `main:${project.root}`),
@@ -2212,10 +2214,12 @@ function WorktreeGroupSection({
         style={{
           display: "flex",
           alignItems: "center",
-          gap: 5,
-          height: 26,
-          paddingLeft: 22,
+          gap: 6,
+          height: 30,
+          margin: "1px 6px",
+          paddingLeft: 18,
           paddingRight: 8,
+          borderRadius: 6,
           cursor: "pointer",
           background: "transparent",
           color: "var(--text-muted)",
@@ -2236,7 +2240,7 @@ function WorktreeGroupSection({
           text={label}
           style={{
             flex: 1,
-            fontSize: 11.5,
+            fontSize: 12,
             fontWeight: 400,
             fontFamily: "var(--font-mono)",
           }}
@@ -2295,7 +2299,7 @@ function WorktreeGroupSection({
       )}
 
       {!collapsed && (
-        <div style={{ paddingLeft: 20 }}>
+        <div style={{ paddingLeft: 18 }}>
           {getVisibleTopLevelNodes(group.tree, visibleCount, searchActive).map((node) => (
             <SessionTreeItem
               key={node.session.id}
@@ -2370,17 +2374,6 @@ function SessionTreeItem({
   return (
     <div>
       <div data-session-id={node.session.id} style={{ position: "relative" }}>
-        {/* Indent line for child sessions */}
-        {depth > 0 && (
-          <div style={{
-            position: "absolute",
-            left: depth * 12 + 6,
-            top: 0, bottom: 0,
-            width: 1,
-            background: "var(--border)",
-            pointerEvents: "none",
-          }} />
-        )}
         <SessionItem
           session={node.session}
           relation={node.relation}
@@ -2535,7 +2528,7 @@ function SessionItem({
 
   // Fixed-height outer wrapper — content swaps in place so the list never reflows
   const compact = displayMode === "compact";
-  const ITEM_HEIGHT = compact ? 28 : 46;
+  const ITEM_HEIGHT = compact ? 30 : 40;
 
   return (
     <div
@@ -2547,16 +2540,19 @@ function SessionItem({
         height: ITEM_HEIGHT,
         display: "flex",
         alignItems: "center",
-        paddingLeft: depth > 0 ? depth * 12 + 14 : 14,
+        width: "calc(100% - 12px)",
+        margin: "1px 6px",
+        paddingLeft: depth > 0 ? depth * 14 + 10 : 10,
         paddingRight: 8,
+        borderRadius: 6,
         cursor: confirmDelete || renaming ? "default" : "pointer",
         background: confirmDelete
           ? "rgba(239,68,68,0.06)"
-          : isSelected ? "color-mix(in srgb, var(--accent) 9%, var(--bg-selected))" : hovered ? "var(--bg-hover)" : "transparent",
+          : isSelected ? "var(--bg-selected)" : hovered ? "var(--bg-hover)" : "transparent",
         borderLeft: confirmDelete
           ? "2px solid #ef4444"
           : isSelected ? "2px solid var(--accent)" : "2px solid transparent",
-        transition: "background 0.1s",
+        transition: "background 0.15s ease, color 0.15s ease",
         opacity: deleting ? 0.5 : 1,
         gap: 6,
         overflow: "hidden",
@@ -2672,9 +2668,9 @@ function SessionItem({
                 gap: 5,
                 minWidth: 0,
                 fontSize: compact ? 11.5 : 12,
-                fontWeight: isSelected ? 500 : 400,
+                fontWeight: 400,
                 lineHeight: 1.4,
-                color: "var(--text)",
+                color: isSelected ? "var(--accent-hover)" : "var(--text)",
               }}
               title={title}
             >
@@ -2688,9 +2684,9 @@ function SessionItem({
               {compact && session.subagent && (
                 <span
                   title={`${t("sidebar_subagentReadOnly")}${session.subagent.agent ? ` · ${session.subagent.agent}` : ""} · ${t("sidebar_runCount", { count: session.subagent.runIndex })}`}
-                  style={{ display: "flex", flexShrink: 0, color: "var(--text-muted)" }}
+                  style={{ display: "inline-flex", alignItems: "center", flexShrink: 0, padding: "0 5px", border: "1px solid color-mix(in srgb, var(--status-success) 42%, var(--border))", borderRadius: 999, color: "var(--status-success)", fontSize: 9, lineHeight: 1.55 }}
                 >
-                  <LayersIcon size={9} />
+                  {t("sidebar_subagentBadge")}
                 </span>
               )}
             </div>
@@ -2698,18 +2694,17 @@ function SessionItem({
               <div style={{ marginTop: 1, display: "flex", alignItems: "center", gap: 8, color: "var(--text-dim)", fontSize: 10.5, minWidth: 0 }}>
               <span title={session.modified}>{formatRelativeTime(session.modified, t)}</span>
               <span>{t("sidebar_messagesCount", { count: session.messageCount })}</span>
-              {/* subagent 徽章：agent 名 + run 次序 + 只读语义，克制但明确 */}
+              {/* 子代理徽章：文字先表达类型，agent 名与 run 次序补充上下文。 */}
               {session.subagent && (
                 <span
                   title={`${t("sidebar_subagentReadOnly")}${session.subagent.agent ? ` · ${session.subagent.agent}` : ""} · ${t("sidebar_runCount", { count: session.subagent.runIndex })}`}
-                  style={{ display: "flex", alignItems: "center", gap: 3, color: "var(--text-muted)", minWidth: 0, overflow: "hidden" }}
+                  style={{ display: "flex", alignItems: "center", gap: 4, color: "var(--text-muted)", minWidth: 0, overflow: "hidden" }}
                 >
-                  <LayersIcon size={9} />
+                  <span style={{ flexShrink: 0, fontSize: 9, padding: "0 5px", borderRadius: 999, border: "1px solid color-mix(in srgb, var(--status-success) 42%, var(--border))", color: "var(--status-success)", lineHeight: 1.55 }}>
+                    {t("sidebar_subagentBadge")}
+                  </span>
                   <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontFamily: "var(--font-mono)", fontSize: 10 }}>
                     {session.subagent.agent ? `${session.subagent.agent} · ` : ""}{t("sidebar_runCount", { count: session.subagent.runIndex })}
-                  </span>
-                  <span style={{ flexShrink: 0, fontSize: 9, padding: "0 4px", borderRadius: 999, border: "1px solid var(--border)", color: "var(--text-dim)", lineHeight: 1.5 }}>
-                    {t("sidebar_readOnly")}
                   </span>
                 </span>
               )}

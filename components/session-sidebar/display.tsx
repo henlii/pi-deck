@@ -246,7 +246,7 @@ export function iconProps(size: number) {
     viewBox: "0 0 24 24",
     fill: "none",
     stroke: "currentColor",
-    strokeWidth: 2,
+    strokeWidth: 1.75,
     strokeLinecap: "round",
     strokeLinejoin: "round",
     "aria-hidden": true,
@@ -454,7 +454,7 @@ export function DisplayMenuItem({ label, checked, onClick }: { label: string; ch
         gap: 7,
         width: "100%",
         padding: "7px 10px",
-        background: "var(--bg)",
+        background: "var(--bg-elevated)",
         border: "none",
         color: checked ? "var(--text)" : "var(--text-muted)",
         cursor: "pointer",
@@ -482,7 +482,7 @@ export function ProjectMenuItem({ icon, label, onClick }: { icon: ReactNode; lab
         gap: 8,
         width: "100%",
         padding: "7px 12px",
-        background: "var(--bg)",
+        background: "var(--bg-elevated)",
         border: "none",
         color: "var(--text-muted)",
         cursor: "pointer",
@@ -495,7 +495,7 @@ export function ProjectMenuItem({ icon, label, onClick }: { icon: ReactNode; lab
         e.currentTarget.style.color = "var(--text)";
       }}
       onMouseLeave={(e) => {
-        e.currentTarget.style.background = "var(--bg)";
+        e.currentTarget.style.background = "var(--bg-elevated)";
         e.currentTarget.style.color = "var(--text-muted)";
       }}
       onFocus={(e) => {
@@ -503,7 +503,7 @@ export function ProjectMenuItem({ icon, label, onClick }: { icon: ReactNode; lab
         e.currentTarget.style.color = "var(--text)";
       }}
       onBlur={(e) => {
-        e.currentTarget.style.background = "var(--bg)";
+        e.currentTarget.style.background = "var(--bg-elevated)";
         e.currentTarget.style.color = "var(--text-muted)";
       }}
     >
@@ -562,27 +562,10 @@ export function RunningSessionIndicator({ size = 14 }: { size?: number }) {
         alignItems: "center",
         justifyContent: "center",
         flexShrink: 0,
-        color: "var(--accent)",
+        color: "var(--status-running)",
       }}
     >
-      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true" style={{ display: "block" }}>
-        <g>
-          <path
-            d="M21 12a9 9 0 1 1-3.8-7.4"
-            stroke="currentColor"
-            strokeWidth="2.8"
-            strokeLinecap="round"
-          />
-          <animateTransform
-            attributeName="transform"
-            type="rotate"
-            from="0 12 12"
-            to="360 12 12"
-            dur="0.9s"
-            repeatCount="indefinite"
-          />
-        </g>
-      </svg>
+      <span aria-hidden="true" style={{ display: "block", width: 6, height: 6, borderRadius: "50%", background: "currentColor" }} />
     </span>
   );
 }
@@ -600,16 +583,10 @@ export function UnreadSessionIndicator({ size = 14 }: { size?: number }) {
         alignItems: "center",
         justifyContent: "center",
         flexShrink: 0,
-        color: "#0891b2",
+        color: "var(--status-unread)",
       }}
     >
-      <svg width={size} height={size} viewBox="0 0 14 14" fill="none" aria-hidden="true" style={{ display: "block" }}>
-        <circle cx="7" cy="7" r="2.5" fill="currentColor" />
-        <circle cx="7" cy="7" r="3" stroke="currentColor" strokeWidth="1.4" opacity="0.32">
-          <animate attributeName="r" values="3;6;3" dur="1.6s" repeatCount="indefinite" />
-          <animate attributeName="opacity" values="0.32;0;0.32" dur="1.6s" repeatCount="indefinite" />
-        </circle>
-      </svg>
+      <span aria-hidden="true" style={{ display: "block", width: 6, height: 6, borderRadius: "50%", background: "currentColor" }} />
     </span>
   );
 }

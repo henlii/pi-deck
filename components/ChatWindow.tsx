@@ -524,7 +524,7 @@ export function ChatWindow({ session, newSessionCwd, newSessionIntentId, guideDe
 
       {isEmptyNew ? (
         <div className="flex flex-1 flex-col items-center justify-center overflow-y-auto px-4 py-8">
-          <div className="w-full max-w-[820px]">
+          <div className="w-full max-w-[760px]">
             <div
               className="mb-3"
               style={{
@@ -567,7 +567,7 @@ export function ChatWindow({ session, newSessionCwd, newSessionIntentId, guideDe
             pointerEvents: "none",
           }}
         >
-          <div style={{ maxWidth: 820, margin: "0 auto" }}>
+          <div style={{ maxWidth: 760, margin: "0 auto" }}>
             <NoticeShelf notices={notices} activities={visibleActivities} onDismiss={dismissNotice} onTogglePin={toggleNoticePin} floating align="right" />
           </div>
         </div>
@@ -579,7 +579,7 @@ export function ChatWindow({ session, newSessionCwd, newSessionIntentId, guideDe
           style={{ overflowAnchor: "none", overscrollBehavior: "contain" }}
         >
           <div style={{ padding: `0 ${CHAT_COLUMN_PADDING}px` }}>
-            <div style={{ maxWidth: 820, margin: "0 auto" }}>
+            <div style={{ maxWidth: 760, margin: "0 auto" }}>
               <ExtensionStatusBar statuses={extensionStatuses} />
               <ExtensionWidgets widgets={aboveEditorWidgets} />
 
@@ -678,14 +678,16 @@ export function ChatWindow({ session, newSessionCwd, newSessionIntentId, guideDe
             })()}
 
             {agentRunning && !streamState.streamingMessage && (
-              <div className="py-2 text-[13px] text-text-muted">
-                <span className="animate-[pulse_1.5s_infinite]">{phaseLabel(agentPhase, t)}</span>
+              <div className="flex items-center gap-2 py-2 text-[13px] text-text-muted">
+                <span className="size-1.5 rounded-full bg-status-running" aria-hidden="true" />
+                <span>{phaseLabel(agentPhase, t)}</span>
               </div>
             )}
 
             {bashRunning && !pendingBash && (
-              <div className="py-2 text-[13px] text-text-muted">
-                <span className="animate-[pulse_1.5s_infinite]">{t("chat_runningCommand")}...</span>
+              <div className="flex items-center gap-2 py-2 text-[13px] text-text-muted">
+                <span className="size-1.5 rounded-full bg-status-running" aria-hidden="true" />
+                <span>{t("chat_runningCommand")}...</span>
               </div>
             )}
 

@@ -195,7 +195,7 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onBranchHere, fork
 
   return (
     <div
-      style={{ marginBottom: 16, display: "flex", flexDirection: "column", alignItems: "flex-end" }}
+      style={{ marginBottom: 28, display: "flex", flexDirection: "column", alignItems: "flex-end" }}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
     >
@@ -205,9 +205,9 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onBranchHere, fork
             flex: 1,
             minWidth: 0,
             background: "var(--user-bg)",
-            border: "1px solid rgba(59,130,246,0.2)",
-            borderRadius: 12,
-            padding: "8px 12px",
+            border: "1px solid color-mix(in srgb, var(--accent) 18%, var(--border))",
+            borderRadius: "var(--radius-lg) var(--radius-lg) var(--radius-xs) var(--radius-lg)",
+            padding: "11px 14px",
             fontSize: 14,
             lineHeight: 1.6,
             color: "var(--text)",
@@ -233,7 +233,7 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onBranchHere, fork
                     key={i}
                     src={src}
                     alt=""
-                    style={{ maxWidth: 240, maxHeight: 240, borderRadius: 6, objectFit: "contain", display: "block", border: "1px solid rgba(59,130,246,0.15)" }}
+                    style={{ maxWidth: 240, maxHeight: 240, borderRadius: 6, objectFit: "contain", display: "block", border: "1px solid var(--border)" }}
                   />
                 );
               })}
@@ -460,7 +460,7 @@ function AssistantMessageView({
 
   return (
     <div
-      style={{ marginBottom: 16 }}
+      style={{ marginBottom: 30 }}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
     >
@@ -469,7 +469,7 @@ function AssistantMessageView({
         style={{
           fontSize: 11,
           color: "var(--text-dim)",
-          marginBottom: 4,
+          marginBottom: 8,
           display: "flex",
           alignItems: "center",
           gap: 6,
@@ -512,7 +512,7 @@ function AssistantMessageView({
         })()}
       </div>
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
         {blockItems.map(({ block, originalIndex }) => (
           <BlockView key={`${entryId ?? "stream"}-${originalIndex}`} block={block} toolResults={toolResults} toolExecutionMap={toolExecutionMap} isStreaming={isStreaming} streamingDuration={streamingDurations.get(originalIndex) ?? (block.type === "thinking" ? thinkingDurationFromFile : undefined)} toolCallDurations={toolCallDurations} cwd={cwd} onOpenFile={onOpenFile} sessionId={sessionId} entryId={entryId} blockIndex={originalIndex} />
         ))}
@@ -733,11 +733,12 @@ function ToolCallBlock({ block, result, snapshot, duration }: { block: ToolCallC
   return (
     <div
       style={{
-        borderRadius: 7,
+        borderRadius: "var(--radius-md)",
         overflow: "hidden",
         fontSize: 12,
-        border: `1px solid color-mix(in srgb, ${statusColor} 34%, var(--border))`,
-        background: `color-mix(in srgb, ${statusColor} 5%, var(--bg))`,
+        border: "1px solid var(--border)",
+        borderLeft: `3px solid ${statusColor}`,
+        background: "var(--tool-bg)",
       }}
     >
       {/* ── Tool call header ── */}
@@ -759,11 +760,11 @@ function ToolCallBlock({ block, result, snapshot, duration }: { block: ToolCallC
           minWidth: 0,
         }}
       >
-        {/* 工具图标 + 状态点（进行中脉冲 / 成功绿 / 错误红） */}
+        {/* 工具图标 + 静态状态点：运行反馈由状态文字和右侧耗时共同表达。 */}
         <span style={{ display: "flex", alignItems: "center", gap: 5, flexShrink: 0 }}>
           {getToolIcon(block.toolName, statusColor)}
           {isRunning && (
-            <span style={{ width: 7, height: 7, borderRadius: "50%", background: statusColor, boxShadow: `0 0 0 3px color-mix(in srgb, ${statusColor} 16%, transparent)`, animation: "pulse 1.2s ease-in-out infinite" }} aria-hidden="true" />
+            <span style={{ width: 6, height: 6, borderRadius: "50%", background: statusColor }} aria-hidden="true" />
           )}
         </span>
         <span style={{ color: statusColor, fontFamily: "var(--font-mono)", fontWeight: 600, fontSize: 11, flexShrink: 0 }}>
@@ -901,8 +902,9 @@ const TOOL_STATUS_KEYS = {
 } as const;
 
 function getToolStatusColor(status: ToolExecutionStatus | undefined, resultIsError: boolean): string {
-  if (status === "running") return "var(--accent)";
-  if (status === "error" || resultIsError) return "var(--warning)";
+  if (status === "running") return "var(--status-running)";
+  if (status === "success") return "var(--status-success)";
+  if (status === "error" || resultIsError) return "var(--status-danger)";
   if (status === "cancelled") return "var(--text-dim)";
   return "var(--text-muted)";
 }

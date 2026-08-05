@@ -132,6 +132,7 @@ export const en = {
   sidebar_exportSessionHtml: 'Export HTML',
   sidebar_exportSessionJsonl: 'Export complete JSONL',
   sidebar_subagentReadOnly: 'Subagent session is read-only',
+  sidebar_subagentBadge: 'Subagent',
   sidebar_messagesCount: '{count} msgs',
   sidebar_runCount: 'run {count}',
   sidebar_readOnly: 'Read-only',

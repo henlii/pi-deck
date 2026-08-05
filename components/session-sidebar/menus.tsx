@@ -101,10 +101,10 @@ export function ProjectRowMenu({ open, onOpenChange, projectName, onEdit, onClos
           top: "calc(100% + 4px)",
           right: 0,
           zIndex: 100,
-          background: "var(--bg)",
+          background: "var(--bg-elevated)",
           border: "1px solid var(--border)",
-          borderRadius: 8,
-          boxShadow: "0 6px 20px rgba(0,0,0,0.10)",
+          borderRadius: "var(--radius-md)",
+          boxShadow: "var(--shadow-float)",
           overflow: "hidden",
           minWidth: 148,
         }}
@@ -162,21 +162,21 @@ export function SessionRowMenu({ session, title, canRename, canDelete, onRename,
     }
     setOpen(true);
   };
-  const itemStyle: CSSProperties = { display: "flex", alignItems: "center", gap: 8, width: "100%", minHeight: 32, padding: "6px 11px", boxSizing: "border-box", background: "var(--bg)", border: "none", color: "var(--text-muted)", cursor: "pointer", textAlign: "left", textDecoration: "none", fontSize: 12, whiteSpace: "nowrap" };
+  const itemStyle: CSSProperties = { display: "flex", alignItems: "center", gap: 8, width: "100%", minHeight: 32, padding: "6px 11px", boxSizing: "border-box", background: "var(--bg-elevated)", border: "none", color: "var(--text-muted)", cursor: "pointer", textAlign: "left", textDecoration: "none", fontSize: 12, whiteSpace: "nowrap" };
   const hover = {
     onMouseEnter: (event: React.MouseEvent<HTMLElement>) => { event.currentTarget.style.background = "var(--bg-hover)"; event.currentTarget.style.color = "var(--text)"; },
-    onMouseLeave: (event: React.MouseEvent<HTMLElement>) => { event.currentTarget.style.background = "var(--bg)"; event.currentTarget.style.color = "var(--text-muted)"; },
+    onMouseLeave: (event: React.MouseEvent<HTMLElement>) => { event.currentTarget.style.background = "var(--bg-elevated)"; event.currentTarget.style.color = "var(--text-muted)"; },
   };
   const menuIcon = (child: ReactNode) => <span aria-hidden="true" style={{ display: "flex", color: "var(--text-dim)" }}>{child}</span>;
 
   return <div style={{ display: "flex", flexShrink: 0 }} onClick={(event) => event.stopPropagation()} onKeyDown={(event) => { if (event.key === "Escape" && open) { event.preventDefault(); close(true); } }}>
     <SidebarIconButton label={label} active={open} expanded={open} haspopup="menu" hoverReveal buttonRef={triggerRef} onClick={(event) => { event.stopPropagation(); openMenu(); }}><MoreVerticalIcon size={14}/></SidebarIconButton>
-    {open && position && <div ref={menuRef} role="menu" aria-label={label} style={{ position: "fixed", top: position.top, right: position.right, zIndex: 600, minWidth: 190, padding: 4, background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 8, boxShadow: "0 10px 28px rgba(0,0,0,0.18)" }}>
+    {open && position && <div ref={menuRef} role="menu" aria-label={label} style={{ position: "fixed", top: position.top, right: position.right, zIndex: 600, minWidth: 190, padding: 4, background: "var(--bg-elevated)", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", boxShadow: "var(--shadow-float)" }}>
       {canRename && <button type="button" role="menuitem" style={itemStyle} {...hover} onClick={() => { close(); onRename(); }}>{menuIcon(<PencilIcon size={13}/>)}{t("sidebar_renameSession")}</button>}
       <button type="button" role="menuitem" style={itemStyle} {...hover} onClick={() => { close(); void copyText(session.id); }}>{menuIcon(<svg {...iconProps(13)}><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>)}{t("sidebar_copySessionId")}</button>
       {canExportSession(session) && <><a role="menuitem" href={buildSessionExportHtmlHref(session.id)} download style={itemStyle} {...hover} onClick={() => close()}>{menuIcon(<svg {...iconProps(13)}><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>)}{t("sidebar_exportSessionHtml")}</a>
       <a role="menuitem" href={buildSessionExportJsonlHref(session.id, null)} download style={itemStyle} {...hover} onClick={() => close()}>{menuIcon(<svg {...iconProps(13)}><path d="M8 3H7a2 2 0 0 0-2 2v4a2 2 0 0 1-2 2 2 2 0 0 1 2 2v4a2 2 0 0 0 2 2h1"/><path d="M16 21h1a2 2 0 0 0 2-2v-4a2 2 0 0 1 2-2 2 2 0 0 1-2-2V5a2 2 0 0 0-2-2h-1"/></svg>)}{t("sidebar_exportSessionJsonl")}</a></>}
-      {canDelete && <><div style={{ height: 1, margin: "4px 6px", background: "var(--border)" }}/><button type="button" role="menuitem" style={{ ...itemStyle, color: "#ef4444" }} onClick={() => { close(); onDelete(); }}>{menuIcon(<TrashIcon size={13}/>)}{t("sidebar_deleteSession")}</button></>}
+      {canDelete && <><div style={{ height: 1, margin: "4px 6px", background: "var(--border)" }}/><button type="button" role="menuitem" style={{ ...itemStyle, color: "var(--status-danger)" }} onClick={() => { close(); onDelete(); }}>{menuIcon(<TrashIcon size={13}/>)}{t("sidebar_deleteSession")}</button></>}
     </div>}
   </div>;
 }
