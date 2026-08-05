@@ -27,6 +27,7 @@ import {
 } from "@/lib/extension-ui-bridge";
 import type { ExtensionUiInlineRequest, ExtensionUiBlockingRequest } from "@/lib/extension-ui-bridge";
 import { useExtensionUiState, type ExtensionUiDialogRequest, type ExtensionUiCustomRequest } from "@/hooks/useExtensionUiState";
+import { useNoticeState } from "@/hooks/useNoticeState";
 import { parseTodos } from "@/lib/todo-parser";
 import { getSessionCapabilities } from "@/components/session-capabilities";
 import { useSessionCommands } from "@/hooks/useSessionCommands";
@@ -59,7 +60,6 @@ import {
   type ToolExecutionUpdateInput,
   type ToolExecutionEndInput,
 } from "@/lib/tool-execution-buffer";
-import { MAX_NOTICES, noticeReducer, type NoticeAction, type NoticeItem, type NoticeState, type NoticeType } from "@/lib/notice-reducer";
 
 export interface SessionData {
   sessionId: string;
@@ -151,11 +151,6 @@ function normalizeQueuedMessages(q?: { steering?: string[]; followUp?: string[] 
 // 通知状态机纯逻辑已抽至 lib/notice-reducer.ts；此处再导出保持既有消费方（如 ChatWindow）兼容。
 export type { NoticeItem, NoticeType } from "@/lib/notice-reducer";
 
-export type LiveNoticeActivity = {
-  activity: SessionActivity;
-  timestamp: number;
-};
-
 export type AgentPhase =
   | { kind: "waiting_model" }
   | { kind: "running_command" }
@@ -214,8 +209,6 @@ const PROMPT_SETTLE_MAX_MS = 20_000;
 const AGENT_STATE_RECONCILE_MS = 15_000;
 const BASH_STATE_RECONCILE_MS = 1_000;
 const EVENT_STREAM_CONNECT_TIMEOUT_MS = 5_000;
-const NOTICE_VISIBLE_MS = 5000;
-const NOTICE_EXIT_ANIMATION_MS = 180;
 // 只有明确向上的键才构成 release 意图；向下滚动的键交给 scroll 几何判定恢复跟随。
 const RELEASE_KEYS = new Set(["ArrowUp", "PageUp", "Home"]);
 
@@ -239,13 +232,6 @@ function isInsideNestedUpScrollable(target: EventTarget | null, container: HTMLE
     el = el.parentElement;
   }
   return false;
-}
-
-function createNoticeId(): string {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    return crypto.randomUUID();
-  }
-  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
 function delay(ms: number): Promise<void> {
@@ -370,10 +356,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const [toolExecutionSnapshots, setToolExecutionSnapshots] = useState<ToolExecutionSnapshot[]>([]);
   const [slashCommands, setSlashCommands] = useState<SlashCommandInfo[]>([]);
   const [slashCommandsLoading, setSlashCommandsLoading] = useState(false);
-  const [noticeState, dispatchNotice] = useReducer(noticeReducer, { visible: [], pending: [] });
-  // notify 持久活动的页内增量覆盖层：避免为了刷新一条 activity 全量 loadSession，
-  // 与运行中的 message_end / 流式 SSE 竞争并用磁盘旧快照覆盖较新消息。
-  const [liveNoticeActivities, setLiveNoticeActivities] = useState<LiveNoticeActivity[]>([]);
+  // notice/activity 展示状态所有权（#17 D5c）：reducer、addNotice、退出动画与
+  // liveNoticeActivities 写入已抽至 useNoticeState，此处仅解构消费。
+  const { notices, liveNoticeActivities, addNotice, addLiveActivity, clearLiveActivities, dismissNotice, toggleNoticePin } = useNoticeState();
   const [sessionStatsOverride, setSessionStatsOverride] = useState<SessionStatsInfo | null>(null);
   // extension UI 展示状态（#17 D5c）：5 state + ref + 3 更新回调已抽至 useExtensionUiState。
   const {
@@ -862,24 +847,6 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     }
   }, [capabilities.canSendSessionCommands, extensionUiStateRef]);
 
-  const addNotice = useCallback((notice: { id?: string; message: string; type?: NoticeType; activityRecord?: boolean }) => {
-    const message = notice.message.trim();
-    if (!message) return;
-    const type = notice.type ?? "info";
-    const important = type === "warning" || type === "error";
-    dispatchNotice({
-      type: "add",
-      notice: {
-        id: notice.id ?? createNoticeId(),
-        message,
-        type,
-        tier: important ? "important" : "transient",
-        pinned: false,
-        activityRecord: notice.activityRecord === true,
-      },
-    });
-  }, []);
-
   // ── P3a：分支 / 新会话命令迁出至 useSessionCommands（纯逻辑见该文件）─────
   // 显式注入依赖；branchBusyRef / branchBusy / setBranchBusy 仍是同一门禁，
   // state 所有权保留在本 hook（handleSend / executeBash / dispatchWorkspaceHistoryPrompt 共用）。
@@ -931,9 +898,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
             requestId: effect.id,
             metadata: { notifyType: effect.noticeType },
           };
-          setLiveNoticeActivities((current) => current.some((item) => item.activity.requestId === effect.id)
-            ? current
-            : [...current, { activity, timestamp: Date.now() }]);
+          // 写入与 requestId 去重统一收口在 useNoticeState（addLiveActivity）。
+          addLiveActivity(activity);
         }
       } else if (effect.type === "setTitle") {
         document.title = effect.title;
@@ -941,7 +907,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         opts.chatInputRef?.current?.insertText(effect.text);
       }
     }
-  }, [addNotice, commitExtensionUiState, opts.chatInputRef, extensionUiStateRef]);
+  }, [addNotice, addLiveActivity, commitExtensionUiState, opts.chatInputRef, extensionUiStateRef]);
 
   /**
    * 将 /api/agent 状态快照的附属字段应用到本地 state（散落重复点的统一收口）。
@@ -1756,8 +1722,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       ...clearAllExtensionUiBlocking(current),
       customUi: null,
     });
-    setLiveNoticeActivities([]);
-  }, [session?.id, newSessionCwd, commitExtensionUiState, extensionUiStateRef]);
+    clearLiveActivities();
+  }, [session?.id, newSessionCwd, commitExtensionUiState, extensionUiStateRef, clearLiveActivities]);
 
   useEffect(() => {
     if (session) {
@@ -2015,23 +1981,6 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   }, [compactResult]);
 
   useEffect(() => {
-    if (noticeState.visible.length === 0) return;
-    const exiting = noticeState.visible.find((notice) => notice.exiting);
-    if (exiting) {
-      const t = setTimeout(() => {
-        dispatchNotice({ type: "remove", id: exiting.id });
-      }, NOTICE_EXIT_ANIMATION_MS);
-      return () => clearTimeout(t);
-    }
-    const oldest = noticeState.visible.find((notice) => notice.tier === "transient" && !notice.exiting);
-    if (!oldest) return;
-    const t = setTimeout(() => {
-      dispatchNotice({ type: "mark_oldest_transient_exiting" });
-    }, NOTICE_VISIBLE_MS);
-    return () => clearTimeout(t);
-  }, [noticeState.visible]);
-
-  useEffect(() => {
     setSessionStatsOverride(null);
   }, [messages.length, contextUsage?.tokens, contextUsage?.percent, contextUsage?.contextWindow]);
 
@@ -2042,10 +1991,10 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     retryInfo, contextUsage, systemPrompt, forkingEntryId,
     isCompacting, compactError, compactResult, currentModel, displayModel, sessionStats,
     slashCommands, slashCommandsLoading, queuedMessages,
-    notices: noticeState.visible,
+    notices,
     liveNoticeActivities,
-    dismissNotice: (id: string) => dispatchNotice({ type: "dismiss", id }),
-    toggleNoticePin: (id: string) => dispatchNotice({ type: "toggle_pin", id }),
+    dismissNotice,
+    toggleNoticePin,
     extensionDialog, extensionInlineRequest, extensionCustomUi, extensionStatuses, extensionWidgets, respondToExtensionUi, dismissExtensionUiRequest, sendExtensionCustomInput,
     todos,
     isAutoModelSelection: isNew && newSessionModel === null,
