@@ -1123,6 +1123,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 <button
                   onClick={onRecallQueue}
                   title={t("input_recall")}
+                  data-tooltip={t("input_recall")}
+                  className="instant-tooltip tooltip-up"
                   style={{
                     display: "flex",
                     alignItems: "center",
@@ -1531,6 +1533,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   onClick={() => sendQueued("steer")}
                   disabled={!canQueueStreamingMessage}
                   title={attachedImages.length ? t("input_imageQueueDisabled") : t("input_steerTooltip")}
+                  data-tooltip={attachedImages.length ? t("input_imageQueueDisabled") : t("input_steerTooltip")}
+                  className="instant-tooltip tooltip-up"
                   style={{
                     display: "flex", alignItems: "center", gap: 5,
                     padding: "7px 12px",
@@ -1554,6 +1558,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   onClick={() => sendQueued("followup")}
                   disabled={!canQueueStreamingMessage}
                   title={attachedImages.length ? t("input_imageQueueDisabled") : t("input_followUpTooltip")}
+                  data-tooltip={attachedImages.length ? t("input_imageQueueDisabled") : t("input_followUpTooltip")}
+                  className="instant-tooltip tooltip-up"
                   style={{
                     display: "flex", alignItems: "center", gap: 5,
                     padding: "7px 12px",
@@ -1627,6 +1633,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
               onClick={() => fileInputRef.current?.click()}
               disabled={isStreaming}
               title={t("input_attachImage")}
+              data-tooltip={t("input_attachImage")}
+              className="instant-tooltip tooltip-up"
               style={{
                 flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center",
                 width: 32, height: 32, padding: 0,
@@ -1802,6 +1810,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 ref={moreButtonRef}
                 type="button"
                 title={controlsMenuOpen ? undefined : t("input_controlsTitle")}
+                data-tooltip={controlsMenuOpen ? undefined : t("input_controlsTitle")}
+                className="instant-tooltip tooltip-up"
                 aria-label={t("input_controlsTitle")}
                 aria-expanded={controlsMenuOpen}
                 aria-controls={controlsBarId}
@@ -1881,6 +1891,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   }}
                   disabled={isStreaming}
                   title={thinkingDisplayLabel}
+                  data-tooltip={thinkingDisplayLabel}
+                  className="instant-tooltip tooltip-up"
                   aria-label={t("input_thinkingTitle")}
                   aria-haspopup="menu"
                   aria-expanded={thinkingDropdownOpen}
@@ -2023,6 +2035,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                     e.currentTarget.style.color = isCompacting ? "#ef4444" : "var(--text-muted)";
                   }}
                   title={isCompacting ? t("input_stopCompaction") : t("input_compactContext")}
+                  data-tooltip={isCompacting ? t("input_stopCompaction") : t("input_compactContext")}
+                  className="instant-tooltip tooltip-up"
                   aria-label={isCompacting ? t("input_stopCompaction") : t("input_compactContext")}
                 >
                   {isCompacting ? (
@@ -2041,6 +2055,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
               <button
                 onClick={onAbort}
                 title={t("chat_cancel")}
+                data-tooltip={t("chat_cancel")}
+                className="instant-tooltip tooltip-up"
                 style={{
                   display: "flex", alignItems: "center", gap: 6,
                   padding: "8px 14px",
@@ -2068,6 +2084,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
               <button
                 onClick={onSoundToggle}
                 title={soundEnabled ? t("input_soundDisable") : t("input_soundEnable")}
+                data-tooltip={soundEnabled ? t("input_soundDisable") : t("input_soundEnable")}
+                className="instant-tooltip tooltip-up"
                 aria-label={soundEnabled ? t("input_soundDisable") : t("input_soundEnable")}
                 style={{
                   display: "flex", alignItems: "center", justifyContent: "center", gap: 5,
@@ -2112,6 +2130,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
               <button
                 type="button"
                 title={t("input_fold")}
+                data-tooltip={t("input_fold")}
+                className="instant-tooltip tooltip-up"
                 aria-label={t("input_fold")}
                 aria-expanded={true}
                 onClick={() => closeControlsMenu(true)}

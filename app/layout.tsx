@@ -30,7 +30,7 @@ export default function RootLayout({
         <meta name="google" content="notranslate" />
         <script
           dangerouslySetInnerHTML={{
-            __html: `(function(){try{var t=localStorage.getItem("pi-theme");if(t==="dark")document.documentElement.classList.add("dark")}catch(e){}})();`,
+            __html: `(function(){try{var r=document.documentElement,m=localStorage.getItem("pi-theme"),s=localStorage.getItem("pi-theme-style");if(m!=="light"&&m!=="dark"&&m!=="system")m="light";if(s!=="fusion"&&s!=="chamber")s="chamber";var d=m==="dark"||(m==="system"&&matchMedia("(prefers-color-scheme: dark)").matches);r.classList.toggle("dark",d);r.dataset.themeMode=m;r.dataset.themeStyle=s}catch(e){}})();`,
           }}
         />
       </head>

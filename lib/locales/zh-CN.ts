@@ -2,11 +2,11 @@ import type { TranslationKey } from "./en";
 
 export const zhCN: Record<TranslationKey, string> = {
   localeName: "简体中文",
-   skills_updateSingle: "个更新", skills_updatePlural: "个更新", models_delete: "删除", models_addModel: "向 {provider} 添加模型", models_apiLabel: "API", models_nameLabel: "名称", models_costLabel: "费用（每百万 tokens）", models_subscriptionStatus: "已连接", models_subscriptionNotConnected: "未连接", models_openLoginPage: "点击此处打开登录页面", models_submit: "提交", models_cancel: "取消", models_verifyPage: "打开验证页面并输入此代码：", models_expiresIn: "将在 {minutes} 分钟后过期。", models_configured: "已配置", models_notConfigured: "未配置", models_keyStored: "API 密钥已保存。请在下方输入新密钥以替换，或断开连接以移除。", models_enableModels: "输入你的 {provider} API 密钥以启用 {count} 个模型。", models_selectDetail: "选择提供商或模型", models_modelsTitle: "模型", models_newModel: "新模型",
+   skills_updateSingle: "个更新", skills_updatePlural: "个更新", models_delete: "删除", models_addModel: "向 {provider} 添加模型", models_apiLabel: "API", models_nameLabel: "名称", models_costLabel: "费用（每百万 tokens）", models_subscriptionStatus: "已连接", models_subscriptionNotConnected: "未连接", models_openLoginPage: "点击此处打开登录页面", models_submit: "提交", models_cancel: "取消", models_verifyPage: "打开验证页面并输入此代码：", models_expiresIn: "将在 {minutes} 分钟后过期。", models_configured: "已配置", models_notConfigured: "未配置", models_keyStored: "API 密钥已保存。请在下方输入新密钥以替换，或断开连接以移除。", models_enableModels: "输入你的 {provider} API 密钥以启用 {count} 个模型。", models_selectDetail: "选择提供商或模型", models_modelsTitle: "供应商", models_newModel: "新模型",
   close: "关闭",
   chatInputPlaceholder: "给 Pi 发消息...",
-  common_settings: "设置", common_appearance: "外观", common_models: "模型", common_defaults: "默认值", common_skills: "技能", common_plugins: "插件", common_back: "返回", common_save: "保存", common_saved: "已保存", common_saving: "保存中…", common_loading: "加载中…", common_search: "搜索", common_install: "安装", common_update: "更新", common_remove: "移除", common_delete: "删除", common_cancel: "取消", common_unknown: "未知", common_name: "名称", common_description: "描述", common_source: "来源", common_version: "版本", common_status: "状态", common_resources: "资源", common_project: "项目", common_global: "全局", common_needsProject: "需要项目", common_selectProject: "请先选择项目", common_selectProjectHint: "请在侧边栏选择项目目录，然后重新打开此页面。",
-  appearance_theme: "主题", appearance_light: "浅色", appearance_dark: "深色", appearance_language: "语言", appearance_coverage: "主题与语言切换会立即在应用中生效。",
+  common_settings: "设置", common_appearance: "外观", common_models: "供应商", common_defaults: "会话", common_skills: "技能", common_plugins: "插件", common_back: "返回", common_save: "保存", common_saved: "已保存", common_saving: "保存中…", common_loading: "加载中…", common_search: "搜索", common_install: "安装", common_update: "更新", common_remove: "移除", common_delete: "删除", common_cancel: "取消", common_unknown: "未知", common_name: "名称", common_description: "描述", common_source: "来源", common_version: "版本", common_status: "状态", common_resources: "资源", common_project: "项目", common_global: "全局", common_needsProject: "需要项目", common_selectProject: "请先选择项目", common_selectProjectHint: "请在侧边栏选择项目目录，然后重新打开此页面。",
+  appearance_theme: "主题", appearance_colorMode: "颜色模式", appearance_light: "浅色", appearance_dark: "深色", appearance_system: "跟随系统", appearance_themeStyle: "主题样式", appearance_chamber: "Chamber 暖墨", appearance_fusion: "Pidance 融合", appearance_language: "语言", appearance_coverage: "主题与语言切换会立即在应用中生效。",
   models_provider: "提供商", models_providerName: "提供商名称", models_baseUrl: "Base URL", models_apiKey: "API Key", models_api: "API", models_rename: "重命名", models_default: "默认", models_disabled: "已禁用", models_testing: "正在测试模型连接…", models_connected: "已连接", models_failed: "失败", models_test: "测试模型连接", models_testAgain: "模型连接正常 — 再试一次", models_testFailedAgain: "模型连接失败 — 再试一次", models_model: "模型", models_id: "ID *", models_displayName: "显示名称", models_apiOverride: "API 覆盖", models_reasoning: "推理 / 思考", models_imageInput: "图像输入", models_thinkingCompat: "DeepSeek 思考兼容", models_thinkingMap: "思考级别映射", models_clearThinkingMap: "清除思考级别映射", models_contextWindow: "上下文窗口（tokens）", models_maxOutput: "最大输出 tokens", models_cost: "费用（每百万 tokens）", models_subscription: "订阅", models_login: "登录", models_relogin: "重新登录", models_disconnect: "断开连接", models_connectAccount: "连接你的 {provider} 账户。", models_alreadyConnected: "已连接。你可以重新登录或断开连接。", models_openingBrowser: "正在打开浏览器…", models_redirectInstructions: "请在浏览器中完成登录，然后复制地址栏中的重定向 URL 并粘贴到下方。", models_enterValue: "输入值…", models_connectedSuccessfully: "连接成功。", models_enterNewKey: "输入新密钥以替换…", models_saved: "已保存", models_saving: "保存中…", models_removing: "移除中…", models_searchProviders: "搜索提供商…", models_noProviders: "没有匹配的提供商", models_custom: "自定义", models_compatible: "兼容 OpenAI / Anthropic", models_customEndpoint: "自定义端点格式", models_subscriptions: "订阅", models_addProvider: "添加提供商", models_hideApiKey: "隐藏 API Key", models_showApiKey: "显示 API Key", models_apiKeyPlaceholder: "环境变量名、!shell 命令或直接填写密钥", models_apiKeyHint: "使用 ! 前缀运行 shell 命令，也可以填写环境变量名", models_modelCount: "{count} 个模型",
   oauth_verifying: "验证中…", oauth_continuing: "继续中…", oauth_connectionLost: "连接已断开", oauth_networkError: "网络错误", apikey: "API Key",
   skills_loading: "加载中…", skills_visible: "显示在模型提示词中 — 点击禁用", skills_hidden: "已从模型提示词中隐藏 — 点击启用", skills_checking: "正在检查更新…", skills_check: "检查更新", skills_checkingShort: "检查中…", skills_upToDate: "已是最新", skills_unavailable: "无法自动检查", skills_checkFailed: "检查失败", skills_updating: "更新中…", skills_noResults: "未找到技能", skills_searching: "搜索中…", skills_installing: "安装中…", skills_installed: "已安装", skills_updateAvailable: "有可用更新", skills_checkAll: "检查所有技能更新", skills_checkingAll: "正在检查所有技能更新…", skills_path: "路径", skills_unknownVersion: "未知", skills_add: "添加技能", skills_discoverPrefix: "搜索", skills_discoverSuffix: "以发现并安装适合代理的技能。", skills_select: "选择技能", skills_updateCount: "{count} 个更新",
@@ -391,7 +391,7 @@ export const zhCN: Record<TranslationKey, string> = {
   palette_placeholder: '搜索会话、文件、操作…',
   palette_newSession: '新建会话（当前项目）',
   palette_toggleTheme: '切换主题',
-  palette_settingsModels: '设置 → 模型',
+  palette_settingsModels: '设置 → 供应商',
   palette_settingsSkills: '设置 → 技能',
   palette_settingsPlugins: '设置 → 插件',
   palette_searching: '搜索中…',
@@ -526,7 +526,7 @@ export const zhCN: Record<TranslationKey, string> = {
   plugins_diagnostics_one: "{count} 条诊断",
   plugins_diagnostics_other: "{count} 条诊断",
   // agent defaults (settings.json whitelist)
-  defaults_hint: "来自 settings.json 的 Web 安全 Agent 默认值。仅 SettingsManager 公开 setter 覆盖的键可编辑；compaction/retry 数值字段只读。",
+  defaults_hint: "来自 settings.json 的会话行为设置。仅 SettingsManager 公开 setter 覆盖的键可编辑；compaction/retry 数值字段只读。",
   defaults_modelSection: "默认模型",
   defaults_provider: "默认 Provider",
   defaults_model: "默认 Model ID",
@@ -541,8 +541,8 @@ export const zhCN: Record<TranslationKey, string> = {
   defaults_retrySection: "重试",
   defaults_retryEnabled: "启用自动重试",
   defaults_retryReadonly: "maxRetries={max} · baseDelayMs={base}（只读；改数值请编辑 settings.json）",
-  defaults_loadFailed: "默认值加载失败",
-  defaults_saveFailed: "默认值保存失败",
+  defaults_loadFailed: "会话设置加载失败",
+  defaults_saveFailed: "会话设置保存失败",
   defaults_retry: "重试",
   defaults_refresh: "刷新",
   // project trust

@@ -822,8 +822,9 @@ function AppShellInner() {
           type="button"
           onClick={() => setSettingsOpen(true)}
           title={t("app_settings")}
+          data-tooltip={t("app_settings")}
           aria-label={t("app_settings")}
-          className="sidebar-icon-btn"
+          className="sidebar-icon-btn tooltip-up"
         >
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
             <circle cx="12" cy="12" r="3" />
@@ -834,8 +835,9 @@ function AppShellInner() {
           type="button"
           onClick={() => setAboutOpen(true)}
           title={t("app_about")}
+          data-tooltip={t("app_about")}
           aria-label={t("app_about")}
-          className={`sidebar-icon-btn${aboutOpen ? " sidebar-icon-btn--active" : ""}`}
+          className={`sidebar-icon-btn tooltip-up${aboutOpen ? " sidebar-icon-btn--active" : ""}`}
         >
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
             <circle cx="12" cy="12" r="10" />
@@ -930,6 +932,8 @@ function AppShellInner() {
           <button
             onClick={handleSidebarToggle}
             title={sidebarOpen ? t("app_hideSidebar") : t("app_showSidebar")}
+            data-tooltip={sidebarOpen ? t("app_hideSidebar") : t("app_showSidebar")}
+            className="instant-tooltip"
             aria-label={sidebarOpen ? t("app_hideSidebar") : t("app_showSidebar")}
             style={{
               display: "flex", alignItems: "center", justifyContent: "center",
@@ -956,6 +960,8 @@ function AppShellInner() {
               toggleTheme({ x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 });
             }}
             title={isDark ? t("app_lightMode") : t("app_darkMode")}
+            data-tooltip={isDark ? t("app_lightMode") : t("app_darkMode")}
+            className="instant-tooltip"
             aria-label={isDark ? t("app_lightMode") : t("app_darkMode")}
             aria-pressed={isDark}
             style={{
@@ -1017,6 +1023,8 @@ function AppShellInner() {
                 type="button"
                 onClick={openSessionInfoTab}
                 title={tooltip || t("app_sessionInfo")}
+                data-tooltip={tooltip || t("app_sessionInfo")}
+                className="instant-tooltip"
                 aria-label={t("app_sessionInfo")}
                 aria-pressed={infoTabActive}
                 style={{
@@ -1086,6 +1094,8 @@ function AppShellInner() {
             type="button"
             onClick={handleRightPanelToggle}
             title={rightPanelOpen ? t("app_hidePanel") : t("app_showPanel")}
+            data-tooltip={rightPanelOpen ? t("app_hidePanel") : t("app_showPanel")}
+            className="instant-tooltip"
             aria-label={rightPanelOpen ? t("app_hidePanel") : t("app_showPanel")}
             aria-pressed={rightPanelOpen}
             style={{

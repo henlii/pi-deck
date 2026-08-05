@@ -228,6 +228,7 @@ export function SidebarIconButton({
       onClick={onClick}
       disabled={disabled}
       title={label}
+      data-tooltip={label}
       aria-label={label}
       aria-expanded={expanded}
       aria-pressed={pressed}
@@ -264,6 +265,14 @@ export const FolderPlusIcon = ({ size = 18 }: { size?: number }) => (
 export const FolderIcon = ({ size = 14 }: { size?: number }) => (
   <svg {...iconProps(size)}>
     <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
+  </svg>
+);
+
+export const HistoryIcon = ({ size = 14 }: { size?: number }) => (
+  <svg {...iconProps(size)}>
+    <path d="M3 12a9 9 0 1 0 3-6.7" />
+    <path d="M3 4v5h5" />
+    <path d="M12 7v5l3 2" />
   </svg>
 );
 
@@ -386,7 +395,9 @@ export function ChevronButton({ collapsed, label, onClick }: {
       type="button"
       onClick={onClick}
       title={label}
+      data-tooltip={label}
       aria-label={label}
+      className="sidebar-indent-indicator"
       style={{
         display: "flex", alignItems: "center", justifyContent: "center",
         width: 20, height: 20, padding: 0, flexShrink: 0,

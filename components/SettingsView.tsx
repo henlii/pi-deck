@@ -153,18 +153,28 @@ function SegmentedChoice<T extends string>({
 }
 
 function AppearancePage() {
-  const { theme, setTheme } = useTheme();
+  const { mode, themeStyle, setTheme, setThemeStyle } = useTheme();
   const { locale, setLocale, t } = useI18n();
   return (
     <div style={{ padding: "18px 20px" }}>
       <SegmentedChoice
-        label={t("appearance_theme")}
+        label={t("appearance_colorMode")}
         options={[
           { value: "light", label: t("appearance_light") },
           { value: "dark", label: t("appearance_dark") },
+          { value: "system", label: t("appearance_system") },
         ]}
-        value={theme}
+        value={mode}
         onChange={(next) => setTheme(next)}
+      />
+      <SegmentedChoice
+        label={t("appearance_themeStyle")}
+        options={[
+          { value: "chamber", label: t("appearance_chamber") },
+          { value: "fusion", label: t("appearance_fusion") },
+        ]}
+        value={themeStyle}
+        onChange={(next) => setThemeStyle(next)}
       />
       <SegmentedChoice<Locale>
         label={t("appearance_language")}

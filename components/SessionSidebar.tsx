@@ -55,6 +55,7 @@ import {
   DialogButton,
   DisplayMenuItem,
   FolderIcon,
+  HistoryIcon,
   FolderPlusIcon,
   formatRelativeTime,
   GroupPagination,
@@ -1404,27 +1405,31 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
         {!searchActive && recentSessions.length > 0 && (
           <div style={{ paddingBottom: 5, borderBottom: "1px solid var(--border)", marginBottom: 5 }}>
             <div style={{
-              display: "flex", alignItems: "center", gap: 5, height: 26,
-              paddingLeft: 14, paddingRight: 8,
+              display: "flex", alignItems: "center", gap: 6, height: 32,
+              margin: "1px 6px", paddingLeft: 2, paddingRight: 8,
               color: "var(--text-dim)", fontSize: 10.5, fontWeight: 600,
               letterSpacing: "0.04em", textTransform: "uppercase",
             }}>
+              <span aria-hidden="true" style={{ width: 20, flexShrink: 0 }} />
+              <span aria-hidden="true" style={{ display: "flex", flexShrink: 0 }}><HistoryIcon size={13} /></span>
               {t("sidebar_recentSessions")}
             </div>
-            {recentSessions.map((s) => (
-              <SessionItem
-                key={s.id}
-                session={s}
-                isSelected={s.id === selectedSessionId}
-                isRunning={runningSessionIds.has(s.id) || subagentRunningIds.has(s.id)}
-                isUnread={unreadSessionIds.has(s.id)}
-                onClick={() => handleSelectSessionFromList(s)}
-                onRenamed={loadSessions}
-                onDeleted={handleSessionDeletedLocal}
-                depth={0}
-                displayMode={displayMode}
-              />
-            ))}
+            <div style={{ paddingLeft: 24 }}>
+              {recentSessions.map((s) => (
+                <SessionItem
+                  key={s.id}
+                  session={s}
+                  isSelected={s.id === selectedSessionId}
+                  isRunning={runningSessionIds.has(s.id) || subagentRunningIds.has(s.id)}
+                  isUnread={unreadSessionIds.has(s.id)}
+                  onClick={() => handleSelectSessionFromList(s)}
+                  onRenamed={loadSessions}
+                  onDeleted={handleSessionDeletedLocal}
+                  depth={0}
+                  displayMode={displayMode}
+                />
+              ))}
+            </div>
           </div>
         )}
         {visibleTree.map((project) => (
@@ -1995,7 +2000,7 @@ function ProjectSection({
       {!collapsed && (
         <div>
           {/* 主仓会话：主 worktree 隐式，直接列在项目下 */}
-          <div style={{ paddingLeft: 8 }}>
+          <div style={{ paddingLeft: 24 }}>
             {getVisibleTopLevelNodes(
               project.mainTree,
               getGroupVisibleCount(groupVisibleCounts, `main:${project.root}`),
@@ -2299,7 +2304,7 @@ function WorktreeGroupSection({
       )}
 
       {!collapsed && (
-        <div style={{ paddingLeft: 18 }}>
+        <div style={{ paddingLeft: 34 }}>
           {getVisibleTopLevelNodes(group.tree, visibleCount, searchActive).map((node) => (
             <SessionTreeItem
               key={node.session.id}
@@ -2542,7 +2547,7 @@ function SessionItem({
         alignItems: "center",
         width: "calc(100% - 12px)",
         margin: "1px 6px",
-        paddingLeft: depth > 0 ? depth * 14 + 10 : 10,
+        paddingLeft: depth > 0 ? depth * 16 + 10 : 10,
         paddingRight: 8,
         borderRadius: 6,
         cursor: confirmDelete || renaming ? "default" : "pointer",
@@ -2630,9 +2635,10 @@ function SessionItem({
             {hasChildren && (
               <button
                 type="button"
-                className="sidebar-chevron-btn"
+                className="sidebar-chevron-btn sidebar-indent-indicator"
                 onClick={(e) => { e.stopPropagation(); onToggleCollapse?.(); }}
                 title={collapsed ? t("sidebar_expandChild") : t("sidebar_collapseChild")}
+                data-tooltip={collapsed ? t("sidebar_expandChild") : t("sidebar_collapseChild")}
                 aria-label={collapsed ? t("sidebar_expandChild") : t("sidebar_collapseChild")}
                 style={{
                   display: "flex", alignItems: "center", justifyContent: "center",
