@@ -1,11 +1,11 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { guardRequest, type RequestGuardHeaders } from "@/lib/request-guard";
 
-// 请求安全中间件（对齐上游 pi-web 0.8.6）：
+// 请求安全中间件（对齐上游 pi-web 0.8.6 + P0 fail-closed）：
 // 1. Host 白名单（localhost/IP/PI_WEB_HOSTNAME/PI_WEB_ALLOWED_HOSTS）——防 DNS rebinding
 // 2. API 请求 CSRF 防护（origin/sec-fetch-site 校验；会话导出 navigate 豁免）
-// 3. 可选 Basic Auth：设置 PI_WEB_PASSWORD 环境变量即启用（用户名固定 "pi"）
-// 未设置 PI_WEB_PASSWORD 时行为与历史完全一致（仅 Host/CSRF 校验）。
+// 3. Basic Auth：设置 PIDANCE_PASSWORD（优先）或兼容旧变量 PI_WEB_PASSWORD 即启用（用户名固定 "pi"）
+// 4. 兜底认证：未设置密码时仅放行回环请求；非回环请求一律 401（防误绑 0.0.0.0 匿名调用）
 export const runtime = "nodejs";
 
 function toHeaders(req: NextRequest): RequestGuardHeaders {

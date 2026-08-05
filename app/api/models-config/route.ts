@@ -1,8 +1,13 @@
 import { NextResponse } from "next/server";
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
-import { join, dirname } from "path";
+import { join } from "path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { invalidateModelsCache } from "@/lib/models-cache";
+import {
+  getSanitizedModelsConfig,
+  ModelsConfigError,
+  saveModelsConfig,
+  type Baseline,
+} from "@/lib/models-config-service";
 
 export const dynamic = "force-dynamic";
 
@@ -10,34 +15,40 @@ function getModelsPath(): string {
   return join(getAgentDir(), "models.json");
 }
 
-function readModelsJson(): Record<string, unknown> {
-  const path = getModelsPath();
-  if (!existsSync(path)) return { providers: {} };
-  try {
-    return JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
-  } catch {
-    return { providers: {} };
+function parseBaseline(value: unknown): Baseline | null {
+  if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+    const record = value as Record<string, unknown>;
+    if (typeof record.mtimeMs === "number" && typeof record.size === "number") {
+      return { mtimeMs: record.mtimeMs, size: record.size };
+    }
   }
-}
-
-function writeModelsJson(data: Record<string, unknown>): void {
-  const path = getModelsPath();
-  const dir = dirname(path);
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-  writeFileSync(path, JSON.stringify(data, null, 2), "utf8");
+  return null;
 }
 
 export async function GET() {
-  return NextResponse.json(readModelsJson());
+  return NextResponse.json(getSanitizedModelsConfig(getModelsPath()));
 }
 
 export async function PUT(req: Request) {
   try {
-    const body = await req.json() as Record<string, unknown>;
-    writeModelsJson(body);
+    const body = (await req.json()) as unknown;
+    if (typeof body !== "object" || body === null || Array.isArray(body)) {
+      return NextResponse.json({ error: "请求体必须是 JSON 对象" }, { status: 400 });
+    }
+    const record = body as Record<string, unknown>;
+    const baseline = parseBaseline(record.baseline);
+    const data: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(record)) {
+      if (key !== "baseline") data[key] = value;
+    }
+    const result = saveModelsConfig(getModelsPath(), data, baseline);
     invalidateModelsCache();
-    return NextResponse.json({ success: true });
+    return NextResponse.json(result);
   } catch (error) {
+    if (error instanceof ModelsConfigError) {
+      const status = error.code === "conflict" ? 409 : 400;
+      return NextResponse.json({ error: error.message }, { status });
+    }
     return NextResponse.json({ error: String(error) }, { status: 500 });
   }
 }

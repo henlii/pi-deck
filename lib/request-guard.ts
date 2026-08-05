@@ -4,7 +4,10 @@
  *   （防 DNS rebinding）
  * - CSRF：API 请求校验 origin/sec-fetch-site（cross-site 拒绝、origin 须与 Host 同源；
  *   会话导出的 navigate GET 豁免；无跨站信号的非浏览器客户端放行）
- * - 可选 Basic Auth：设置 PI_WEB_PASSWORD 即启用（用户名固定 "pi"，timingSafeEqual 比较）
+ * - 可选 Basic Auth：设置 PIDANCE_PASSWORD（优先，兼容旧变量 PI_WEB_PASSWORD）即启用
+ *   （用户名固定 "pi"，timingSafeEqual 比较）
+ * - 兜底认证：未设置密码时仅放行回环（loopback）请求；非回环请求一律 auth-required，
+ *   防止服务误绑 0.0.0.0 时局域网/公网匿名调用（P0 fail-closed，即使 CLI 门禁被绕过）
  * 纯逻辑（env 注入），供 middleware.ts 组装与 .test.mjs 测试。
  */
 import { createHash, timingSafeEqual } from "crypto";
@@ -90,9 +93,31 @@ export function checkCsrf(req: RequestGuardHeaders): boolean {
   return isSameOrigin(req);
 }
 
+/** 请求 Host 是否为回环（localhost / *.localhost / IPv4 127.x / IPv6 ::1）。 */
+export function isLoopbackHost(hostHeader: string | null): boolean {
+  const hostname = hostHeader ? hostnameFromHostHeader(hostHeader) : null;
+  if (!hostname) return false;
+  if (hostname === "localhost" || hostname.endsWith(".localhost")) return true;
+  const ip = isIP(hostname);
+  if (ip === 4) return hostname.startsWith("127.");
+  if (ip === 6) return hostname === "::1" || hostname === "0:0:0:0:0:0:0:1";
+  return false;
+}
+
+/**
+ * 解析认证密码：PIDANCE_PASSWORD 优先（产品名，空/缺失时回退），兼容旧变量 PI_WEB_PASSWORD；
+ * 最终值为空串或缺失视为未设置。
+ */
+export function resolvePassword(env: Record<string, string | undefined>): string | null {
+  const p =
+    env.PIDANCE_PASSWORD && env.PIDANCE_PASSWORD.length > 0
+      ? env.PIDANCE_PASSWORD
+      : env.PI_WEB_PASSWORD;
+  return typeof p === "string" && p.length > 0 ? p : null;
+}
+
 export function passwordEnabled(env: Record<string, string | undefined>): boolean {
-  const p = env.PI_WEB_PASSWORD;
-  return typeof p === "string" && p.length > 0;
+  return resolvePassword(env) !== null;
 }
 
 function sha256(input: string): Buffer {
@@ -105,7 +130,7 @@ function safeEqual(a: string, b: string): boolean {
 
 /** Basic Auth 校验：Authorization: Basic base64("pi:<password>")。 */
 export function checkBasicAuth(req: RequestGuardHeaders, env: Record<string, string | undefined>): boolean {
-  const password = env.PI_WEB_PASSWORD;
+  const password = resolvePassword(env);
   if (!passwordEnabled(env) || !password) return false;
   const auth = req.authorization;
   if (!auth) return false;
@@ -132,6 +157,12 @@ export function guardRequest(req: RequestGuardHeaders, env: Record<string, strin
   if (req.pathname === "/api" || req.pathname.startsWith("/api/")) {
     if (!checkCsrf(req)) return "csrf";
   }
-  if (passwordEnabled(env) && !checkBasicAuth(req, env)) return "auth-required";
+  if (passwordEnabled(env)) {
+    if (!checkBasicAuth(req, env)) return "auth-required";
+  } else if (!isLoopbackHost(req.host)) {
+    // fail-closed 兜底：未设置密码时仅放行回环请求；非回环请求一律要求认证，
+    // 即使 CLI 启动门禁被绕过（如直接 next start -H 0.0.0.0）也保护 Agent API。
+    return "auth-required";
+  }
   return "ok";
 }

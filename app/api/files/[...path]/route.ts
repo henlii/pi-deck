@@ -19,6 +19,11 @@ import {
 } from "@/lib/file-types";
 import { resolveDirentIsDirectory } from "@/lib/file-dirent";
 import { isFilePathReferencedBySession } from "@/lib/session-file-references";
+import {
+  isNoSymlinkRedirection,
+  openRegularFileReadonly,
+  resolveReadablePath,
+} from "@/lib/file-read";
 import { handleSaveRequest } from "@/lib/file-save-route";
 import {
   inspectUploadTargets,
@@ -233,8 +238,11 @@ export async function POST(
   }
 }
 
-function createFileBodyStream(filePath: string, range?: { start: number; end: number }): ReadableStream<Uint8Array> {
-  const fileStream = fs.createReadStream(filePath, range);
+function createFileBodyStream(realPath: string, range?: { start: number; end: number }): ReadableStream<Uint8Array> {
+  // O_NOFOLLOW 打开：realpath 校验与真正读取之间的最终组件 TOCTOU 防护；
+  // fd 交给 ReadStream，在流结束/销毁时 autoClose 自动关闭。
+  const fd = openRegularFileReadonly(realPath);
+  const fileStream = fs.createReadStream(realPath, { fd, autoClose: true, ...(range ?? {}) });
   let closed = false;
 
   return new ReadableStream<Uint8Array>({
@@ -287,16 +295,16 @@ function getContentDisposition(filePath: string, asDownload = false): string {
   return `${disposition}; filename="${fallback}"; filename*=UTF-8''${encodeHeaderValue(fileName)}`;
 }
 
-function streamFile(filePath: string, stat: fs.Stats, contentType: string, rangeHeader: string | null, asDownload = false): Response {
+function streamFile(realPath: string, stat: fs.Stats, contentType: string, rangeHeader: string | null, asDownload = false): Response {
   const headers = {
     "Content-Type": contentType,
     "Cache-Control": "no-cache",
     "Accept-Ranges": "bytes",
-    "Content-Disposition": getContentDisposition(filePath, asDownload),
+    "Content-Disposition": getContentDisposition(realPath, asDownload),
   };
 
   if (!rangeHeader) {
-    return new Response(createFileBodyStream(filePath), {
+    return new Response(createFileBodyStream(realPath), {
       headers: {
         ...headers,
         "Content-Length": String(stat.size),
@@ -335,7 +343,7 @@ function streamFile(filePath: string, stat: fs.Stats, contentType: string, range
 
   end = Math.min(end, stat.size - 1);
   const chunkSize = end - start + 1;
-  return new Response(createFileBodyStream(filePath, { start, end }), {
+  return new Response(createFileBodyStream(realPath, { start, end }), {
     status: 206,
     headers: {
       ...headers,
@@ -427,61 +435,82 @@ export async function GET(
       return NextResponse.json({ error: "Access denied" }, { status: 403 });
     }
 
-    let stat: fs.Stats;
-    try {
-      stat = fs.statSync(filePath);
-    } catch {
+    // 读路径统一收敛：realpath + 授权根包含校验（根内 symlink 指向根外 → 拒绝）。
+    // 解析出的 realPath 为符号链接解析后的规范路径，后续读/流/列表一律基于它。
+    const resolved = resolveReadablePath(filePath, allowedRoots);
+    if (resolved.kind === "not-found") {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
+    }
+    let realPath: string;
+    let stat: fs.Stats;
+    if (resolved.kind === "ok") {
+      realPath = resolved.realPath;
+      stat = resolved.stat;
+    } else if (resolved.kind === "denied") {
+      return NextResponse.json({ error: "Access denied" }, { status: 403 });
+    } else {
+      // 不在任何授权根内：仅当路径被会话字面引用且未发生符号链接重定向时放行
+      if (!allowedBySessionReference || !isNoSymlinkRedirection(filePath, resolved.realPath)) {
+        return NextResponse.json({ error: "Access denied" }, { status: 403 });
+      }
+      realPath = resolved.realPath;
+      stat = resolved.stat;
     }
 
     if (type === "read") {
       if (!stat.isFile()) {
         return NextResponse.json({ error: "Not a file" }, { status: 400 });
       }
-      const imageMime = getImageMime(filePath);
+      const imageMime = getImageMime(realPath);
       if (imageMime) {
         if (stat.size > IMAGE_PREVIEW_MAX_BYTES) {
           return NextResponse.json({ error: "Image too large (>10MB)" }, { status: 413 });
         }
-        return streamFile(filePath, stat, imageMime, request.headers.get("range"));
+        return streamFile(realPath, stat, imageMime, request.headers.get("range"));
       }
-      const audioMime = getAudioMime(filePath);
+      const audioMime = getAudioMime(realPath);
       if (audioMime) {
-        return streamFile(filePath, stat, audioMime, request.headers.get("range"));
+        return streamFile(realPath, stat, audioMime, request.headers.get("range"));
       }
-      const documentMime = getDocumentMime(filePath);
+      const documentMime = getDocumentMime(realPath);
       if (documentMime) {
-        return streamFile(filePath, stat, documentMime, request.headers.get("range"));
+        return streamFile(realPath, stat, documentMime, request.headers.get("range"));
       }
       if (stat.size > TEXT_PREVIEW_MAX_BYTES) {
         return NextResponse.json({ error: "File too large for preview (>256KB)" }, { status: 413 });
       }
-      const content = fs.readFileSync(filePath, "utf-8");
-      const language = getLanguage(filePath);
-      return NextResponse.json({ content, language, size: stat.size, mtimeMs: stat.mtimeMs });
+      // O_NOFOLLOW 打开 + fstat 复核后读取（TOCTOU 最终组件防护）
+      const fd = openRegularFileReadonly(realPath);
+      try {
+        const content = fs.readFileSync(fd, "utf-8");
+        const language = getLanguage(realPath);
+        return NextResponse.json({ content, language, size: stat.size, mtimeMs: stat.mtimeMs });
+      } finally {
+        fs.closeSync(fd);
+      }
     }
 
     if (type === "download") {
       if (!stat.isFile()) {
         return NextResponse.json({ error: "Not a file" }, { status: 400 });
       }
-      const mime = getImageMime(filePath) || getAudioMime(filePath) || getDocumentMime(filePath) || "application/octet-stream";
-      return streamFile(filePath, stat, mime, request.headers.get("range"), true);
+      const mime = getImageMime(realPath) || getAudioMime(realPath) || getDocumentMime(realPath) || "application/octet-stream";
+      return streamFile(realPath, stat, mime, request.headers.get("range"), true);
     }
 
     if (type === "meta") {
       if (!stat.isFile()) {
         return NextResponse.json({ error: "Not a file" }, { status: 400 });
       }
-      const imageMime = getImageMime(filePath);
-      const audioMime = getAudioMime(filePath);
-      const documentMime = getDocumentMime(filePath);
+      const imageMime = getImageMime(realPath);
+      const audioMime = getAudioMime(realPath);
+      const documentMime = getDocumentMime(realPath);
       return NextResponse.json({
         size: stat.size,
         mtimeMs: stat.mtimeMs,
-        language: getLanguage(filePath),
+        language: getLanguage(realPath),
         mime: imageMime || audioMime || documentMime || "text/plain",
-        previewKind: documentPreviewKind(filePath),
+        previewKind: documentPreviewKind(realPath),
       });
     }
 
@@ -489,7 +518,7 @@ export async function GET(
       if (!stat.isFile()) {
         return NextResponse.json({ error: "Not a file" }, { status: 400 });
       }
-      if (getFileExt(filePath) !== "docx") {
+      if (getFileExt(realPath) !== "docx") {
         return NextResponse.json({ error: "Preview not available for this file type" }, { status: 400 });
       }
       if (stat.size > DOCX_PREVIEW_MAX_BYTES) {
@@ -498,13 +527,13 @@ export async function GET(
 
       const mammoth = await import("mammoth");
       const result = await mammoth.convertToHtml(
-        { path: filePath },
+        { path: realPath },
         {
           externalFileAccess: false,
           convertImage: mammoth.images.dataUri,
         }
       );
-      const html = wrapDocxPreviewHtml(result.value, path.basename(filePath));
+      const html = wrapDocxPreviewHtml(result.value, path.basename(realPath));
       return new Response(html, {
         headers: {
           "Content-Type": "text/html; charset=utf-8",
@@ -536,9 +565,9 @@ export async function GET(
           // Send initial ping so client knows connection is live
           send("connected", { filePath });
           try {
-            watcher = fs.watch(filePath, () => {
+            watcher = fs.watch(realPath, () => {
               try {
-                const s = fs.statSync(filePath);
+                const s = fs.statSync(realPath);
                 // Some platforms emit watch events for file reads/attribute
                 // access. Ignore those or the client's refresh read loops.
                 if (s.mtimeMs === lastMtimeMs && s.size === lastSize) return;
@@ -578,11 +607,11 @@ export async function GET(
 
     // Avoid per-entry stat calls for normal files and directories. Symlinks and
     // filesystems without directory type information use the stat fallback.
-    const dirents = fs.readdirSync(filePath, { withFileTypes: true });
+    const dirents = fs.readdirSync(realPath, { withFileTypes: true });
     const entries = dirents
       .filter((d) => !IGNORED_NAMES.has(d.name) && !IGNORED_SUFFIXES.some((s) => d.name.endsWith(s)))
       .flatMap((d) => {
-        const isDir = resolveDirentIsDirectory(d, path.join(filePath, d.name));
+        const isDir = resolveDirentIsDirectory(d, path.join(realPath, d.name));
         return isDir === null
           ? []
           : [{ name: d.name, isDir, size: 0, modified: "" }];

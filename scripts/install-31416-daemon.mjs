@@ -25,6 +25,7 @@ import {
 	rmSync,
 	writeFileSync,
 } from "node:fs";
+import { isIP } from "node:net";
 import { fileURLToPath } from "node:url";
 import { dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -41,6 +42,36 @@ const unitFile = `/etc/systemd/system/${unitName}`;
 const logFile = `/var/log/${unitName}.log`;
 const memoryHigh = "3G";
 const memoryMax = "4G";
+// 机器级密钥文件约定（与 31415 正式版 pidance.service.d/security.conf 一致）
+const secretEnvFile = "/etc/pidance/secret.env";
+
+// 回环判定（与 bin/pidance-auth-gate.js / lib/request-guard.ts 语义一致）：
+// host 为回环地址时才允许无密码；否则必须提供认证密码，否则拒绝部署（fail-closed）。
+function isLoopbackHostname(hostname) {
+	if (typeof hostname !== "string" || hostname.length === 0) return false;
+	let h = hostname.toLowerCase().replace(/\.$/, "");
+	if (h.startsWith("[") && h.endsWith("]")) h = h.slice(1, -1);
+	if (h === "localhost" || h.endsWith(".localhost")) return true;
+	const ip = isIP(h);
+	if (ip === 4) return h.startsWith("127.");
+	if (ip === 6) return h === "::1" || h === "0:0:0:0:0:0:0:1";
+	return false;
+}
+
+// 密码来源：环境变量 PIDANCE_PASSWORD（优先，兼容 PI_WEB_PASSWORD）→ Environment=；
+// 否则机器级 /etc/pidance/secret.env → EnvironmentFile=（600 权限，不落明文到 unit 文件）；
+// 都没有 → null（非回环监听时 install 拒绝部署）。
+function resolvePasswordSource(env) {
+	const p = env?.PIDANCE_PASSWORD ?? env?.PI_WEB_PASSWORD;
+	if (typeof p === "string" && p.length > 0) return { kind: "env", value: p };
+	if (existsSync(secretEnvFile)) return { kind: "envfile", path: secretEnvFile };
+	return null;
+}
+
+// systemd Environment="K=V" 引号值转义（反斜杠/双引号）。
+function escapeSystemdValue(value) {
+	return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
 
 // 稳定 Node 入口：直接使用标准 nvm node 绝对路径（2026-08-03 起统一，
 // 不再经 /root/.local/bin 软连接、不再指向 hermes 私有运行时）。
@@ -104,8 +135,8 @@ function assertOwnedTransient(props) {
 	fail(`拒绝操作：unit ${unitName} 来源未知（${props?.FragmentPath ?? "?"}）`);
 }
 
-function buildUnitContent(nodeBin, nextCli) {
-	return [
+function buildUnitContent(nodeBin, nextCli, passwordSource) {
+	const lines = [
 		"# Pidance 持续测试版（31416）systemd 守护单元（由 scripts/install-31416-daemon.mjs 生成）",
 		"# 仅此单元：pidance-local-31416-<uid>.service；31415 正式版见 pidance.service；30141 归上游 pi-web，永不操作",
 		"",
@@ -123,6 +154,18 @@ function buildUnitContent(nodeBin, nextCli) {
 		`Environment=PATH=/root/.nvm/versions/node/v24.18.0/bin:/root/.pi/agent/bin:/root/.local/bin:/usr/local/bin:/usr/bin:/bin`,
 		`Environment=NODE_OPTIONS=--max-old-space-size=3072`,
 		`Environment=PIDANCE_DIST_DIR=.next-public`,
+	];
+	// 非回环监听必须带认证密码（P0 fail-closed：0.0.0.0 无密码拒绝部署/启动）
+	if (!isLoopbackHostname(host)) {
+		if (passwordSource?.kind === "env") {
+			lines.push(
+				`Environment="PI_WEB_PASSWORD=${escapeSystemdValue(passwordSource.value)}"`,
+			);
+		} else if (passwordSource?.kind === "envfile") {
+			lines.push(`EnvironmentFile=${passwordSource.path}`);
+		}
+	}
+	lines.push(
 		`WorkingDirectory=${repository}`,
 		// 绝对稳定路径：仓库内 Next CLI；生产模式（next start）避免 dev 按需
 		// 编译抖动与 V8 堆膨胀；PIDANCE_DIST_DIR 隔离产物，不污染 dev 的 .next
@@ -147,7 +190,8 @@ function buildUnitContent(nodeBin, nextCli) {
 		"[Install]",
 		"WantedBy=multi-user.target",
 		"",
-	].join("\n");
+	);
+	return lines.join("\n");
 }
 
 async function waitForHealth() {
@@ -167,6 +211,15 @@ async function waitForHealth() {
 
 async function install() {
 	const nodeBin = resolveStableNode();
+	// 非回环监听（0.0.0.0）必须携带认证密码（P0 fail-closed）：环境变量或机器级 secret.env 二选一
+	const passwordSource = resolvePasswordSource(process.env);
+	if (!isLoopbackHostname(host) && !passwordSource) {
+		fail(
+			`拒绝部署：监听地址 ${host} 非回环且未设置认证密码（发布阻断 P0）。` +
+				`请设置环境变量 PIDANCE_PASSWORD（兼容 PI_WEB_PASSWORD）后重试，` +
+				`或先创建 ${secretEnvFile}（含 PI_WEB_PASSWORD=...，权限 600）。`,
+		);
+	}
 	const nextCli = join(
 		repository,
 		"node_modules",
@@ -200,7 +253,7 @@ async function install() {
 			);
 		}
 	}
-	writeFileSync(unitFile, buildUnitContent(nodeBin, nextCli), { mode: 0o644 });
+	writeFileSync(unitFile, buildUnitContent(nodeBin, nextCli, passwordSource), { mode: 0o644 });
 	chmodSync(unitFile, 0o644);
 	const reload = run("systemctl", ["daemon-reload"]);
 	if (reload.status !== 0)
@@ -280,6 +333,8 @@ function help() {
 			"用法：node scripts/install-31416-daemon.mjs <install|uninstall|status|help>",
 			`install：把 31416 测试版部署为持久 systemd unit ${unitName}（Restart=always + enable 自启），`,
 			"         接管同名 transient unit（指纹校验后），健康检查通过后输出状态。",
+			`         监听 ${host} 非回环时必须携带认证密码：环境变量 PIDANCE_PASSWORD（兼容`,
+			`         PI_WEB_PASSWORD）或 ${secretEnvFile}（EnvironmentFile），否则拒绝部署。`,
 			"uninstall：disable + stop + 删除 unit 文件，恢复由 local-deploy.mjs 管理。",
 			"永不操作 30141（上游 pi-web）与 31415 正式版（pidance.service）。",
 		].join("\n"),

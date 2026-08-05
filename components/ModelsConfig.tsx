@@ -128,15 +128,25 @@ interface ModelEntry {
 interface ProviderEntry {
   baseUrl?: string;
   api?: string;
+  /** 草稿语义：仅当用户输入新密钥时存在；GET 投影不回传服务器现值 */
   apiKey?: string;
+  /** GET 投影：服务器是否已配置 apiKey（原始值永不回传） */
+  apiKeyConfigured?: boolean;
   headers?: Record<string, string>;
   compat?: Record<string, unknown>;
   models?: ModelEntry[];
   modelOverrides?: Record<string, unknown>;
 }
 
+interface ModelsConfigBaseline {
+  mtimeMs: number;
+  size: number;
+}
+
 interface ModelsJson {
   providers?: Record<string, ProviderEntry>;
+  /** GET 附带的文件基线（mtimeMs/size），PUT 带回做冲突检测 */
+  baseline?: ModelsConfigBaseline | null;
 }
 
 type ModelTestState =
@@ -375,10 +385,15 @@ function ProviderDetail({ name, provider, onChange, onRename, onDelete }: {
       </Field>
 
       <Field label={t("models_apiKey")}>
-        <SecretTextInput value={provider.apiKey ?? ""} onChange={(v) => set("apiKey", v || undefined)}
+        {/* GET 投影不含原始密钥：已配置时显示掩码 "***"，输入即成为新密钥草稿 */}
+        <SecretTextInput
+          value={provider.apiKey ?? (provider.apiKeyConfigured ? "***" : "")}
+          onChange={(v) => set("apiKey", v || undefined)}
           placeholder={t("models_apiKeyPlaceholder")} mono />
-        <span style={{ fontSize: 10, color: "var(--text-dim)", marginTop: 2 }}>
-          {t("models_apiKeyHint")}
+        <span style={{ fontSize: 10, color: provider.apiKeyConfigured && !provider.apiKey ? "#4ade80" : "var(--text-dim)", marginTop: 2 }}>
+          {provider.apiKeyConfigured && !provider.apiKey
+            ? `${t("models_configured")} · ${t("models_enterNewKey")}`
+            : t("models_apiKeyHint")}
         </span>
       </Field>
 
@@ -1347,6 +1362,8 @@ export function ModelsConfig({ onClose, embedded = false, onAuthStateChange }: {
 
   const isMobile = useIsMobile();
   const [config, setConfig] = useState<ModelsJson>({ providers: {} });
+  // GET 附带的文件基线：PUT 带回做冲突检测（多标签页/多端互覆盖防护）
+  const [baseline, setBaseline] = useState<ModelsConfigBaseline | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -1382,12 +1399,14 @@ export function ModelsConfig({ onClose, embedded = false, onAuthStateChange }: {
     fetch("/api/models-config")
       .then((r) => r.json())
       .then((d: ModelsJson) => {
-        const normalized = d.providers ? d : { ...d, providers: {} };
+        const { baseline: b, ...rest } = d;
+        const normalized = rest.providers ? rest : { ...rest, providers: {} };
         setConfig(normalized);
+        setBaseline(b ?? null);
         const keys = Object.keys(normalized.providers ?? {});
         if (keys.length > 0) setSelection({ type: "provider", name: keys[0] });
       })
-      .catch(() => setConfig({ providers: {} }))
+      .catch(() => { setConfig({ providers: {} }); setBaseline(null); })
       .finally(() => setLoading(false));
     loadOAuthProviders();
     loadApiKeyProviders();
@@ -1482,17 +1501,23 @@ export function ModelsConfig({ onClose, embedded = false, onAuthStateChange }: {
       const res = await fetch("/api/models-config", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(config),
+        body: JSON.stringify({ ...config, baseline }),
       });
-      const d = await res.json() as { success?: boolean; error?: string };
-      if (!res.ok || d.error) setSaveError(d.error ?? `HTTP ${res.status}`);
-      else { setSavedOk(true); setTimeout(() => setSavedOk(false), 2000); }
+      const d = await res.json() as { success?: boolean; error?: string; baseline?: ModelsConfigBaseline | null };
+      if (!res.ok || d.error) {
+        setSaveError(d.error ?? `HTTP ${res.status}`);
+      } else {
+        setSavedOk(true);
+        // 更新基线：后续保存继续基于最新文件状态做冲突检测
+        if (d.baseline) setBaseline(d.baseline);
+        setTimeout(() => setSavedOk(false), 2000);
+      }
     } catch (e) {
       setSaveError(String(e));
     } finally {
       setSaving(false);
     }
-  }, [config]);
+  }, [config, baseline]);
 
   const providers = Object.entries(config.providers ?? {});
   const activeOAuth = oauthProviders.filter((p) => p.loggedIn);

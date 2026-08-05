@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
-import { mkdtempSync, rmSync, writeFileSync } from "fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { completeSimple, type AssistantMessage } from "@earendil-works/pi-ai/compat";
-import { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import { getAgentDir, ModelRuntime } from "@earendil-works/pi-coding-agent";
+import { resolveModelSecrets, resolveProviderSecrets } from "@/lib/models-config-service";
 
 export const dynamic = "force-dynamic";
 
@@ -15,6 +16,23 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * 读取服务器真实 models.json 中指定 provider 的配置。客户端已不再持有
+ * apiKey / 敏感 header 的原始值（GET 只返回脱敏投影），测试模型连接时
+ * 需要用服务器现值补全被掩码/缺失的密钥。
+ */
+function readServerProvider(providerName: string): Record<string, unknown> | undefined {
+  try {
+    const modelsPath = join(getAgentDir(), "models.json");
+    if (!existsSync(modelsPath)) return undefined;
+    const parsed = JSON.parse(readFileSync(modelsPath, "utf8")) as { providers?: Record<string, unknown> };
+    const provider = parsed.providers?.[providerName];
+    return isRecord(provider) ? provider : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function getAssistantText(message: AssistantMessage): string {
@@ -39,11 +57,24 @@ export async function POST(req: Request) {
 
     tempDir = mkdtempSync(join(tmpdir(), "pidance-model-test-"));
     const modelsPath = join(tempDir, "models.json");
+
+    // 客户端 apiKey 缺失/掩码（"***"）时回退到服务器现值；headers 同样按
+    // 保留/更新语义合并（掩码键保留服务器值），保证测试用真实凭据跑通。
+    const serverProvider = readServerProvider(providerName);
+    const providerBase: Record<string, unknown> = { ...(body.provider as Record<string, unknown>) };
+    delete providerBase.models; // 被测模型单独处理，不沿用客户端 models 列表
+    const providerResolved = resolveProviderSecrets(providerBase, serverProvider);
+    const serverModel = (Array.isArray(serverProvider?.models) ? serverProvider.models : []).find(
+      (entry) => isRecord(entry) && entry.id === modelId,
+    );
+    const modelResolved: Record<string, unknown> = { ...(body.model as Record<string, unknown>), id: modelId };
+    resolveModelSecrets(modelResolved, isRecord(serverModel) ? serverModel : undefined);
+
     writeFileSync(modelsPath, JSON.stringify({
       providers: {
         [providerName]: {
-          ...body.provider,
-          models: [{ ...body.model, id: modelId }],
+          ...providerResolved,
+          models: [modelResolved],
         },
       },
     }, null, 2), "utf8");

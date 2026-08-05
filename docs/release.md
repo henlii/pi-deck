@@ -183,6 +183,12 @@ npm view @henlii/pidance@0.1.0 version --registry https://registry.npmjs.org/
 
 不发公网包时，可将已审计 tgz 部署到正式安装位（/opt/pidance，31415）：
 
+> **安全门禁（P0）**：监听非回环地址（`0.0.0.0` / `::` / 局域网 IP）且未设置认证密码时，
+> `pidance` CLI 拒绝启动，middleware 也会对非回环请求返回 401。正式部署必须设置密码：
+> `PIDANCE_PASSWORD`（优先，兼容旧变量 `PI_WEB_PASSWORD`），例如
+> `Environment="PI_WEB_PASSWORD=..."`（或 drop-in `EnvironmentFile=/etc/pidance/secret.env`）。
+> 仅本机使用可省略密码并绑定回环（`--hostname 127.0.0.1`）。
+
 ```bash
 # 1. 隔离 checkout（勿用日常工作区）
 git worktree add --detach /tmp/pidance-release-build HEAD
