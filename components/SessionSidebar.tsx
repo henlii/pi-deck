@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useState, useCallback, useMemo, useRef, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useState, useCallback, useMemo, useRef } from "react";
 import type { SessionInfo } from "@/lib/types";
-import { displayCwd, getRecentProjects, type WorktreeEntry, type WorktreeState } from "@/lib/project-context";
+import { displayCwd, getRecentProjects } from "@/lib/project-context";
 import {
   isSessionNodeEffectivelyCollapsed,
   normalizeSessionQuery,
@@ -29,21 +29,14 @@ import {
 } from "@/lib/ui-preferences";
 import { loadCachedSessionList, saveCachedSessionList } from "@/lib/session-list-cache";
 import {
-  GROUP_VISIBLE_PAGE_SIZE,
-  buildKnownProjectRoots,
   bumpGroupVisibleCount,
-  canShowFewerTopLevel,
-  canShowMoreTopLevel,
   getGroupVisibleCount,
   getVisibleTopLevelNodes,
-  buildWorktreePreloadGeneration,
   mergeOptimisticSessions,
   reconcilePendingSessionIds,
   resetGroupVisibleCount,
   shouldApplySessionListResponse,
-  upsertCanonicalProjectWorktreeSnapshot,
   upsertProjectWorktreeSnapshot,
-  type ProjectWorktreeSnapshots,
 } from "./session-sidebar-state";
 import { getSessionCapabilities } from "./session-capabilities";
 import { useProjectActions, useProjectIdentity } from "./ProjectProvider";
@@ -51,8 +44,35 @@ import { ViewportDialog } from "./ui/ViewportDialog";
 import { ProjectTrustBadge, ProjectTrustDialog, useProjectTrust, type ProjectTrustEntry } from "./ProjectTrust";
 import { useI18n } from "@/lib/i18n";
 import { loadUnreadSessionIds, saveUnreadSessionIds } from "@/lib/unread-sessions-storage";
-import { copyText } from "@/lib/clipboard";
-import { buildSessionExportHtmlHref, buildSessionExportJsonlHref, canExportSession } from "./session-export-links";
+import {
+  AnimatedDropdown,
+  BranchIcon,
+  BranchPlusIcon,
+  ChatPlusIcon,
+  CheckIcon,
+  ChevronButton,
+  DialogButton,
+  DisplayMenuItem,
+  FolderIcon,
+  FolderPlusIcon,
+  formatRelativeTime,
+  GroupPagination,
+  HomeIcon,
+  LayersIcon,
+  PathLabel,
+  PiWebTitle,
+  RefreshIcon,
+  RunningSessionIndicator,
+  SearchIcon,
+  SidebarIconButton,
+  SlidersIcon,
+  TrashIcon,
+  UnreadSessionIndicator,
+  WorktreeActions,
+  XIcon,
+} from "@/components/session-sidebar/display";
+import { ProjectRowMenu, SessionRowMenu } from "@/components/session-sidebar/menus";
+import { useWorktreePreload } from "@/hooks/useWorktreePreload";
 
 declare global {
   interface Window {
@@ -78,400 +98,6 @@ interface Props {
   optimisticSessions?: readonly SessionInfo[];
 }
 
-function formatRelativeTime(dateStr: string, t: ReturnType<typeof useI18n>["t"]): string {
-  const date = new Date(dateStr);
-  const now = new Date();
-  const diff = now.getTime() - date.getTime();
-  const mins = Math.floor(diff / 60000);
-  const hours = Math.floor(diff / 3600000);
-  const days = Math.floor(diff / 86400000);
-  if (mins < 1) return t("sidebar_justNow");
-  if (mins < 60) return t("sidebar_minutesAgo", { count: mins });
-  if (hours < 24) return t("sidebar_hoursAgo", { count: hours });
-  if (days < 7) return t("sidebar_daysAgo", { count: days });
-  return date.toLocaleDateString();
-}
-
-function PathLabel({ text, style }: { text: string; style?: CSSProperties }) {
-  return (
-    <span
-      style={{
-        overflow: "hidden",
-        textOverflow: "ellipsis",
-        whiteSpace: "nowrap",
-        display: "block",
-        minWidth: 0,
-        lineHeight: 1.35,
-        direction: "rtl",
-        textAlign: "left",
-        ...style,
-      }}
-    >
-      <span style={{ unicodeBidi: "plaintext" }}>{text}</span>
-    </span>
-  );
-}
-
-const DROPDOWN_ANIMATION_MS = 140;
-
-function AnimatedDropdown({ open, children, style }: { open: boolean; children: ReactNode; style: CSSProperties }) {
-  const [mounted, setMounted] = useState(open);
-  const [visible, setVisible] = useState(open);
-
-  useEffect(() => {
-    let frame: number | undefined;
-    let timeout: ReturnType<typeof setTimeout> | undefined;
-
-    if (open) {
-      setMounted(true);
-      setVisible(false);
-      frame = window.requestAnimationFrame(() => {
-        frame = window.requestAnimationFrame(() => setVisible(true));
-      });
-    } else {
-      setVisible(false);
-      timeout = setTimeout(() => setMounted(false), DROPDOWN_ANIMATION_MS);
-    }
-
-    return () => {
-      if (frame !== undefined) window.cancelAnimationFrame(frame);
-      if (timeout) clearTimeout(timeout);
-    };
-  }, [open]);
-
-  if (!mounted) return null;
-
-  return (
-    <div
-      style={{
-        ...style,
-        opacity: visible ? 1 : 0,
-        transform: visible ? "translateY(0) scale(1)" : "translateY(-8px) scale(0.96)",
-        transformOrigin: "top center",
-        transition: `opacity ${DROPDOWN_ANIMATION_MS}ms ease, transform ${DROPDOWN_ANIMATION_MS}ms ease`,
-        pointerEvents: open ? "auto" : "none",
-      }}
-    >
-      {children}
-    </div>
-  );
-}
-
-const SCRAMBLE_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*";
-
-function useScramble(target: string, running: boolean): string {
-  const [display, setDisplay] = useState(target);
-  const frameRef = useRef<number | null>(null);
-  const iterRef = useRef(0);
-
-  useEffect(() => {
-    if (!running) {
-      setDisplay(target);
-      return;
-    }
-    iterRef.current = 0;
-    const totalFrames = target.length * 4;
-
-    const step = () => {
-      iterRef.current += 1;
-      const progress = iterRef.current / totalFrames;
-      const resolved = Math.floor(progress * target.length);
-
-      setDisplay(
-        target
-          .split("")
-          .map((char, i) => {
-            if (char === " ") return " ";
-            if (i < resolved) return char;
-            return SCRAMBLE_CHARS[Math.floor(Math.random() * SCRAMBLE_CHARS.length)];
-          })
-          .join("")
-      );
-
-      if (iterRef.current < totalFrames) {
-        frameRef.current = requestAnimationFrame(step);
-      } else {
-        setDisplay(target);
-      }
-    };
-
-    frameRef.current = requestAnimationFrame(step);
-    return () => { if (frameRef.current) cancelAnimationFrame(frameRef.current); };
-  }, [target, running]);
-
-  return display;
-}
-
-function PiWebTitle() {
-  const [showVersion, setShowVersion] = useState(false);
-  const [scrambling, setScrambling] = useState(false);
-  const revertTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const target = showVersion ? `${process.env.NEXT_PUBLIC_APP_VERSION ?? "0.0.0"}p${process.env.NEXT_PUBLIC_PI_VERSION ?? "0.0.0"}` : "Pidance";
-  const display = useScramble(target, scrambling);
-
-  const triggerScramble = useCallback((toVersion: boolean) => {
-    setShowVersion(toVersion);
-    setScrambling(true);
-    setTimeout(() => setScrambling(false), (toVersion ? 6 : 8) * 4 * (1000 / 60) + 100);
-  }, []);
-
-  const handleClick = useCallback(() => {
-    if (revertTimerRef.current) clearTimeout(revertTimerRef.current);
-
-    const next = !showVersion;
-    triggerScramble(next);
-
-    if (next) {
-      revertTimerRef.current = setTimeout(() => triggerScramble(false), 3000);
-    }
-  }, [showVersion, triggerScramble]);
-
-  useEffect(() => () => { if (revertTimerRef.current) clearTimeout(revertTimerRef.current); }, []);
-
-  return (
-    <button
-      onClick={handleClick}
-      style={{
-        background: "none", border: "none", padding: 0, cursor: "default",
-        fontWeight: 700, fontSize: 15, letterSpacing: "-0.01em",
-        color: showVersion ? "var(--accent)" : "var(--text)",
-        fontFamily: "var(--font-mono)",
-        minWidth: "6ch",
-      }}
-    >
-      {display}
-    </button>
-  );
-}
-
-// ── 统一图标按钮与图标 ─────────────────────────────────────────────────────
-
-/**
- * 会话栏统一图标按钮：24×24 盒、6px 圆角、hover/active/focus-visible/disabled
- * 样式全部由 globals.css 的 .sidebar-icon-btn 系列类承载；
- * label 同时作为 title（tooltip）与 aria-label。
- */
-function SidebarIconButton({
-  label,
-  onClick,
-  disabled = false,
-  active = false,
-  danger = false,
-  done = false,
-  hoverReveal = false,
-  expanded,
-  pressed,
-  haspopup,
-  buttonRef,
-  children,
-}: {
-  label: string;
-  onClick: (e: React.MouseEvent) => void;
-  disabled?: boolean;
-  /** toggle 开启态（搜索/菜单展开）。 */
-  active?: boolean;
-  /** 危险操作（hover 变红）。 */
-  danger?: boolean;
-  /** 刷新完成反馈态。 */
-  done?: boolean;
-  /** 行内操作渐进显露：细指针下行 hover/focus-within 才可见；
-      hover:none / 粗指针设备上常显（globals.css 媒体查询），保证触屏可发现。 */
-  hoverReveal?: boolean;
-  expanded?: boolean;
-  pressed?: boolean;
-  /** 弹出菜单语义（aria-haspopup），项目行三点菜单使用。 */
-  haspopup?: "menu" | boolean;
-  /** 触发按钮 ref：菜单关闭后焦点恢复用。 */
-  buttonRef?: React.Ref<HTMLButtonElement>;
-  children: ReactNode;
-}) {
-  const classes = ["sidebar-icon-btn"];
-  if (active) classes.push("sidebar-icon-btn--active");
-  if (danger) classes.push("sidebar-icon-btn--danger");
-  if (done) classes.push("sidebar-icon-btn--done");
-  if (hoverReveal) classes.push("sidebar-icon-btn--hover");
-  return (
-    <button
-      type="button"
-      ref={buttonRef}
-      onClick={onClick}
-      disabled={disabled}
-      title={label}
-      aria-label={label}
-      aria-expanded={expanded}
-      aria-pressed={pressed}
-      aria-haspopup={haspopup}
-      className={classes.join(" ")}
-    >
-      {children}
-    </button>
-  );
-}
-
-function iconProps(size: number) {
-  return {
-    width: size,
-    height: size,
-    viewBox: "0 0 24 24",
-    fill: "none",
-    stroke: "currentColor",
-    strokeWidth: 2,
-    strokeLinecap: "round",
-    strokeLinejoin: "round",
-    "aria-hidden": true,
-  } as const;
-}
-
-const FolderPlusIcon = ({ size = 18 }: { size?: number }) => (
-  <svg {...iconProps(size)}>
-    <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
-    <path d="M12 10v6" />
-    <path d="M9 13h6" />
-  </svg>
-);
-
-const FolderIcon = ({ size = 14 }: { size?: number }) => (
-  <svg {...iconProps(size)}>
-    <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
-  </svg>
-);
-
-const ChatPlusIcon = ({ size = 18 }: { size?: number }) => (
-  <svg {...iconProps(size)}>
-    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-    <path d="M12 7v6" />
-    <path d="M9 10h6" />
-  </svg>
-);
-
-const SearchIcon = ({ size = 18 }: { size?: number }) => (
-  <svg {...iconProps(size)}>
-    <circle cx="11" cy="11" r="8" />
-    <path d="m21 21-4.3-4.3" />
-  </svg>
-);
-
-const SlidersIcon = ({ size = 18 }: { size?: number }) => (
-  <svg {...iconProps(size)}>
-    <line x1="21" x2="14" y1="4" y2="4" />
-    <line x1="10" x2="3" y1="4" y2="4" />
-    <line x1="21" x2="12" y1="12" y2="12" />
-    <line x1="8" x2="3" y1="12" y2="12" />
-    <line x1="21" x2="16" y1="20" y2="20" />
-    <line x1="12" x2="3" y1="20" y2="20" />
-    <line x1="14" x2="14" y1="2" y2="6" />
-    <line x1="8" x2="8" y1="10" y2="14" />
-    <line x1="16" x2="16" y1="18" y2="22" />
-  </svg>
-);
-
-const RefreshIcon = ({ size = 18 }: { size?: number }) => (
-  <svg {...iconProps(size)}>
-    <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
-    <path d="M3 3v5h5" />
-  </svg>
-);
-
-const CheckIcon = ({ size = 14 }: { size?: number }) => (
-  <svg {...iconProps(size)}>
-    <polyline points="20 6 9 17 4 12" />
-  </svg>
-);
-
-const HomeIcon = ({ size = 15 }: { size?: number }) => (
-  <svg {...iconProps(size)}>
-    <path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-    <polyline points="9 22 9 12 15 12 15 22" />
-  </svg>
-);
-
-const XIcon = ({ size = 14 }: { size?: number }) => (
-  <svg {...iconProps(size)}>
-    <line x1="18" y1="6" x2="6" y2="18" />
-    <line x1="6" y1="6" x2="18" y2="18" />
-  </svg>
-);
-
-const BranchIcon = ({ size = 12 }: { size?: number }) => (
-  <svg {...iconProps(size)}>
-    <line x1="6" y1="3" x2="6" y2="15" />
-    <circle cx="18" cy="6" r="3" />
-    <circle cx="6" cy="18" r="3" />
-    <path d="M18 9a9 9 0 0 1-9 9" />
-  </svg>
-);
-
-const BranchPlusIcon = ({ size = 14 }: { size?: number }) => (
-  <svg {...iconProps(size)}>
-    <line x1="6" y1="3" x2="6" y2="15" />
-    <circle cx="6" cy="18" r="3" />
-    <path d="M18 9a9 9 0 0 1-9 9" />
-    <circle cx="18" cy="6" r="3" />
-    <path d="M15.5 17.5h5" />
-    <path d="M18 15v5" />
-  </svg>
-);
-
-const TrashIcon = ({ size = 13 }: { size?: number }) => (
-  <svg {...iconProps(size)}>
-    <polyline points="3 6 5 6 21 6" />
-    <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
-    <path d="M10 11v6M14 11v6" />
-    <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
-  </svg>
-);
-
-const PencilIcon = ({ size = 13 }: { size?: number }) => (
-  <svg {...iconProps(size)}>
-    <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />
-  </svg>
-);
-
-const LayersIcon = ({ size = 10 }: { size?: number }) => (
-  <svg {...iconProps(size)}>
-    <polygon points="12 2 2 7 12 12 22 7 12 2" />
-    <polyline points="2 17 12 22 22 17" />
-    <polyline points="2 12 12 17 22 12" />
-  </svg>
-);
-
-/** 竖向三点（⋮）：项目行菜单触发图标。 */
-const MoreVerticalIcon = ({ size = 14 }: { size?: number }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-    <circle cx="12" cy="5" r="1.7" />
-    <circle cx="12" cy="12" r="1.7" />
-    <circle cx="12" cy="19" r="1.7" />
-  </svg>
-);
-
-/** 折叠 chevron：20×20 透明小按钮，旋转表示折叠态。 */
-function ChevronButton({ collapsed, label, onClick }: {
-  collapsed: boolean;
-  label: string;
-  onClick: (e: React.MouseEvent) => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      title={label}
-      aria-label={label}
-      style={{
-        display: "flex", alignItems: "center", justifyContent: "center",
-        width: 20, height: 20, padding: 0, flexShrink: 0,
-        background: "none", border: "none", borderRadius: 5,
-        color: "var(--text-dim)", cursor: "pointer",
-        transform: collapsed ? "rotate(-90deg)" : "none",
-        transition: "transform 0.15s",
-      }}
-    >
-      <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-        <polyline points="2 3.5 5 6.5 8 3.5" />
-      </svg>
-    </button>
-  );
-}
 
 // ── 主组件 ─────────────────────────────────────────────────────────────────
 
@@ -512,12 +138,6 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   const [editProjectRoot, setEditProjectRoot] = useState<string | null>(null);
   const [editProjectValue, setEditProjectValue] = useState("");
   const editProjectInputRef = useRef<HTMLInputElement>(null);
-  // 每个项目独立的 worktree 快照：缓存优先，后台限流预加载。
-  const [worktreeSnapshots, setWorktreeSnapshots] = useState<ProjectWorktreeSnapshots>({});
-  const worktreeSnapshotsRef = useRef<ProjectWorktreeSnapshots>({});
-  const [worktreeMetadata, setWorktreeMetadata] = useState<Readonly<Record<string, Pick<WorktreeState, "isGit" | "isTopLevel">>>>({});
-  const worktreeRequestsRef = useRef(new Set<string>());
-  const worktreeRequestTokenRef = useRef(new Map<string, string>());
   const mountedRef = useRef(true);
   const [wtNewForProject, setWtNewForProject] = useState<string | null>(null);
   const [wtNewBranch, setWtNewBranch] = useState("");
@@ -723,6 +343,20 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     [serverSessions, pendingById, pendingIds, deletedIds],
   );
 
+  const {
+    worktreeSnapshots,
+    worktreeSnapshotsRef,
+    worktreeMetadata,
+    setWtRefreshKey,
+    commitWorktreeSnapshots,
+  } = useWorktreePreload({
+    allSessions,
+    selectedCwd,
+    selectedProjectRoot,
+    setIdentity,
+    mountedRef,
+  });
+
   // Persist unread markers so they survive a browser refresh before the user
   // has actually opened the completed session.
   useEffect(() => {
@@ -832,17 +466,8 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
 
   const restoredRef = useRef(false);
 
-  const commitWorktreeSnapshots = useCallback((updater: (prev: ProjectWorktreeSnapshots) => ProjectWorktreeSnapshots) => {
-    setWorktreeSnapshots((prev) => {
-      const next = updater(prev);
-      worktreeSnapshotsRef.current = next;
-      return next;
-    });
-  }, []);
-
   useEffect(() => () => {
     mountedRef.current = false;
-    worktreeRequestTokenRef.current.clear();
   }, []);
 
   /** 从最新本地数据乐观解析项目根；服务端响应仍是权威来源。 */
@@ -860,87 +485,6 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     setIdentity({ cwd, projectRoot: root, status: cwd ? "ready" : "idle", error: null });
   }, [projectRootFor, setIdentity]);
   const selectedProject = selectedProjectRoot ?? projectRootFor(selectedCwd);
-
-  // 每个项目 root 独立拉取；请求中去重，结果只写自身 key，旧请求不能覆盖别的项目。
-  const [wtRefreshKey, setWtRefreshKey] = useState(0);
-  const fetchProjectWorktrees = useCallback(async (projectRoot: string) => {
-    if (worktreeRequestsRef.current.has(projectRoot)) return;
-    const token = `${Date.now()}:${Math.random()}`;
-    worktreeRequestsRef.current.add(projectRoot);
-    worktreeRequestTokenRef.current.set(projectRoot, token);
-    commitWorktreeSnapshots((prev) => upsertProjectWorktreeSnapshot(prev, projectRoot, { status: "loading" }));
-    try {
-      const response = await fetch(`/api/worktrees?cwd=${encodeURIComponent(projectRoot)}`);
-      const data = await response.json().catch(() => ({})) as {
-        projectRoot?: string;
-        isGit?: boolean;
-        isTopLevel?: boolean;
-        worktrees?: WorktreeEntry[];
-        error?: string;
-      };
-      if (!response.ok || data.error || !data.projectRoot) throw new Error(data.error ?? `HTTP ${response.status}`);
-      if (!mountedRef.current || worktreeRequestTokenRef.current.get(projectRoot) !== token) return;
-      const canonicalRoot = data.projectRoot;
-      const worktrees = data.worktrees ?? [];
-      // 服务端返回的权威 projectRoot 才是快照 key；请求 root 是 worktree 路径时
-      // 只写 canonicalRoot 并移除请求 root（含 loading 条目），避免 buildSidebarTree
-      // 把 worktree 路径当项目根创建「项目 + 工作树」分组。
-      commitWorktreeSnapshots((prev) =>
-        upsertCanonicalProjectWorktreeSnapshot(prev, projectRoot, canonicalRoot, worktrees),
-      );
-      setWorktreeMetadata((prev) => {
-        const metadata = { isGit: data.isGit ?? false, isTopLevel: data.isTopLevel ?? false };
-        return canonicalRoot === projectRoot
-          ? { ...prev, [projectRoot]: metadata }
-          : { ...prev, [canonicalRoot]: metadata };
-      });
-      if (selectedCwd && (selectedProjectRoot === projectRoot || selectedCwd === projectRoot)) {
-        setIdentity({
-          cwd: selectedCwd,
-          projectRoot: canonicalRoot,
-          branch: worktrees.find((worktree) => worktree.path === selectedCwd)?.branch ?? null,
-          isGit: data.isGit ?? false,
-          isTopLevel: data.isTopLevel ?? false,
-          status: "ready",
-          error: null,
-        });
-      }
-    } catch (error) {
-      if (!mountedRef.current || worktreeRequestTokenRef.current.get(projectRoot) !== token) return;
-      commitWorktreeSnapshots((prev) => upsertProjectWorktreeSnapshot(prev, projectRoot, {
-        status: "error",
-        error: error instanceof Error ? error.message : String(error),
-      }));
-    } finally {
-      if (worktreeRequestTokenRef.current.get(projectRoot) === token) {
-        worktreeRequestTokenRef.current.delete(projectRoot);
-        worktreeRequestsRef.current.delete(projectRoot);
-      }
-    }
-  }, [commitWorktreeSnapshots, selectedCwd, selectedProjectRoot, setIdentity]);
-
-  const knownProjectRoots = useMemo(
-    () => buildKnownProjectRoots(getRecentProjects(allSessions), selectedCwd, selectedProjectRoot),
-    [allSessions, selectedCwd, selectedProjectRoot],
-  );
-  // worktree 预加载只跟 wtRefreshKey + known roots；session list refresh 不得重抓 worktree。
-  // generation 不含 refreshKey（见 buildWorktreePreloadGeneration）。
-  const worktreePreloadGenerationRef = useRef(new Map<string, string>());
-  useEffect(() => {
-    const generation = buildWorktreePreloadGeneration(wtRefreshKey);
-    const queue = knownProjectRoots.filter((root) => worktreePreloadGenerationRef.current.get(root) !== generation);
-    for (const root of queue) worktreePreloadGenerationRef.current.set(root, generation);
-    let cancelled = false;
-    const workers = Array.from({ length: Math.min(3, queue.length) }, async () => {
-      while (!cancelled) {
-        const root = queue.shift();
-        if (!root) return;
-        await fetchProjectWorktrees(root);
-      }
-    });
-    void Promise.all(workers);
-    return () => { cancelled = true; };
-  }, [knownProjectRoots, wtRefreshKey, fetchProjectWorktrees]);
 
   // 切换项目时收起未完成的 worktree 操作行，避免状态串到别的项目。
   useEffect(() => {
@@ -2203,259 +1747,9 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     );
   }
 
-// ── 弹窗按钮 ──────────────────────────────────────────────────────────────
-
-/** 弹窗按钮：primary 为主操作（accent 填充白字），其余为次级（描边）。 */
-function DialogButton({ primary = false, disabled = false, onClick, children }: {
-  primary?: boolean;
-  disabled?: boolean;
-  onClick: (e: React.MouseEvent) => void;
-  children: ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        justifyContent: "center",
-        gap: 6,
-        height: 30,
-        padding: "0 14px",
-        flexShrink: 0,
-        background: primary ? "var(--accent)" : "var(--bg)",
-        border: primary ? "none" : "1px solid var(--border)",
-        borderRadius: 7,
-        color: primary ? "#fff" : "var(--text-muted)",
-        cursor: disabled ? "not-allowed" : "pointer",
-        fontSize: 12,
-        fontWeight: primary ? 600 : 500,
-        opacity: disabled ? 0.55 : 1,
-        whiteSpace: "nowrap",
-      }}
-    >
-      {children}
-    </button>
-  );
-}
-
-// ── 显示模式菜单项 ─────────────────────────────────────────────────────────
-
-function DisplayMenuItem({ label, checked, onClick }: { label: string; checked?: boolean; onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 7,
-        width: "100%",
-        padding: "7px 10px",
-        background: "var(--bg)",
-        border: "none",
-        color: checked ? "var(--text)" : "var(--text-muted)",
-        cursor: "pointer",
-        textAlign: "left",
-        fontSize: 11.5,
-      }}
-    >
-      {checked
-        ? <span style={{ color: "var(--accent)", display: "flex", flexShrink: 0 }}><CheckIcon size={11} /></span>
-        : <span style={{ width: 11, flexShrink: 0 }} />}
-      {label}
-    </button>
-  );
-}
-
-// ── 项目行三点菜单 ─────────────────────────────────────────────────────────
-
-/**
- * 项目行竖向三点菜单：仅「编辑项目」「关闭项目」两项，均带图标。
- * 同一时刻仅一个菜单打开（父组件以 root 标识控制）；Escape 与点击外部关闭，
- * 关闭后焦点恢复触发按钮；桌面行 hover/focus-within 渐进显露，粗指针常显。
- * 本轮不提供右键菜单。
- */
-function ProjectRowMenu({ open, onOpenChange, projectName, onEdit, onClose }: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  /** 当前显示名（alias 或路径显示名），仅用于 aria 文案。 */
-  projectName: string;
-  onEdit: () => void;
-  onClose: () => void;
-}) {
-  const { t } = useI18n();
-  const wrapperRef = useRef<HTMLDivElement>(null);
-  const triggerRef = useRef<HTMLButtonElement>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
-
-  const closeMenu = useCallback((restoreFocus: boolean) => {
-    onOpenChange(false);
-    if (restoreFocus) triggerRef.current?.focus();
-  }, [onOpenChange]);
-
-  // 点击外部关闭（不抢焦点：点击目标自然获得焦点）
-  useEffect(() => {
-    if (!open) return;
-    const handler = (e: MouseEvent) => {
-      if (wrapperRef.current && !wrapperRef.current.contains(e.target as Node)) {
-        onOpenChange(false);
-      }
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, [open, onOpenChange]);
-
-  // 打开后焦点移入第一个菜单项（菜单键盘可达；Esc 由 wrapper onKeyDown 拦截）
-  useEffect(() => {
-    if (!open) return;
-    const frame = requestAnimationFrame(() => {
-      menuRef.current?.querySelector<HTMLElement>("[role='menuitem']")?.focus();
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [open]);
-
-  return (
-    <div
-      ref={wrapperRef}
-      style={{ position: "relative", flexShrink: 0, display: "flex" }}
-      onClick={(e) => e.stopPropagation()}
-      onKeyDown={(e) => {
-        if (e.key === "Escape" && open) {
-          e.stopPropagation();
-          e.preventDefault();
-          closeMenu(true);
-        }
-      }}
-    >
-      <SidebarIconButton
-        label={t("sidebar_projectMenuLabel", { project: projectName })}
-        active={open}
-        expanded={open}
-        haspopup="menu"
-        hoverReveal
-        buttonRef={triggerRef}
-        onClick={(e) => {
-          e.stopPropagation();
-          onOpenChange(!open);
-        }}
-      >
-        <MoreVerticalIcon size={14} />
-      </SidebarIconButton>
-      <AnimatedDropdown
-        open={open}
-        style={{
-          position: "absolute",
-          top: "calc(100% + 4px)",
-          right: 0,
-          zIndex: 100,
-          background: "var(--bg)",
-          border: "1px solid var(--border)",
-          borderRadius: 8,
-          boxShadow: "0 6px 20px rgba(0,0,0,0.10)",
-          overflow: "hidden",
-          minWidth: 148,
-        }}
-      >
-        <div ref={menuRef} role="menu" aria-label={t("sidebar_projectMenuLabel", { project: projectName })}>
-          <ProjectMenuItem
-            icon={<PencilIcon size={13} />}
-            label={t("sidebar_editProject")}
-            onClick={() => { closeMenu(true); onEdit(); }}
-          />
-          <ProjectMenuItem
-            icon={<XIcon size={13} />}
-            label={t("sidebar_closeProject")}
-            onClick={() => { closeMenu(true); onClose(); }}
-          />
-        </div>
-      </AnimatedDropdown>
-    </div>
-  );
-}
-
-function ProjectMenuItem({ icon, label, onClick }: { icon: ReactNode; label: string; onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      role="menuitem"
-      onClick={onClick}
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 8,
-        width: "100%",
-        padding: "7px 12px",
-        background: "var(--bg)",
-        border: "none",
-        color: "var(--text-muted)",
-        cursor: "pointer",
-        textAlign: "left",
-        fontSize: 12,
-        whiteSpace: "nowrap",
-      }}
-      onMouseEnter={(e) => {
-        e.currentTarget.style.background = "var(--bg-hover)";
-        e.currentTarget.style.color = "var(--text)";
-      }}
-      onMouseLeave={(e) => {
-        e.currentTarget.style.background = "var(--bg)";
-        e.currentTarget.style.color = "var(--text-muted)";
-      }}
-      onFocus={(e) => {
-        e.currentTarget.style.background = "var(--bg-hover)";
-        e.currentTarget.style.color = "var(--text)";
-      }}
-      onBlur={(e) => {
-        e.currentTarget.style.background = "var(--bg)";
-        e.currentTarget.style.color = "var(--text-muted)";
-      }}
-    >
-      <span style={{ display: "flex", flexShrink: 0, color: "var(--text-dim)" }} aria-hidden="true">{icon}</span>
-      {label}
-    </button>
-  );
-}
 
 // ── 项目分区（项目行 + 主仓会话 + 非主 worktree 分组） ──────────────────────
 
-interface WorktreeActions {
-  /** 本项目 worktree 状态已加载且为 git 顶层检出：可创建/删除。 */
-  canManage: boolean;
-  createHint: string;
-  busy: boolean;
-}
-
-function GroupPagination({ groupKey, total, visibleCount, searchActive, onShowMore, onShowFewer }: {
-  groupKey: string;
-  total: number;
-  visibleCount: number;
-  searchActive: boolean;
-  onShowMore: (groupKey: string) => void;
-  onShowFewer: (groupKey: string) => void;
-}) {
-  const { t } = useI18n();
-  const showMore = canShowMoreTopLevel(total, visibleCount, searchActive);
-  const showFewer = canShowFewerTopLevel(visibleCount, searchActive);
-  if (!showMore && !showFewer) return null;
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 4, padding: "2px 8px 5px 28px" }}>
-      {showMore && (
-        <button type="button" className="sidebar-pagination-btn" onClick={() => onShowMore(groupKey)}>
-          {t("sidebar_showMore")}
-          <span aria-hidden="true">+{GROUP_VISIBLE_PAGE_SIZE}</span>
-        </button>
-      )}
-      {showFewer && (
-        <button type="button" className="sidebar-pagination-btn" onClick={() => onShowFewer(groupKey)}>
-          {t("sidebar_showFewer")}
-        </button>
-      )}
-    </div>
-  );
-}
 
 function ProjectSection({
   project,
@@ -3077,125 +2371,6 @@ function SessionTreeItem({
   );
 }
 
-function RunningSessionIndicator({ size = 14 }: { size?: number }) {
-  const { t } = useI18n();
-  return (
-    <span
-      title={t("sidebar_running")}
-      aria-label={t("sidebar_running")}
-      style={{
-        width: size,
-        height: size,
-        display: "inline-flex",
-        alignItems: "center",
-        justifyContent: "center",
-        flexShrink: 0,
-        color: "var(--accent)",
-      }}
-    >
-      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true" style={{ display: "block" }}>
-        <g>
-          <path
-            d="M21 12a9 9 0 1 1-3.8-7.4"
-            stroke="currentColor"
-            strokeWidth="2.8"
-            strokeLinecap="round"
-          />
-          <animateTransform
-            attributeName="transform"
-            type="rotate"
-            from="0 12 12"
-            to="360 12 12"
-            dur="0.9s"
-            repeatCount="indefinite"
-          />
-        </g>
-      </svg>
-    </span>
-  );
-}
-
-function UnreadSessionIndicator({ size = 14 }: { size?: number }) {
-  const { t } = useI18n();
-  return (
-    <span
-      title={t("sidebar_activity")}
-      aria-label={t("sidebar_activity")}
-      style={{
-        width: size,
-        height: size,
-        display: "inline-flex",
-        alignItems: "center",
-        justifyContent: "center",
-        flexShrink: 0,
-        color: "#0891b2",
-      }}
-    >
-      <svg width={size} height={size} viewBox="0 0 14 14" fill="none" aria-hidden="true" style={{ display: "block" }}>
-        <circle cx="7" cy="7" r="2.5" fill="currentColor" />
-        <circle cx="7" cy="7" r="3" stroke="currentColor" strokeWidth="1.4" opacity="0.32">
-          <animate attributeName="r" values="3;6;3" dur="1.6s" repeatCount="indefinite" />
-          <animate attributeName="opacity" values="0.32;0;0.32" dur="1.6s" repeatCount="indefinite" />
-        </circle>
-      </svg>
-    </span>
-  );
-}
-
-function SessionRowMenu({ session, title, canRename, canDelete, onRename, onDelete }: { session: SessionInfo; title: string; canRename: boolean; canDelete: boolean; onRename: () => void; onDelete: () => void }) {
-  const { t } = useI18n();
-  const [open, setOpen] = useState(false);
-  const [position, setPosition] = useState<{ top: number; right: number } | null>(null);
-  const triggerRef = useRef<HTMLButtonElement>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
-  const label = t("sidebar_sessionMenuLabel", { session: title });
-  const close = useCallback((focus = false) => { setOpen(false); if (focus) triggerRef.current?.focus(); }, []);
-
-  useEffect(() => {
-    if (!open) return;
-    const outside = (event: MouseEvent) => {
-      const target = event.target as Node;
-      if (!menuRef.current?.contains(target) && !triggerRef.current?.contains(target)) close();
-    };
-    const viewport = () => close();
-    document.addEventListener("mousedown", outside);
-    window.addEventListener("resize", viewport);
-    window.addEventListener("scroll", viewport, true);
-    const frame = requestAnimationFrame(() => menuRef.current?.querySelector<HTMLElement>("[role='menuitem']")?.focus());
-    return () => { cancelAnimationFrame(frame); document.removeEventListener("mousedown", outside); window.removeEventListener("resize", viewport); window.removeEventListener("scroll", viewport, true); };
-  }, [close, open]);
-
-  const openMenu = () => {
-    if (open) { close(); return; }
-    const rect = triggerRef.current?.getBoundingClientRect();
-    if (rect) {
-      // 菜单靠近视口底部时向上翻转，避免最后几行的删除项被裁切。
-      const estimatedMenuHeight = 212;
-      const top = rect.bottom + 4 + estimatedMenuHeight <= window.innerHeight
-        ? rect.bottom + 4
-        : Math.max(8, rect.top - estimatedMenuHeight - 4);
-      setPosition({ top, right: Math.max(8, window.innerWidth - rect.right) });
-    }
-    setOpen(true);
-  };
-  const itemStyle: CSSProperties = { display: "flex", alignItems: "center", gap: 8, width: "100%", minHeight: 32, padding: "6px 11px", boxSizing: "border-box", background: "var(--bg)", border: "none", color: "var(--text-muted)", cursor: "pointer", textAlign: "left", textDecoration: "none", fontSize: 12, whiteSpace: "nowrap" };
-  const hover = {
-    onMouseEnter: (event: React.MouseEvent<HTMLElement>) => { event.currentTarget.style.background = "var(--bg-hover)"; event.currentTarget.style.color = "var(--text)"; },
-    onMouseLeave: (event: React.MouseEvent<HTMLElement>) => { event.currentTarget.style.background = "var(--bg)"; event.currentTarget.style.color = "var(--text-muted)"; },
-  };
-  const menuIcon = (child: ReactNode) => <span aria-hidden="true" style={{ display: "flex", color: "var(--text-dim)" }}>{child}</span>;
-
-  return <div style={{ display: "flex", flexShrink: 0 }} onClick={(event) => event.stopPropagation()} onKeyDown={(event) => { if (event.key === "Escape" && open) { event.preventDefault(); close(true); } }}>
-    <SidebarIconButton label={label} active={open} expanded={open} haspopup="menu" hoverReveal buttonRef={triggerRef} onClick={(event) => { event.stopPropagation(); openMenu(); }}><MoreVerticalIcon size={14}/></SidebarIconButton>
-    {open && position && <div ref={menuRef} role="menu" aria-label={label} style={{ position: "fixed", top: position.top, right: position.right, zIndex: 600, minWidth: 190, padding: 4, background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 8, boxShadow: "0 10px 28px rgba(0,0,0,0.18)" }}>
-      {canRename && <button type="button" role="menuitem" style={itemStyle} {...hover} onClick={() => { close(); onRename(); }}>{menuIcon(<PencilIcon size={13}/>)}{t("sidebar_renameSession")}</button>}
-      <button type="button" role="menuitem" style={itemStyle} {...hover} onClick={() => { close(); void copyText(session.id); }}>{menuIcon(<svg {...iconProps(13)}><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>)}{t("sidebar_copySessionId")}</button>
-      {canExportSession(session) && <><a role="menuitem" href={buildSessionExportHtmlHref(session.id)} download style={itemStyle} {...hover} onClick={() => close()}>{menuIcon(<svg {...iconProps(13)}><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>)}{t("sidebar_exportSessionHtml")}</a>
-      <a role="menuitem" href={buildSessionExportJsonlHref(session.id, null)} download style={itemStyle} {...hover} onClick={() => close()}>{menuIcon(<svg {...iconProps(13)}><path d="M8 3H7a2 2 0 0 0-2 2v4a2 2 0 0 1-2 2 2 2 0 0 1 2 2v4a2 2 0 0 0 2 2h1"/><path d="M16 21h1a2 2 0 0 0 2-2v-4a2 2 0 0 1 2-2 2 2 0 0 1-2-2V5a2 2 0 0 0-2-2h-1"/></svg>)}{t("sidebar_exportSessionJsonl")}</a></>}
-      {canDelete && <><div style={{ height: 1, margin: "4px 6px", background: "var(--border)" }}/><button type="button" role="menuitem" style={{ ...itemStyle, color: "#ef4444" }} onClick={() => { close(); onDelete(); }}>{menuIcon(<TrashIcon size={13}/>)}{t("sidebar_deleteSession")}</button></>}
-    </div>}
-  </div>;
-}
 
 function SessionItem({
   session,
