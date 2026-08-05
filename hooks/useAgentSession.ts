@@ -12,7 +12,7 @@ import type {
   ChatInputHandle,
 } from "@/lib/types";
 import { normalizeToolCalls } from "@/lib/normalize";
-import { preserveCustomRenderedLines } from "@/lib/custom-rendered-lines";
+import { attachCustomRenderedLines, preserveCustomRenderedLines } from "@/lib/custom-rendered-lines";
 import type { SessionActivity } from "@/lib/session-activity";
 import { sendAgentCommand } from "@/lib/agent-client";
 import type { BranchActions } from "@/lib/branch-bookmarks";
@@ -97,18 +97,6 @@ function streamReducer(state: StreamingState, action: StreamAction): StreamingSt
     default:
       return state;
   }
-}
-
-/** 只为 custom 消息透传合法 ANSI 行；畸形载荷保持原消息以触发现有文本回退。 */
-function attachCustomRenderedLines(message: AgentMessage, renderedLines: unknown): AgentMessage {
-  if (
-    message.role !== "custom"
-    || !Array.isArray(renderedLines)
-    || !renderedLines.every((line) => typeof line === "string")
-  ) {
-    return message;
-  }
-  return { ...message, renderedLines };
 }
 
 interface AgentEvent {

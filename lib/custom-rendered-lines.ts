@@ -49,3 +49,17 @@ export function preserveCustomRenderedLines(
     return renderedLines ? { ...message, renderedLines: [...renderedLines] } : message;
   });
 }
+
+/**
+ * 只为 custom 消息透传合法 ANSI 行；畸形载荷保持原消息以触发现有文本回退。
+ */
+export function attachCustomRenderedLines(message: AgentMessage, renderedLines: unknown): AgentMessage {
+  if (
+    message.role !== "custom"
+    || !Array.isArray(renderedLines)
+    || !renderedLines.every((line) => typeof line === "string")
+  ) {
+    return message;
+  }
+  return { ...message, renderedLines };
+}
