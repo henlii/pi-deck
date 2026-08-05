@@ -25,14 +25,6 @@ import {
   tryAppendActivityBestEffort,
   type NotifyPersistState,
 } from "./session-activity-events";
-import {
-  computeChainTail,
-  extractUserText,
-  isOnLeafChain,
-  pushRetracted,
-  removeRetracted,
-  type RetractedRecord,
-} from "./retract-stack";
 import { sessionService } from "./session-service";
 
 // ============================================================================
@@ -883,101 +875,6 @@ export class AgentSessionWrapper {
         return sessionService.createSessionFromLeaf(this.sessionId, rawEntryId.trim());
       }
 
-      case "retract_message": {
-        if (this.inner.isBashRunning) {
-          throw new Error("Cannot retract a message while a shell command is running");
-        }
-        const rawEntryId = command.entryId;
-        if (typeof rawEntryId !== "string" || rawEntryId.trim() === "") {
-          throw new Error("entryId is required");
-        }
-        const entryId = rawEntryId.trim();
-        const sessionManager = this.inner.sessionManager;
-        if (!sessionManager.isPersisted()) return { ok: false, cancelled: true, reason: "not-persisted" };
-        const entry = sessionManager.getEntry(entryId);
-        if (!entry) throw new Error("Entry not found");
-        if (entry.type !== "message" || entry.message?.role !== "user") {
-          throw new Error("Only user messages can be retracted");
-        }
-        // 只允许撤回「前驱为 assistant 类节点」的消息：navigate_tree 对 user 目标
-        // 会跳到其 parent 之前，无法精确停在连续 user 处；首条消息无前驱不可撤回。
-        const parent = entry.parentId ? sessionManager.getEntry(entry.parentId) : undefined;
-        if (!parent || parent.type !== "message" || parent.message?.role === "user") {
-          throw new Error("This message cannot be retracted (no preceding assistant context)");
-        }
-        // 链上校验：只允许撤回当前 leaf 链上的消息。
-        const entries = sessionManager.getEntries();
-        if (!isOnLeafChain(entries, sessionManager.getLeafId(), entryId)) {
-          throw new Error("Message is not on the current branch");
-        }
-        const chainTailEntryId = computeChainTail(entries, entryId);
-        if (!chainTailEntryId) throw new Error("Cannot resolve message chain");
-        const tailEntry = sessionManager.getEntry(chainTailEntryId);
-        // 叶子 user（无任何回复）撤回后无处可导航恢复，拒绝。
-        if (
-          tailEntry &&
-          tailEntry.type === "message" &&
-          tailEntry.message?.role === "user" &&
-          chainTailEntryId === entryId
-        ) {
-          throw new Error("Cannot retract a message with no replies");
-        }
-        try {
-          const result = await this.inner.navigateTree(entry.parentId as string, { summarize: false });
-          if (result?.cancelled) return { ok: false, cancelled: true };
-        } catch (error) {
-          invalidateSessionListCache();
-          throw error;
-        }
-        const stack = getRetractedStack();
-        const sid = this.inner.sessionId;
-        stack.set(
-          sid,
-          pushRetracted(stack.get(sid) ?? [], {
-            entryId,
-            text: extractUserText(entry.message),
-            chainTailEntryId,
-            timestamp: entry.timestamp,
-          }),
-        );
-        invalidateSessionListCache();
-        return { ok: true, retracted: stack.get(sid) };
-      }
-
-      case "restore_message": {
-        if (this.inner.isBashRunning) {
-          throw new Error("Cannot restore a message while a shell command is running");
-        }
-        const rawEntryId = command.entryId;
-        if (typeof rawEntryId !== "string" || rawEntryId.trim() === "") {
-          throw new Error("entryId is required");
-        }
-        const entryId = rawEntryId.trim();
-        const stack = getRetractedStack();
-        const sid = this.inner.sessionId;
-        const record = (stack.get(sid) ?? []).find((r) => r.entryId === entryId);
-        if (!record) throw new Error("Message is not retracted");
-        const sessionManager = this.inner.sessionManager;
-        if (!sessionManager.isPersisted()) return { ok: false, cancelled: true, reason: "not-persisted" };
-        if (!sessionManager.getEntry(record.chainTailEntryId)) {
-          throw new Error("Message chain is gone; restore via branch navigator instead");
-        }
-        try {
-          const result = await this.inner.navigateTree(record.chainTailEntryId, { summarize: false });
-          if (result?.cancelled) return { ok: false, cancelled: true };
-        } catch (error) {
-          invalidateSessionListCache();
-          throw error;
-        }
-        stack.set(sid, removeRetracted(sessionManager.getEntries(), stack.get(sid) ?? [], entryId));
-        invalidateSessionListCache();
-        return { ok: true, retracted: stack.get(sid) };
-      }
-
-      case "list_retracted": {
-        return { retracted: getRetractedStack().get(this.inner.sessionId) ?? [] };
-      }
-
       case "set_branch_label": {
         const { targetId, label } = parseSetBranchLabelCommand(command);
         const entryId = this.inner.sessionManager.appendLabelChange(targetId, label);
@@ -1183,7 +1080,6 @@ export class AgentSessionWrapper {
     this.toolRenderStates.clear();
     this.onDestroyCallback?.();
     notifyRunningChange();
-    getRetractedStack().delete(this.inner.sessionId);
   }
 
   private resolveExtensionUiResponse(response: ExtensionUiResponse): void {
@@ -1553,16 +1449,6 @@ declare global {
   var __piSessions: Map<string, AgentSessionWrapper> | undefined;
   var __piStartLocks: Map<string, Promise<{ session: AgentSessionWrapper; realSessionId: string }>> | undefined;
   var __piRunningListeners: Set<(ids: string[]) => void> | undefined;
-  var __piRetractedMessages: Map<string, RetractedRecord[]> | undefined;
-}
-
-/** 消息撤回栈（内存）：sessionId → 被撤回 user 消息记录（按撤回顺序）。
- * 只作 UI 展示/恢复目标；被撤回消息本身保留在会话文件中，栈丢失不影响可恢复性。
- * 失效入口：wrapper destroy 时清理对应键。
- */
-function getRetractedStack(): Map<string, RetractedRecord[]> {
-  if (!globalThis.__piRetractedMessages) globalThis.__piRetractedMessages = new Map();
-  return globalThis.__piRetractedMessages;
 }
 
 function getRegistry(): Map<string, AgentSessionWrapper> {

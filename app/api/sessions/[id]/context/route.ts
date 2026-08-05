@@ -1,7 +1,5 @@
 import { NextResponse } from "next/server";
 import { buildSessionContext } from "@/lib/session-reader";
-import { projectObservationalMemory } from "@/lib/om-ledger";
-import { projectWorkspaceHistory } from "@/lib/workspace-history";
 import { sessionService } from "@/lib/session-service";
 
 export async function GET(
@@ -28,10 +26,8 @@ export async function GET(
       deferThinking,
       deferToolResultImages,
     });
-    const observationalMemory = projectObservationalMemory(entries, leafId ?? null);
-    const workspaceHistory = projectWorkspaceHistory(entries, leafId ?? null);
 
-    return NextResponse.json({ context, observationalMemory, workspaceHistory });
+    return NextResponse.json({ context });
   } catch (error) {
     return NextResponse.json({ error: String(error) }, { status: 500 });
   }

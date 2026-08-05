@@ -29,7 +29,7 @@ export async function GET(
 
     const { filePath, manager: sm } = view;
     const searchParams = new URL(req.url).searchParams;
-    const { leafId, tree, context, header, sessionName, observationalMemory, workspaceHistory } = buildSessionNavigationSnapshot(sm, {
+    const { leafId, tree, context, header, sessionName } = buildSessionNavigationSnapshot(sm, {
       deferThinking: searchParams.has("deferThinking"),
       deferToolResultImages: searchParams.has("deferMedia"),
     });
@@ -66,8 +66,6 @@ export async function GET(
       leafId,
       tree,
       context,
-      observationalMemory,
-      workspaceHistory,
     });
   } catch (error) {
     if (String(error) === READ_ONLY_SUBAGENT_ERROR) {

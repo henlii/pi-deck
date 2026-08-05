@@ -11,8 +11,6 @@ import type {
   AttachedImage,
   ChatInputHandle,
 } from "@/lib/types";
-import type { ObservationalMemoryView } from "@/lib/om-ledger";
-import type { WorkspaceHistoryView } from "@/lib/workspace-history";
 import { normalizeToolCalls } from "@/lib/normalize";
 import { preserveCustomRenderedLines } from "@/lib/custom-rendered-lines";
 import type { SessionActivity } from "@/lib/session-activity";
@@ -74,10 +72,6 @@ export interface SessionData {
     thinkingLevel: string;
     model: { provider: string; modelId: string } | null;
   };
-  /** om 只读 ledger 投影；无有效 om entry 时为 null；旧响应可能缺省 */
-  observationalMemory?: ObservationalMemoryView | null;
-  /** workspace-history 只读 snapshot 时间线；无有效 entry 时为 null；旧响应可能缺省 */
-  workspaceHistory?: WorkspaceHistoryView | null;
 }
 
 interface StreamingState {
@@ -441,8 +435,6 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const [activeLeafId, setActiveLeafId] = useState<string | null>(null);
   const [messages, setMessages] = useState<AgentMessage[]>([]);
   const [entryIds, setEntryIds] = useState<string[]>([]);
-  const [observationalMemory, setObservationalMemory] = useState<ObservationalMemoryView | null>(null);
-  const [workspaceHistory, setWorkspaceHistory] = useState<WorkspaceHistoryView | null>(null);
   const [streamState, dispatch] = useReducer(streamReducer, { isStreaming: false, streamingMessage: null });
   const [agentRunning, setAgentRunning] = useState(false);
   const [bashRunning, setBashRunning] = useState(false);
@@ -719,8 +711,6 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           entryIdsRef.current = [];
           messagesSessionIdRef.current = sid;
           setEntryIds([]);
-          setObservationalMemory(null);
-          setWorkspaceHistory(null);
           setError(null);
         }
         return null;
@@ -745,8 +735,6 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       entryIdsRef.current = nextEntryIds;
       messagesSessionIdRef.current = sid;
       setEntryIds(nextEntryIds);
-      setObservationalMemory(d.observationalMemory ?? null);
-      setWorkspaceHistory(d.workspaceHistory ?? null);
       setCurrentModelOverride(null);
       setError(null);
       if (d.context.thinkingLevel && d.context.thinkingLevel !== "off") {
@@ -797,8 +785,6 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const d = await res.json() as {
         context: { messages: AgentMessage[]; entryIds: string[] };
-        observationalMemory?: ObservationalMemoryView | null;
-        workspaceHistory?: WorkspaceHistoryView | null;
       };
       const nextEntryIds = d.context.entryIds ?? [];
       const previousEntryIds = entryIdsRef.current;
@@ -811,9 +797,6 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       entryIdsRef.current = nextEntryIds;
       messagesSessionIdRef.current = sid;
       setEntryIds(nextEntryIds);
-      // leaf 切换时同步 om / workspace-history 投影；字段缺省时清空，避免旧 leaf 数据残留
-      setObservationalMemory(d.observationalMemory ?? null);
-      setWorkspaceHistory(d.workspaceHistory ?? null);
     } catch (e) {
       console.error("Failed to load context:", e);
     }
@@ -2168,7 +2151,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
   return {
     // State
-    data, loading, error, activeLeafId, messages, entryIds, observationalMemory, workspaceHistory, streamState,
+    data, loading, error, activeLeafId, messages, entryIds, streamState,
     agentRunning, modelNames, modelList, modelThinkingLevels, modelThinkingLevelMaps, newSessionModel, thinkingLevel,
     retryInfo, contextUsage, systemPrompt, forkingEntryId,
     isCompacting, compactError, compactResult, currentModel, displayModel, sessionStats,
