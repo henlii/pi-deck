@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
-import { existsSync, readFileSync, writeFileSync } from "fs";
-import { parseFrontmatter } from "@earendil-works/pi-coding-agent";
 import { loadSkillsWithInstallInfo } from "@/lib/skills-service";
+import { SkillWriteError, toggleSkillDisableModelInvocation } from "@/lib/skills-write";
 
 export const dynamic = "force-dynamic";
 
@@ -20,36 +19,24 @@ export async function GET(req: Request) {
   }
 }
 
-// PATCH /api/skills — toggle disable-model-invocation on a SKILL.md file
+// PATCH /api/skills — toggle disable-model-invocation on a loader-authorized SKILL.md
 export async function PATCH(req: Request) {
   try {
-    const body = await req.json() as { filePath: string; disableModelInvocation: boolean };
-    const { filePath, disableModelInvocation } = body;
-    if (!filePath) return NextResponse.json({ error: "filePath required" }, { status: 400 });
-    if (!existsSync(filePath)) return NextResponse.json({ error: "file not found" }, { status: 404 });
-
-    const content = readFileSync(filePath, "utf8");
-    const key = "disable-model-invocation";
-
-    // Use parseFrontmatter to check current value, then do a surgical line edit
-    // to preserve the original YAML formatting of all other fields.
-    const { frontmatter } = parseFrontmatter<Record<string, unknown>>(content);
-    const alreadySet = Boolean(frontmatter[key]);
-
-    let updated = content;
-    if (disableModelInvocation && !alreadySet) {
-      // Add key after the opening --- line
-      updated = content.replace(/^---\r?\n/, `---\n${key}: true\n`);
-      // If no frontmatter exists, create one
-      if (updated === content) updated = `---\n${key}: true\n---\n${content}`;
-    } else if (!disableModelInvocation && alreadySet) {
-      // Remove the key line entirely
-      updated = content.replace(new RegExp(`^${key}\\s*:.*\\r?\\n`, "m"), "");
-    }
-
-    writeFileSync(filePath, updated, "utf8");
-    return NextResponse.json({ success: true });
+    const body = await req.json() as {
+      cwd?: string;
+      filePath?: string;
+      disableModelInvocation?: boolean;
+    };
+    return NextResponse.json(await toggleSkillDisableModelInvocation({
+      cwd: body.cwd ?? "",
+      filePath: body.filePath ?? "",
+      disableModelInvocation: body.disableModelInvocation ?? false,
+    }));
   } catch (e) {
+    if (e instanceof SkillWriteError) {
+      const status = e.code === "forbidden" ? 403 : e.code === "not-found" ? 404 : 400;
+      return NextResponse.json({ error: e.message }, { status });
+    }
     return NextResponse.json({ error: String(e) }, { status: 500 });
   }
 }
