@@ -455,7 +455,7 @@ function BranchSwitchChooser({ indent, mode, busy, pendingLabel, error, customFo
         </div>
       )}
       {error && (
-        <div role="alert" style={{ padding: "4px 8px 2px", fontSize: 11, color: "#dc2626", lineHeight: 1.4 }}>
+        <div role="alert" style={{ padding: "4px 8px 2px", fontSize: 11, color: "var(--status-danger)", lineHeight: 1.4 }}>
           {error}
         </div>
       )}
@@ -585,7 +585,7 @@ function BranchBookmarkFooter({ currentLabel, disabled, onSubmit, t }: {
           </div>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 4, minHeight: 14 }}>
             {error ? (
-              <span role="alert" style={{ fontSize: 10, color: "#dc2626", lineHeight: 1.4 }}>{error}</span>
+              <span role="alert" style={{ fontSize: 10, color: "var(--status-danger)", lineHeight: 1.4 }}>{error}</span>
             ) : (
               <span />
             )}
@@ -659,7 +659,7 @@ function BranchBookmarkFooter({ currentLabel, disabled, onSubmit, t }: {
             )}
           </div>
           {error && (
-            <div role="alert" style={{ marginTop: 4, fontSize: 10, color: "#dc2626", lineHeight: 1.4 }}>
+            <div role="alert" style={{ marginTop: 4, fontSize: 10, color: "var(--status-danger)", lineHeight: 1.4 }}>
               {error}
             </div>
           )}

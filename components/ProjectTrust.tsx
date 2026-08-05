@@ -60,7 +60,7 @@ export function useProjectTrust(roots: string[]): {
 
 const TONE_STYLE: Record<Exclude<ProjectTrustBadgeTone, "none">, { color: string; border: string }> = {
   trusted: { color: "var(--text-dim)", border: "var(--border)" },
-  untrusted: { color: "#dc2626", border: "#dc262655" },
+  untrusted: { color: "var(--error-text)", border: "var(--status-danger-border)" },
   undecided: {
     color: "var(--warning)",
     border: "color-mix(in srgb, var(--warning) 35%, transparent)",
@@ -203,7 +203,7 @@ export function ProjectTrustDialog({
     borderRadius: 8,
     border: "1px solid var(--border)",
     background: "var(--bg-panel)",
-    color: danger ? "#dc2626" : "var(--text)",
+    color: danger ? "var(--error-text)" : "var(--text)",
     fontSize: 12.5,
     cursor: busy ? "progress" : "pointer",
     marginBottom: 8,
@@ -255,7 +255,7 @@ export function ProjectTrustDialog({
         </div>
       )}
       {error && (
-        <div role="alert" style={{ fontSize: 11.5, color: "#dc2626", marginTop: 8, wordBreak: "break-all" }}>
+        <div role="alert" style={{ fontSize: 11.5, color: "var(--error-text)", marginTop: 8, wordBreak: "break-all" }}>
           {t("trust_saveFailed")}: {error}
         </div>
       )}

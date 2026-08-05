@@ -329,10 +329,10 @@ function IconButton({
         display: "inline-flex",
         alignItems: "center",
         justifyContent: "center",
-        background: success ? "#16a34a" : "none",
-        border: `1px solid ${success ? "#16a34a" : error ? "#f87171" : "var(--border)"}`,
+        background: success ? "var(--status-success)" : "none",
+        border: `1px solid ${success ? "var(--status-success)" : error ? "var(--status-danger)" : "var(--border)"}`,
         borderRadius: 5,
-        color: success ? "#fff" : error ? "#ef4444" : disabled ? "var(--text-dim)" : "var(--text-muted)",
+        color: success ? "#fff" : error ? "var(--status-danger)" : disabled ? "var(--text-dim)" : "var(--text-muted)",
         cursor: disabled ? "not-allowed" : "pointer",
         opacity: disabled ? 0.55 : 1,
         boxSizing: "border-box",
@@ -364,7 +364,7 @@ function ProviderDetail({ name, provider, onChange, onRename, onDelete }: {
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <SectionTitle>{t("models_provider")}</SectionTitle>
         <button onClick={onDelete}
-          style={{ padding: "3px 8px", background: "none", border: "1px solid rgba(239,68,68,0.3)", borderRadius: 4, color: "#ef4444", cursor: "pointer", fontSize: 11 }}>
+          style={{ padding: "3px 8px", background: "none", border: "1px solid var(--status-danger-border)", borderRadius: 4, color: "var(--status-danger)", cursor: "pointer", fontSize: 11 }}>
           {t("models_delete")}
         </button>
       </div>
@@ -390,7 +390,7 @@ function ProviderDetail({ name, provider, onChange, onRename, onDelete }: {
           value={provider.apiKey ?? (provider.apiKeyConfigured ? "***" : "")}
           onChange={(v) => set("apiKey", v || undefined)}
           placeholder={t("models_apiKeyPlaceholder")} mono />
-        <span style={{ fontSize: 10, color: provider.apiKeyConfigured && !provider.apiKey ? "#4ade80" : "var(--text-dim)", marginTop: 2 }}>
+        <span style={{ fontSize: 10, color: provider.apiKeyConfigured && !provider.apiKey ? "var(--status-success)" : "var(--text-dim)", marginTop: 2 }}>
           {provider.apiKeyConfigured && !provider.apiKey
             ? `${t("models_configured")} · ${t("models_enterNewKey")}`
             : t("models_apiKeyHint")}
@@ -416,7 +416,7 @@ const LEVEL_COLORS: Record<ThinkingLevel, string> = {
   medium:  "#a78bfa",
   high:    "#f472b6",
   xhigh:   "#fb923c",
-  max:     "#ef4444",
+  max:     "var(--status-danger)",
 };
 
 function ThinkingLevelMapEditor({
@@ -465,7 +465,7 @@ function ThinkingLevelMapEditor({
           fontWeight: 600,
         };
         const btnActiveDisabled: React.CSSProperties = {
-          background: "#ef4444",
+          background: "var(--status-danger)",
           color: "#fff",
           fontWeight: 600,
         };
@@ -695,7 +695,7 @@ function ModelDetail({
             )}
           </IconButton>
           <button onClick={onDelete}
-            style={{ height: 24, padding: "0 8px", background: "none", border: "1px solid rgba(239,68,68,0.3)", borderRadius: 4, color: "#ef4444", cursor: "pointer", fontSize: 11, boxSizing: "border-box" }}>
+            style={{ height: 24, padding: "0 8px", background: "none", border: "1px solid var(--status-danger-border)", borderRadius: 4, color: "var(--status-danger)", cursor: "pointer", fontSize: 11, boxSizing: "border-box" }}>
             {t("common_remove")}
           </button>
         </div>
@@ -899,8 +899,8 @@ function OAuthDetail({ provider, onRefresh }: { provider: OAuthProvider; onRefre
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <SectionTitle>{t("models_subscription")}</SectionTitle>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <span style={{ width: 7, height: 7, borderRadius: "50%", background: provider.loggedIn ? "#4ade80" : "var(--border)", display: "inline-block" }} />
-          <span style={{ fontSize: 11, color: provider.loggedIn ? "#4ade80" : "var(--text-dim)" }}>
+          <span style={{ width: 7, height: 7, borderRadius: "50%", background: provider.loggedIn ? "var(--status-success)" : "var(--border)", display: "inline-block" }} />
+          <span style={{ fontSize: 11, color: provider.loggedIn ? "var(--status-success)" : "var(--text-dim)" }}>
             {provider.loggedIn ? t("models_subscriptionStatus") : t("models_subscriptionNotConnected")}
           </span>
         </div>
@@ -989,10 +989,10 @@ function OAuthDetail({ provider, onRefresh }: { provider: OAuthProvider; onRefre
           <p style={{ margin: 0, fontSize: 12, color: "var(--text-muted)" }}>{loginState.message}</p>
         )}
         {loginState.phase === "success" && (
-          <p style={{ margin: 0, fontSize: 12, color: "#4ade80" }}>{t("models_connectedSuccessfully")}</p>
+          <p style={{ margin: 0, fontSize: 12, color: "var(--status-success)" }}>{t("models_connectedSuccessfully")}</p>
         )}
         {loginState.phase === "error" && (
-          <p style={{ margin: 0, fontSize: 12, color: "#f87171" }}>{loginState.message}</p>
+          <p style={{ margin: 0, fontSize: 12, color: "var(--status-danger)" }}>{loginState.message}</p>
         )}
       </div>
 
@@ -1016,7 +1016,7 @@ function OAuthDetail({ provider, onRefresh }: { provider: OAuthProvider; onRefre
             {provider.loggedIn && (
               <button
                 onClick={handleLogout}
-                style={{ padding: "5px 12px", background: "none", border: "1px solid rgba(239,68,68,0.3)", borderRadius: 5, color: "#ef4444", cursor: "pointer", fontSize: 12 }}
+                style={{ padding: "5px 12px", background: "none", border: "1px solid var(--status-danger-border)", borderRadius: 5, color: "var(--status-danger)", cursor: "pointer", fontSize: 12 }}
               >
                 {t("models_disconnect")}
               </button>
@@ -1092,8 +1092,8 @@ function ApiKeyDetail({ provider, onRefresh }: { provider: ApiKeyProvider; onRef
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <SectionTitle>{t("models_apiKey")}</SectionTitle>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <span style={{ width: 7, height: 7, borderRadius: "50%", background: provider.configured ? "#4ade80" : "var(--border)", display: "inline-block" }} />
-          <span style={{ fontSize: 11, color: provider.configured ? "#4ade80" : "var(--text-dim)" }}>
+          <span style={{ width: 7, height: 7, borderRadius: "50%", background: provider.configured ? "var(--status-success)" : "var(--border)", display: "inline-block" }} />
+          <span style={{ fontSize: 11, color: provider.configured ? "var(--status-success)" : "var(--text-dim)" }}>
             {provider.configured ? t("models_configured") : t("models_notConfigured")}
           </span>
         </div>
@@ -1122,7 +1122,7 @@ function ApiKeyDetail({ provider, onRefresh }: { provider: ApiKeyProvider; onRef
             disabled={saving || !apiKey.trim() || savedOk}
             style={{
               padding: "6px 12px",
-              background: savedOk ? "#16a34a" : apiKey.trim() ? "var(--accent)" : "var(--bg-panel)",
+              background: savedOk ? "var(--status-success)" : apiKey.trim() ? "var(--accent)" : "var(--bg-panel)",
               border: "none", borderRadius: 5,
               color: (apiKey.trim() || savedOk) ? "#fff" : "var(--text-dim)",
               cursor: (saving || !apiKey.trim() || savedOk) ? "not-allowed" : "pointer",
@@ -1140,7 +1140,7 @@ function ApiKeyDetail({ provider, onRefresh }: { provider: ApiKeyProvider; onRef
         </div>
       </Field>
 
-      {error && <p style={{ margin: 0, fontSize: 12, color: "#f87171" }}>{error}</p>}
+      {error && <p style={{ margin: 0, fontSize: 12, color: "var(--status-danger)" }}>{error}</p>}
 
       {provider.configured && (
         <button
@@ -1148,8 +1148,8 @@ function ApiKeyDetail({ provider, onRefresh }: { provider: ApiKeyProvider; onRef
           disabled={removing}
           style={{
             alignSelf: "flex-start", padding: "5px 12px",
-            background: "none", border: "1px solid rgba(239,68,68,0.3)",
-            borderRadius: 5, color: "#ef4444",
+            background: "none", border: "1px solid var(--status-danger-border)",
+            borderRadius: 5, color: "var(--status-danger)",
             cursor: removing ? "not-allowed" : "pointer", fontSize: 12,
           }}
         >
@@ -1745,7 +1745,7 @@ export function ModelsConfig({ onClose, embedded = false, onAuthStateChange }: {
 
         {/* Footer */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 10, padding: "10px 18px", borderTop: "1px solid var(--border)", flexShrink: 0 }}>
-          {saveError && <span style={{ fontSize: 12, color: "#f87171", flex: 1 }}>{saveError}</span>}
+          {saveError && <span style={{ fontSize: 12, color: "var(--status-danger)", flex: 1 }}>{saveError}</span>}
           <button onClick={onClose} style={{ padding: "6px 14px", background: "none", border: "1px solid var(--border)", borderRadius: 6, color: "var(--text-muted)", cursor: "pointer", fontSize: 13 }}>
             {t("common_cancel")}
           </button>
@@ -1753,7 +1753,7 @@ export function ModelsConfig({ onClose, embedded = false, onAuthStateChange }: {
             position: "relative",
             padding: "6px 16px",
             minWidth: 92,
-            background: savedOk ? "#16a34a" : saving ? "var(--bg-panel)" : "var(--accent)",
+            background: savedOk ? "var(--status-success)" : saving ? "var(--bg-panel)" : "var(--accent)",
             border: "none", borderRadius: 6,
             color: savedOk ? "#fff" : saving ? "var(--text-muted)" : "#fff",
             cursor: (saving || savedOk) ? "default" : "pointer", fontSize: 13, fontWeight: 600,

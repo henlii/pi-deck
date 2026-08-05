@@ -258,11 +258,25 @@ function TreeNode({
     }
   }, [node.isDir, node.fullPath, node.name, loaded, open, loadChildren, onOpenFile, onToggleExpanded]);
 
+  // 键盘操作：行聚焦时 Enter/Space 等价点击（目录切换展开、文件打开）。
+  // 仅处理行自身按键（e.target === e.currentTarget），行内按钮/下载链接自行响应，不冲突。
+  const handleKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.target !== event.currentTarget) return;
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      handleClick();
+    }
+  }, [handleClick]);
+
   return (
-    <div>
+    <div role="none">
       <div
         className="file-row"
+        role="treeitem"
+        tabIndex={0}
+        aria-expanded={node.isDir ? open : undefined}
         onClick={handleClick}
+        onKeyDown={handleKeyDown}
         style={{
           position: "relative",
           display: "flex",
@@ -285,7 +299,7 @@ function TreeNode({
           </svg>
         )}
         {!node.isDir && <span style={{ width: 10, flexShrink: 0 }} />}
-        <span style={{ flexShrink: 0, display: "flex", alignItems: "center" }}>
+        <span className="file-row-icon" style={{ flexShrink: 0, display: "flex", alignItems: "center" }}>
           {node.isDir ? <FolderIcon size={14} open={open} /> : getFileIcon(node.name, 14)}
         </span>
         <span
@@ -384,7 +398,7 @@ function TreeNode({
         )}
       </div>
       {node.isDir && open && (
-        <div>
+        <div role="group">
           {children.map((child) => (
             <TreeNode
               key={child.fullPath}
@@ -753,23 +767,25 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
         ) : error ? (
           <div style={{ padding: "8px 12px", fontSize: 11, color: "var(--status-danger)" }}>{error}</div>
         ) : (
-          roots.map((node) => (
-            <TreeNode
-              key={node.fullPath}
-              node={node}
-              depth={0}
-              cwd={cwd}
-              onOpenFile={onOpenFile}
-              onAtMention={onAtMention}
-              expandedPaths={expandedPaths}
-              onToggleExpanded={handleToggleExpanded}
-              refreshToken={refreshToken}
-              highlightedPaths={highlightedPaths}
-              gitStatusByPath={gitStatusByPath}
-              changedDirectoryPaths={changedDirectoryPaths}
-              t={t}
-            />
-          ))
+          <div role="tree">
+            {roots.map((node) => (
+              <TreeNode
+                key={node.fullPath}
+                node={node}
+                depth={0}
+                cwd={cwd}
+                onOpenFile={onOpenFile}
+                onAtMention={onAtMention}
+                expandedPaths={expandedPaths}
+                onToggleExpanded={handleToggleExpanded}
+                refreshToken={refreshToken}
+                highlightedPaths={highlightedPaths}
+                gitStatusByPath={gitStatusByPath}
+                changedDirectoryPaths={changedDirectoryPaths}
+                t={t}
+              />
+            ))}
+          </div>
         )}
         {!loading && !error && roots.length === 0 && (
           <div style={{ padding: "8px 12px", fontSize: 11, color: "var(--text-dim)" }}>

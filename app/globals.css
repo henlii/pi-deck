@@ -48,6 +48,22 @@
   --status-success: #5f8d3d;
   --status-warning: #8d6c15;
   --status-danger: #b7493f;
+  --status-success-bg: #5f8d3d14;
+  --status-success-border: #5f8d3d59;
+  --status-success-foreground: #ffffff;
+  --status-warning-bg: #8d6c1514;
+  --status-warning-border: #8d6c1566;
+  --status-danger-bg: #b7493f12;
+  --status-danger-border: #b7493f66;
+  --error-text: #a43d35;
+  --diff-added-text: #47752b;
+  --diff-added-bg: #5f8d3d17;
+  --diff-added-border: #5f8d3d99;
+  --diff-removed-text: #a43d35;
+  --diff-removed-bg: #b7493f17;
+  --diff-removed-border: #b7493f99;
+  --diff-hunk-bg: #2d72c41f;
+  --live-indicator-glow: 0 0 6px #5f8d3d99;
   --warning: var(--status-warning);
   --danger: var(--status-danger);
   --success: var(--status-success);
@@ -89,6 +105,22 @@ html.dark {
   --status-success: #76ad4f;
   --status-warning: #c67f13;
   --status-danger: #da5b4a;
+  --status-success-bg: #76ad4f1f;
+  --status-success-border: #76ad4f70;
+  --status-success-foreground: #120f0e;
+  --status-warning-bg: #c67f131f;
+  --status-warning-border: #c67f1370;
+  --status-danger-bg: #da5b4a1f;
+  --status-danger-border: #da5b4a7a;
+  --error-text: #ed7665;
+  --diff-added-text: #8bc766;
+  --diff-added-bg: #76ad4f1f;
+  --diff-added-border: #76ad4fb3;
+  --diff-removed-text: #ed7665;
+  --diff-removed-bg: #da5b4a24;
+  --diff-removed-border: #da5b4ab3;
+  --diff-hunk-bg: #479fe624;
+  --live-indicator-glow: 0 0 6px #76ad4fb3;
   --warning: var(--status-warning);
   --danger: var(--status-danger);
   --success: var(--status-success);
@@ -124,6 +156,22 @@ html[data-theme-style="fusion"] {
   --status-success: #49805d;
   --status-warning: #9a6a1a;
   --status-danger: #b34f58;
+  --status-success-bg: #49805d14;
+  --status-success-border: #49805d59;
+  --status-success-foreground: #ffffff;
+  --status-warning-bg: #9a6a1a14;
+  --status-warning-border: #9a6a1a66;
+  --status-danger-bg: #b34f5812;
+  --status-danger-border: #b34f5866;
+  --error-text: #a23f49;
+  --diff-added-text: #39704d;
+  --diff-added-bg: #49805d17;
+  --diff-added-border: #49805d99;
+  --diff-removed-text: #a23f49;
+  --diff-removed-bg: #b34f5817;
+  --diff-removed-border: #b34f5899;
+  --diff-hunk-bg: #286e981f;
+  --live-indicator-glow: 0 0 6px #49805d99;
   --focus: #286e98;
   --focus-ring: #286e9844;
   --overlay: #18343d30;
@@ -155,6 +203,22 @@ html.dark[data-theme-style="fusion"] {
   --status-success: #79ad78;
   --status-warning: #d0a356;
   --status-danger: #dd777e;
+  --status-success-bg: #79ad781f;
+  --status-success-border: #79ad7870;
+  --status-success-foreground: #101719;
+  --status-warning-bg: #d0a3561f;
+  --status-warning-border: #d0a35670;
+  --status-danger-bg: #dd777e1f;
+  --status-danger-border: #dd777e7a;
+  --error-text: #ed8f95;
+  --diff-added-text: #91c590;
+  --diff-added-bg: #79ad781f;
+  --diff-added-border: #79ad78b3;
+  --diff-removed-text: #ed8f95;
+  --diff-removed-bg: #dd777e24;
+  --diff-removed-border: #dd777eb3;
+  --diff-hunk-bg: #69a7ca24;
+  --live-indicator-glow: 0 0 6px #79ad78b3;
   --focus: #69a7ca;
   --focus-ring: #69a7ca55;
   --overlay: #00000099;
@@ -820,9 +884,9 @@ span.linenumber {
 }
 
 @keyframes saved-pop {
-  0%   { transform: scale(1); box-shadow: 0 0 0 0 rgba(74, 222, 128, 0.55); }
-  40%  { transform: scale(1.08); box-shadow: 0 0 0 6px rgba(74, 222, 128, 0.25); }
-  100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(74, 222, 128, 0); }
+  0%   { transform: scale(1); box-shadow: 0 0 0 0 color-mix(in srgb, var(--status-success) 55%, transparent); }
+  40%  { transform: scale(1.08); box-shadow: 0 0 0 6px color-mix(in srgb, var(--status-success) 25%, transparent); }
+  100% { transform: scale(1); box-shadow: 0 0 0 0 transparent; }
 }
 
 @keyframes saved-check-draw {
@@ -1198,14 +1262,14 @@ span.linenumber {
 }
 /* 危险操作 hover（删除） */
 .sidebar-icon-btn--danger:hover:not(:disabled) {
-  background: rgba(239, 68, 68, 0.08);
-  color: #ef4444;
+  background: var(--status-danger-bg);
+  color: var(--status-danger);
 }
 /* 刷新完成反馈态 */
 .sidebar-icon-btn--done,
 .sidebar-icon-btn--done:hover:not(:disabled) {
-  background: rgba(74, 222, 128, 0.18);
-  color: #4ade80;
+  background: color-mix(in srgb, var(--status-success) 18%, transparent);
+  color: var(--status-success);
 }
 
 /* 行内操作按钮：默认隐藏，行 hover / 行内键盘焦点时显现 */
@@ -1417,6 +1481,10 @@ span.linenumber {
 .file-row:focus-within {
   background: var(--bg-hover);
 }
+.file-row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
 .file-row:hover .file-row-actions,
 .file-row:focus-within .file-row-actions {
   opacity: 1;
@@ -1547,6 +1615,22 @@ span.linenumber {
   .chat-input-shell button {
     min-height: 40px;
   }
+  /* 文件树行：44px 触摸目标（覆盖行内 height: 24），图标/箭头/行内操作同步放大 */
+  .file-row {
+    min-height: 44px;
+  }
+  .file-row > svg {
+    width: 12px;
+    height: 12px;
+  }
+  .file-row-icon svg {
+    width: 18px;
+    height: 18px;
+  }
+  .file-row-action-btn {
+    width: 32px;
+    height: 32px;
+  }
 }
 
 /* 三点菜单打开时触发按钮保持可见（覆盖行 hover 渐进显露的隐藏态） */
@@ -1672,16 +1756,16 @@ span.linenumber {
   flex: 0 0 auto;
 }
 .file-editor-notice.is-warning {
-  background: color-mix(in srgb, #f59e0b 10%, var(--bg-panel));
-  color: color-mix(in srgb, #f59e0b 72%, var(--text));
+  background: color-mix(in srgb, var(--status-warning) 10%, var(--bg-panel));
+  color: color-mix(in srgb, var(--status-warning) 72%, var(--text));
 }
 .file-editor-notice.is-error {
-  background: color-mix(in srgb, #ef4444 9%, var(--bg-panel));
-  color: #f87171;
+  background: color-mix(in srgb, var(--status-danger) 9%, var(--bg-panel));
+  color: var(--status-danger);
 }
 .file-editor-notice.is-success {
-  background: color-mix(in srgb, #22c55e 8%, var(--bg-panel));
-  color: #4ade80;
+  background: color-mix(in srgb, var(--status-success) 8%, var(--bg-panel));
+  color: var(--status-success);
 }
 .file-editor-notice__actions {
   display: flex;
@@ -1708,12 +1792,12 @@ span.linenumber {
 }
 .file-editor-notice button.is-danger,
 .file-close-confirm__button.is-danger {
-  color: #f87171;
-  border-color: color-mix(in srgb, #ef4444 35%, var(--border));
+  color: var(--status-danger);
+  border-color: color-mix(in srgb, var(--status-danger) 35%, var(--border));
 }
 .file-close-confirm {
   min-height: 36px;
-  background: color-mix(in srgb, #f59e0b 7%, var(--bg-panel));
+  background: color-mix(in srgb, var(--status-warning) 7%, var(--bg-panel));
 }
 .file-close-confirm__message {
   min-width: 0;

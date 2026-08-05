@@ -733,6 +733,10 @@ export class AgentSessionWrapper {
             error: ok ? undefined : "Prompt rejected before submission",
           }),
         }).then(() => {
+          // P1-3：旧 SDK / 桩成功完成 prompt 但从不回调 preflightResult 时，
+          // 在此幂等 settle（settleSubmit 已防重复），send 最终返回而非永久挂起；
+          // 支持 preflight 的 SDK 已由 preflightResult 先 settle，此处为 no-op。
+          settleSubmit({ ok: true });
           this.promptRunning = false;
           if (!streamingBehavior) this.emit({ type: "prompt_done" });
           notifyRunningChange();

@@ -1362,7 +1362,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                 {!fulltextLoading && fulltextSource === "jsonl" && (
                   <span>{t("sidebar_searchFulltextSourceJsonl")} · {t("sidebar_searchFulltextHits", { count: fulltextHits.length })}</span>
                 )}
-                {fulltextError && <span style={{ color: "#f87171" }}>{fulltextError}</span>}
+                {fulltextError && <span style={{ color: "var(--status-danger)" }}>{fulltextError}</span>}
               </div>
             )}
           </div>
@@ -1412,7 +1412,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
           </div>
         )}
         {error && (
-          <div style={{ padding: "12px 14px", color: "#f87171", fontSize: 12 }}>
+          <div style={{ padding: "12px 14px", color: "var(--status-danger)", fontSize: 12 }}>
             {error}
           </div>
         )}
@@ -1745,7 +1745,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
             </div>
           )}
           {customPathError && (
-            <div role="alert" style={{ marginTop: 8, color: "#dc2626", fontSize: 12, lineHeight: 1.45, overflowWrap: "anywhere" }}>
+            <div role="alert" style={{ marginTop: 8, color: "var(--status-danger)", fontSize: 12, lineHeight: 1.45, overflowWrap: "anywhere" }}>
               {customPathError}
             </div>
           )}
@@ -1828,7 +1828,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
             }}
           />
           {!editProjectValue.trim() && (
-            <div style={{ marginTop: 6, fontSize: 11.5, color: "#dc2626" }}>{t("sidebar_projectNameRequired")}</div>
+            <div style={{ marginTop: 6, fontSize: 11.5, color: "var(--status-danger)" }}>{t("sidebar_projectNameRequired")}</div>
           )}
         </form>
       </ViewportDialog>
@@ -2153,7 +2153,7 @@ function ProjectSection({
           {wtError && worktreeActions && (
             <div style={{
               padding: "3px 10px 6px 30px",
-              color: "#dc2626",
+              color: "var(--status-danger)",
               fontSize: 11,
               lineHeight: 1.35,
               overflowWrap: "anywhere",
@@ -2329,7 +2329,7 @@ function WorktreeGroupSection({
 
       {/* 脏删除确认：行内展示，Force/Cancel 文字按钮保证破坏性操作明确 */}
       {confirmRemove && (
-        <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 8px 5px 30px", background: "rgba(239,68,68,0.06)" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 8px 5px 30px", background: "var(--status-danger-bg)" }}>
           <span style={{ flex: 1, minWidth: 0, fontSize: 11, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
             {t("sidebar_dirtyWorktreeConfirm")}
           </span>
@@ -2337,7 +2337,7 @@ function WorktreeGroupSection({
             type="button"
             onClick={onConfirmRemove}
             disabled={worktreeActions?.busy}
-            style={{ padding: "3px 9px", background: "#ef4444", border: "none", borderRadius: 5, color: "#fff", fontSize: 11, fontWeight: 600, cursor: "pointer", flexShrink: 0 }}
+            style={{ padding: "3px 9px", background: "var(--status-danger)", border: "none", borderRadius: 5, color: "#fff", fontSize: 11, fontWeight: 600, cursor: "pointer", flexShrink: 0 }}
           >
             {t("sidebar_forceRemove")}
           </button>
@@ -2605,10 +2605,10 @@ function SessionItem({
         borderRadius: 6,
         cursor: confirmDelete || renaming ? "default" : "pointer",
         background: confirmDelete
-          ? "rgba(239,68,68,0.06)"
+          ? "var(--status-danger-bg)"
           : isSelected ? "var(--bg-selected)" : hovered ? "var(--bg-hover)" : "transparent",
         borderLeft: confirmDelete
-          ? "2px solid #ef4444"
+          ? "2px solid var(--status-danger)"
           : isSelected ? "2px solid var(--accent)" : "2px solid transparent",
         transition: "background 0.15s ease, color 0.15s ease",
         opacity: deleting ? 0.5 : 1,
@@ -2628,7 +2628,7 @@ function SessionItem({
               style={{
                 display: "flex", alignItems: "center", justifyContent: "center", gap: 4,
                 height: compact ? 22 : 26, padding: "0 10px",
-                background: "#ef4444", border: "none",
+                background: "var(--status-danger)", border: "none",
                 borderRadius: 6, color: "#fff",
                 cursor: "pointer", fontSize: compact ? 11 : 12, fontWeight: 600,
                 whiteSpace: "nowrap",

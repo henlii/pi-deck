@@ -45,9 +45,9 @@ function getMessagePreview(msg: AgentMessage | Partial<AgentMessage>): string {
 
 function getNodeColor(msg: AgentMessage | Partial<AgentMessage>): { bg: string; border: string } {
   if (msg.role === "user") {
-    return { bg: "rgba(37,99,235,0.18)", border: "rgba(37,99,235,0.7)" };
+    return { bg: "var(--bg-selected)", border: "var(--accent)" };
   }
-  return { bg: "rgba(107,114,128,0.12)", border: "rgba(107,114,128,0.5)" };
+  return { bg: "var(--bg-hover)", border: "var(--text-dim)" };
 }
 
 function hasTextContent(msg: AgentMessage | Partial<AgentMessage>): boolean {
@@ -288,9 +288,9 @@ export function ChatMinimap({ messages, plan, scrollContainer, messageRefs }: Pr
           right: 0,
           top: `${viewportBoxTop}%`,
           height: `${viewportBoxHeight}%`,
-          background: "rgba(100,100,100,0.1)",
-          borderTop: "1px solid rgba(100,100,100,0.2)",
-          borderBottom: "1px solid rgba(100,100,100,0.2)",
+          background: "var(--bg-hover)",
+          borderTop: "1px solid var(--border-strong)",
+          borderBottom: "1px solid var(--border-strong)",
           pointerEvents: "none",
           zIndex: 1,
         }}

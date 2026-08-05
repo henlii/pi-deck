@@ -23,14 +23,14 @@ const PRIORITY_LABELS: Record<TodoPriority, "todo_high" | "todo_medium" | "todo_
 };
 
 const PRIORITY_COLORS: Record<TodoPriority, string> = {
-  high: "#ef4444",
-  medium: "#d97706",
+  high: "var(--status-danger)",
+  medium: "var(--status-warning)",
   low: "var(--text-dim)",
 };
 
 function TodoStatusIcon({ status }: { status: TodoStatus }) {
   const color = status === "completed"
-    ? "#22c55e"
+    ? "var(--status-success)"
     : status === "in_progress"
       ? "var(--accent)"
       : "var(--text-dim)";
@@ -139,7 +139,7 @@ export function TodoPanel({ todos, collapsed, onToggle }: TodoPanelProps) {
         <span
           style={{
             flexShrink: 0,
-            color: allCompleted ? "#22c55e" : "var(--text-muted)",
+            color: allCompleted ? "var(--status-success)" : "var(--text-muted)",
             fontFamily: "var(--font-mono)",
             fontSize: 10,
           }}
@@ -169,7 +169,7 @@ export function TodoPanel({ todos, collapsed, onToggle }: TodoPanelProps) {
               width: `${progress}%`,
               height: "100%",
               borderRadius: "inherit",
-              background: allCompleted ? "#22c55e" : "var(--accent)",
+              background: allCompleted ? "var(--status-success)" : "var(--accent)",
               transition: "width 0.2s ease",
             }}
           />

@@ -577,7 +577,7 @@ export function InlineExtensionCard({ request, disabled = false, onRespond }: In
             padding: "5px 10px",
             borderTop: "1px solid var(--border)",
             background: "var(--bg-subtle)",
-            color: expired ? "#d97706" : "var(--text-dim)",
+            color: expired ? "var(--status-warning)" : "var(--text-dim)",
             fontSize: 10,
             lineHeight: 1.4,
           }}

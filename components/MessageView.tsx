@@ -675,7 +675,7 @@ function ThinkingBlock({ block, duration, sessionId, entryId, blockIndex }: {
         <div
           style={{
             padding: "8px 10px",
-            color: error ? "#f87171" : "var(--text-muted)",
+            color: error ? "var(--error-text)" : "var(--text-muted)",
             fontSize: 12,
             lineHeight: 1.6,
             whiteSpace: "pre-wrap",
@@ -944,7 +944,7 @@ function PairedDiffResult({ diff }: {
   return (
     <div
       style={{
-        borderTop: "1px solid rgba(34,197,94,0.15)",
+        borderTop: "1px solid var(--status-success-border)",
         background: "var(--bg)",
       }}
     >
@@ -1029,16 +1029,16 @@ function SplitDiffHeader({ title, side }: { title: string; side: "left" | "right
 function SplitDiffCellView({ cell, side }: { cell: SplitDiffCell; side: "left" | "right" }) {
   const bg =
     cell.type === "added"
-      ? "rgba(34,197,94,0.12)"
+      ? "var(--diff-added-bg)"
       : cell.type === "removed"
-      ? "rgba(248,113,113,0.13)"
+      ? "var(--diff-removed-bg)"
       : cell.type === "empty"
       ? "var(--bg-subtle)"
       : "transparent";
   const marker =
     cell.type === "added" ? "+" : cell.type === "removed" ? "-" : " ";
   const markerColor =
-    cell.type === "added" ? "#22c55e" : cell.type === "removed" ? "#f87171" : "var(--text-dim)";
+    cell.type === "added" ? "var(--diff-added-text)" : cell.type === "removed" ? "var(--diff-removed-text)" : "var(--text-dim)";
 
   return (
     <div
@@ -1103,13 +1103,13 @@ function PatchTextView({ text }: { text: string }) {
           line.startsWith("-") && !line.startsWith("---") ? "removed" :
           "context";
         const bg =
-          kind === "added" ? "rgba(34,197,94,0.12)" :
-          kind === "removed" ? "rgba(248,113,113,0.13)" :
-          kind === "hunk" ? "rgba(96,165,250,0.12)" :
+          kind === "added" ? "var(--diff-added-bg)" :
+          kind === "removed" ? "var(--diff-removed-bg)" :
+          kind === "hunk" ? "var(--diff-hunk-bg)" :
           "transparent";
         const color =
-          kind === "added" ? "#22c55e" :
-          kind === "removed" ? "#f87171" :
+          kind === "added" ? "var(--diff-added-text)" :
+          kind === "removed" ? "var(--diff-removed-text)" :
           kind === "hunk" ? "var(--accent)" :
           "var(--text)";
 
@@ -1120,9 +1120,9 @@ function PatchTextView({ text }: { text: string }) {
               display: "flex",
               background: bg,
               borderLeft: kind === "added"
-                ? "3px solid #22c55e"
+                ? "3px solid var(--diff-added-border)"
                 : kind === "removed"
-                ? "3px solid #f87171"
+                ? "3px solid var(--diff-removed-border)"
                 : kind === "hunk"
                 ? "3px solid var(--accent)"
                 : "3px solid transparent",
@@ -1226,15 +1226,15 @@ function PairedResult({ text, isEmpty, isError }: {
   return (
     <div
       style={{
-        borderTop: `1px solid ${isError ? "rgba(248,113,113,0.3)" : "rgba(34,197,94,0.15)"}`,
-        background: isError ? "rgba(248,113,113,0.04)" : "var(--bg-subtle)",
+        borderTop: `1px solid ${isError ? "var(--status-danger-border)" : "var(--status-success-border)"}`,
+        background: isError ? "var(--status-danger-bg)" : "var(--bg-subtle)",
       }}
     >
       <pre
         style={{
           margin: 0,
           padding: "8px 10px",
-          color: isError ? "#f87171" : (isEmpty ? "var(--text-dim)" : "var(--text-muted)"),
+          color: isError ? "var(--error-text)" : (isEmpty ? "var(--text-dim)" : "var(--text-muted)"),
           fontSize: 12,
           lineHeight: 1.5,
           overflow: "auto",
@@ -1414,9 +1414,9 @@ function toRenderableActivity(details: unknown): SessionActivity | null {
 }
 
 const ACTIVITY_KIND_STYLES: Record<ActivityKind, { color: string; border: string; background: string; Icon: typeof CheckCircle2 }> = {
-  result: { color: "#16a34a", border: "rgba(34,197,94,0.35)", background: "rgba(34,197,94,0.04)", Icon: CheckCircle2 },
-  warning: { color: "#d97706", border: "rgba(217,119,6,0.4)", background: "rgba(217,119,6,0.05)", Icon: AlertTriangle },
-  error: { color: "#f87171", border: "rgba(248,113,113,0.45)", background: "rgba(248,113,113,0.05)", Icon: XCircle },
+  result: { color: "var(--status-success)", border: "var(--status-success-border)", background: "var(--status-success-bg)", Icon: CheckCircle2 },
+  warning: { color: "var(--status-warning)", border: "var(--status-warning-border)", background: "var(--status-warning-bg)", Icon: AlertTriangle },
+  error: { color: "var(--error-text)", border: "var(--status-danger-border)", background: "var(--status-danger-bg)", Icon: XCircle },
   output: { color: "var(--accent)", border: "var(--border)", background: "var(--bg)", Icon: Terminal },
 };
 
