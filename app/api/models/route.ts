@@ -49,6 +49,9 @@ async function loadModels(cwd: string): Promise<ModelsData> {
   let defaultModel: { provider: string; modelId: string } | null = null;
   const thinkingLevels: Record<string, string[]> = {};
   const thinkingLevelMaps: Record<string, Record<string, string | null>> = {};
+  // providerId → 是否已有可用凭据（AuthStorage key / runtime / models.json / 环境变量）。
+  // 未认证且无环境凭据的 provider 模型在 UI 中灰显，避免用户选择必然失败的模型。
+  const authConfigured: Record<string, boolean> = {};
 
   const agentDir = getAgentDir();
   // 进程级复用 ModelRuntime（按 agentDir 键控）：模型运行时只依赖 agentDir
@@ -76,6 +79,9 @@ async function loadModels(cwd: string): Promise<ModelsData> {
     nameMap.set(key, m.name);
     thinkingLevels[key] = getSupportedThinkingLevels(m);
     if (m.thinkingLevelMap) thinkingLevelMaps[key] = m.thinkingLevelMap;
+    if (authConfigured[m.provider] === undefined) {
+      authConfigured[m.provider] = modelRuntime.getProviderAuthStatus(m.provider).configured;
+    }
   }
 
   const provider = settings.getDefaultProvider();
@@ -84,7 +90,7 @@ async function loadModels(cwd: string): Promise<ModelsData> {
     defaultModel = { provider, modelId };
   }
 
-  return { models: Object.fromEntries(nameMap), modelList, defaultModel, thinkingLevels, thinkingLevelMaps };
+  return { models: Object.fromEntries(nameMap), modelList, defaultModel, thinkingLevels, thinkingLevelMaps, authConfigured };
 }
 
 const EMPTY_MODELS: ModelsData = {
@@ -93,6 +99,7 @@ const EMPTY_MODELS: ModelsData = {
   defaultModel: null,
   thinkingLevels: {},
   thinkingLevelMaps: {},
+  authConfigured: {},
 };
 
 export async function GET(req: Request) {

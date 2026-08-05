@@ -1194,13 +1194,15 @@ interface AddProviderPickerProps {
   onSelectApiKey: (id: string) => void;
   onAddCustom: () => void;
   onClose: () => void;
+  /** 认证状态加载中：只显示加载占位，不渲染列表（避免「没有匹配的提供商」错误推断）。 */
+  loading?: boolean;
   /** 嵌入模式：浮层收敛到宿主容器内（absolute），不再叠加一层全屏 backdrop。 */
   embedded?: boolean;
 }
 
 function AddProviderPicker({
   oauthProviders, apiKeyProviders,
-  onSelectOAuth, onSelectApiKey, onAddCustom, onClose, embedded = false,
+  onSelectOAuth, onSelectApiKey, onAddCustom, onClose, loading = false, embedded = false,
 }: AddProviderPickerProps) {
   const { t } = useI18n();
   const [search, setSearch] = useState("");
@@ -1261,7 +1263,9 @@ function AddProviderPicker({
 
         {/* Card grid */}
         <div style={{ flex: 1, overflowY: "auto", padding: 14 }}>
-          {totalCount === 0 ? (
+          {loading ? (
+            <div style={{ padding: "20px 0", fontSize: 12, color: "var(--text-muted)", textAlign: "center" }}>{t("common_loading")}</div>
+          ) : totalCount === 0 ? (
             <div style={{ padding: "20px 0", fontSize: 12, color: "var(--text-dim)", textAlign: "center" }}>{t("models_noProviders")}</div>
           ) : (
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(240px, 100%), 1fr))", gap: 8 }}>
@@ -1315,7 +1319,8 @@ function AddProviderPicker({
                 >
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text)", lineHeight: 1.3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.displayName}</div>
-                    <div style={{ fontSize: 10, color: "var(--text-dim)", marginTop: 2 }}>{t("models_modelCount", { count: p.modelCount })}</div>
+                    {/* 未认证且无环境凭据：不展示模型数量占位，避免用户误以为模型已可用 */}
+                    <div style={{ fontSize: 10, color: "var(--text-dim)", marginTop: 2 }}>{t("models_authRequiredToViewModels")}</div>
                   </div>
                   <ProviderIcon id={p.id} size={28} />
                 </button>
@@ -1331,10 +1336,12 @@ function AddProviderPicker({
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-export function ModelsConfig({ onClose, embedded = false }: {
+export function ModelsConfig({ onClose, embedded = false, onAuthStateChange }: {
   onClose: () => void;
   /** 嵌入模式：去掉自身的全屏遮罩/外壳，由宿主（SettingsView）提供 chrome。 */
   embedded?: boolean;
+  /** 认证状态（OAuth 登录/登出、API Key 保存/移除）变化后触发，宿主据此刷新模型列表。 */
+  onAuthStateChange?: () => void;
 }) {
   const { t } = useI18n();
 
@@ -1348,19 +1355,27 @@ export function ModelsConfig({ onClose, embedded = false }: {
   const [oauthProviders, setOauthProviders] = useState<OAuthProvider[]>([]);
   const [apiKeyProviders, setApiKeyProviders] = useState<ApiKeyProvider[]>([]);
   const [pickerOpen, setPickerOpen] = useState(false);
+  // 认证状态加载态分离：拉取完成前不渲染 provider 列表/不闪错误推断
+  //（认证方式未确认时不得提前断定其为 API Key provider）。
+  const [oauthLoading, setOauthLoading] = useState(true);
+  const [apiKeyLoading, setApiKeyLoading] = useState(true);
 
   const loadOAuthProviders = useCallback(() => {
+    setOauthLoading(true);
     fetch("/api/auth/providers")
       .then((r) => r.json())
       .then((d: { providers: OAuthProvider[] }) => setOauthProviders(d.providers))
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => setOauthLoading(false));
   }, []);
 
   const loadApiKeyProviders = useCallback(() => {
+    setApiKeyLoading(true);
     fetch("/api/auth/all-providers")
       .then((r) => r.json())
       .then((d: { providers: ApiKeyProvider[] }) => setApiKeyProviders(d.providers))
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => setApiKeyLoading(false));
   }, []);
 
   useEffect(() => {
@@ -1377,6 +1392,14 @@ export function ModelsConfig({ onClose, embedded = false }: {
     loadOAuthProviders();
     loadApiKeyProviders();
   }, [loadOAuthProviders, loadApiKeyProviders]);
+
+  // 认证状态变化后的统一回流：重新拉取 OAuth + API Key 认证状态，
+  // 并通知宿主刷新模型列表（外部浏览器完成 OAuth 后原页面自动更新）。
+  const refreshAuthAndModels = useCallback(() => {
+    loadOAuthProviders();
+    loadApiKeyProviders();
+    onAuthStateChange?.();
+  }, [loadOAuthProviders, loadApiKeyProviders, onAuthStateChange]);
 
   const addCustomProvider = useCallback(() => {
     let finalName = "new-provider";
@@ -1479,14 +1502,17 @@ export function ModelsConfig({ onClose, embedded = false }: {
   const detailContent = (() => {
     if (!selection) return null;
     if (selection.type === "oauth") {
+      // 认证状态加载中：显示加载占位，不闪「未连接」等错误推断。
+      if (oauthLoading) return <div style={{ padding: 20, fontSize: 12, color: "var(--text-muted)" }}>{t("common_loading")}</div>;
       const p = oauthProviders.find((p) => p.id === selection.providerId);
       if (!p) return null;
-      return <OAuthDetail key={p.id} provider={p} onRefresh={loadOAuthProviders} />;
+      return <OAuthDetail key={p.id} provider={p} onRefresh={refreshAuthAndModels} />;
     }
     if (selection.type === "apikey") {
+      if (apiKeyLoading) return <div style={{ padding: 20, fontSize: 12, color: "var(--text-muted)" }}>{t("common_loading")}</div>;
       const p = apiKeyProviders.find((p) => p.id === selection.providerId);
       if (!p) return null;
-      return <ApiKeyDetail key={p.id} provider={p} onRefresh={loadApiKeyProviders} />;
+      return <ApiKeyDetail key={p.id} provider={p} onRefresh={refreshAuthAndModels} />;
     }
     if (selection.type === "provider") {
       const provider = config.providers?.[selection.name];
@@ -1555,6 +1581,10 @@ export function ModelsConfig({ onClose, embedded = false }: {
             display: "flex", flexDirection: "column", flexShrink: 0, background: "var(--bg-panel)",
           }}>
             <div style={{ flex: 1, overflowY: "auto", padding: "8px 6px" }}>
+              {/* 认证状态加载中：显示加载占位，避免闪「无 provider」/错误推断 */}
+              {(oauthLoading || apiKeyLoading) && (
+                <div style={{ padding: "10px 8px", fontSize: 12, color: "var(--text-muted)" }}>{t("common_loading")}</div>
+              )}
               {/* Active OAuth subscriptions */}
               {activeOAuth.map((p) => {
                 const isSelected = selection?.type === "oauth" && selection.providerId === p.id;
@@ -1724,6 +1754,7 @@ export function ModelsConfig({ onClose, embedded = false }: {
           onSelectApiKey={(id) => setSelection({ type: "apikey", providerId: id })}
           onAddCustom={addCustomProvider}
           onClose={() => setPickerOpen(false)}
+          loading={oauthLoading || apiKeyLoading}
           embedded={embedded}
         />
       )}

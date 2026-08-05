@@ -12,12 +12,13 @@ import type {
   ChatInputHandle,
 } from "@/lib/types";
 import { normalizeToolCalls } from "@/lib/normalize";
+import { recoverFailedSend } from "@/lib/send-failure";
 import { attachCustomRenderedLines, preserveCustomRenderedLines } from "@/lib/custom-rendered-lines";
 import type { SessionActivity } from "@/lib/session-activity";
 import { sendAgentCommand } from "@/lib/agent-client";
 import type { BranchActions } from "@/lib/branch-bookmarks";
 import type { ToolEntry } from "@/lib/tool-presets";
-import { createEventStreamManager, EventStreamConnectionError, type EventStreamManager, type EventStreamConnectionResult } from "@/lib/event-stream-manager";
+import { createEventStreamManager, type EventStreamManager, type EventStreamConnectionResult } from "@/lib/event-stream-manager";
 import type { SessionStatsInfo } from "@/lib/pi-types";
 import {
   applyExtensionUiRequest,
@@ -289,6 +290,8 @@ type ModelsResponse = {
   defaultModel?: SelectedModel | null;
   thinkingLevels?: Record<string, string[]>;
   thinkingLevelMaps?: Record<string, Record<string, string | null>>;
+  /** providerId → 是否已有可用凭据；未认证且无环境凭据的 provider 模型在 UI 灰显。 */
+  authConfigured?: Record<string, boolean>;
 };
 
 type SlashCommandsResponse = {
@@ -326,6 +329,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const [modelList, setModelList] = useState<ModelEntry[]>([]);
   const [modelThinkingLevels, setModelThinkingLevels] = useState<Record<string, string[]>>({});
   const [modelThinkingLevelMaps, setModelThinkingLevelMaps] = useState<Record<string, Record<string, string | null>>>({});
+  // providerId → 该 provider 是否有可用凭据（未认证且无环境凭据 → false）。
+  // 模型下拉据此灰显不可用模型，避免用户选择必然失败的 provider。
+  const [modelAuthConfigured, setModelAuthConfigured] = useState<Record<string, boolean>>({});
   const [newSessionModel, setNewSessionModel] = useState<SelectedModel | null>(null);
   const [newSessionDefaultModel, setNewSessionDefaultModel] = useState<SelectedModel | null>(null);
   const [thinkingLevel, setThinkingLevel] = useState<ThinkingLevelOption>("auto");
@@ -366,7 +372,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const branchBusyRef = useRef(false);
   const bashRecoveryIdRef = useRef(0);
   const handleAgentEventRef = useRef<((event: AgentEvent, eventRunId?: number) => void) | null>(null);
-  const executeBashRef = useRef<(command: string, excludeFromContext: boolean) => Promise<void> | undefined>(undefined);
+  const executeBashRef = useRef<(command: string, excludeFromContext: boolean) => Promise<boolean> | undefined>(undefined);
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   // ── OpenChamber 风格自动跟随（纯状态机见 lib/chat-auto-follow.ts）──────────
   // 唯一 scrollTop 写入方是本控制器的 pinToBottom；明确例外：顶部懒加载 prepend
@@ -1107,6 +1113,19 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         void finishAgentRun(sessionIdRef.current, eventRunId ?? promptRunIdRef.current);
         break;
       case "prompt_error":
+        // P0-1：prompt 异步失败且乐观 bubble 未被 message_end 消费（消息未确认
+        // 落盘）时移除假 bubble，避免永久 pending；真实消息以磁盘权威为准，
+        // finishAgentRun 的 loadSession 会重建列表。已消费（消息已确认）时 no-op。
+        if (optimisticUserMessageKeyRef.current) {
+          const promptErrorKey = optimisticUserMessageKeyRef.current;
+          optimisticUserMessageKeyRef.current = null;
+          setMessages((prev) => {
+            const last = prev[prev.length - 1];
+            return last?.role === "user" && userMessageKey(last) === promptErrorKey
+              ? prev.slice(0, -1)
+              : prev;
+          });
+        }
         addNotice({ type: "error", message: (event.errorMessage as string | undefined) ?? "Command failed" });
         break;
       case "extension_error":
@@ -1256,16 +1275,16 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   }, [addNotice, commitToolExecutions, finishAgentRun, handleExtensionUiRequest, loadSession]);
   handleAgentEventRef.current = handleAgentEvent;
 
-  const handleSend = useCallback(async (message: string, images?: AttachedImage[]) => {
+  const handleSend = useCallback(async (message: string, images?: AttachedImage[]): Promise<boolean> => {
     // 只读会话：发送入口 UI 已替换为提示条，这里再拦一层。
-    if (isReadOnly) return;
+    if (isReadOnly) return false;
     const trimmedMessage = message.trim();
-    if (!trimmedMessage && !images?.length) return;
-    if (agentRunningRef.current || bashRunningRef.current) return;
+    if (!trimmedMessage && !images?.length) return false;
+    if (agentRunningRef.current || bashRunningRef.current) return false;
     // 分支切换/摘要进行中：prompt 会与 navigateTree 并发写会话文件，先拦住。
     if (branchBusyRef.current) {
       addNotice({ type: "info", message: "Branch switch in progress — please wait" });
-      return;
+      return false;
     }
     const isSlashCommandPrompt = !images?.length && trimmedMessage.startsWith("/");
 
@@ -1273,9 +1292,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     if (isBashCommand) {
       const isExcluded = trimmedMessage.startsWith("!!");
       const bashCmd = (isExcluded ? trimmedMessage.slice(2) : trimmedMessage.slice(1)).trim();
-      if (!bashCmd) return;
-      await executeBashRef.current?.(bashCmd, isExcluded);
-      return;
+      if (!bashCmd) return false;
+      return await executeBashRef.current?.(bashCmd, isExcluded) ?? false;
     }
 
     const promptRunId = promptRunIdRef.current + 1;
@@ -1324,6 +1342,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
             message,
             ...(piImages?.length ? { images: piImages } : {}),
           });
+        } else {
+          // 无可用 sid（竞态：isNew 已被并发消费等）：未发送，保留 draft。
+          return false;
         }
       } else if (session) {
         sentSessionId = session.id;
@@ -1337,32 +1358,43 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       if (isSlashCommandPrompt && sentSessionId) {
         void waitForPromptSettlement(sentSessionId, promptRunId);
       }
+      // P0-1：发送已确认（prompt 预检通过 / 消息已提交），返回 true 供
+      // ChatInput 确认后才清空 draft。
+      return true;
     } catch (e) {
       console.error("Failed to send message:", e);
-      if (e instanceof EventStreamConnectionError) {
-        const optimisticKey = optimisticUserMessageKeyRef.current;
-        if (optimisticKey) {
-          setMessages((prev) => {
-            const last = prev[prev.length - 1];
-            return last?.role === "user" && userMessageKey(last) === optimisticKey
-              ? prev.slice(0, -1)
-              : prev;
-          });
-        }
-        addNotice({ type: "error", message: e.message });
-      }
+      // P0-1：失败 = 消息未确认进入权威视图 → 移除假 bubble + 保留 draft。
+      // 发送失败时乐观 user 消息若仍在列表末尾（未被 message_end 消费），
+      // 它是未落地的「假 bubble」；draft 由 insertIfEmpty 恢复（输入框空才写入，
+      // 不覆盖用户新输入）。
+      const optimisticKey = optimisticUserMessageKeyRef.current;
+      let restoreDraft = false;
+      setMessages((prev) => {
+        const recovery = recoverFailedSend({
+          messages: prev,
+          optimisticKey,
+          isOptimisticMatch: (msg) => userMessageKey(msg) === optimisticKey,
+        });
+        restoreDraft = recovery.restoreDraft;
+        return recovery.messages;
+      });
       optimisticUserMessageKeyRef.current = null;
+      if (restoreDraft) {
+        opts.chatInputRef?.current?.insertIfEmpty(trimmedMessage);
+      }
+      addNotice({ type: "error", message: e instanceof Error ? e.message : String(e) });
       agentRunningRef.current = false;
       setAgentRunning(false);
       setAgentPhase(null);
       dispatch({ type: "end" });
+      return false;
     }
-  }, [isNew, isReadOnly, newSessionModel, session, ensureNewSession, ensureEventsConnected, promoteNewSession, waitForPromptSettlement, addNotice, notifyAutoFollowSend]);
+  }, [isNew, isReadOnly, newSessionModel, session, ensureNewSession, ensureEventsConnected, promoteNewSession, waitForPromptSettlement, addNotice, notifyAutoFollowSend, opts.chatInputRef]);
 
-  const executeBash = useCallback(async (command: string, excludeFromContext: boolean) => {
+  const executeBash = useCallback(async (command: string, excludeFromContext: boolean): Promise<boolean> => {
     // 只读会话：bash 命令同样会写 session 文件，拦截。
-    if (isReadOnly) return;
-    if (agentRunningRef.current || bashRunningRef.current || branchBusyRef.current) return;
+    if (isReadOnly) return false;
+    if (agentRunningRef.current || bashRunningRef.current || branchBusyRef.current) return false;
     const inputText = `${excludeFromContext ? "!!" : "!"}${command}`;
     bashRunningRef.current = true;
     setPendingBash({ command, excludeFromContext });
@@ -1378,10 +1410,12 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         excludeFromContext,
       });
       await loadSession(sid);
+      return true;
     } catch (e) {
       console.error("Failed to execute shell command:", e);
       addNotice({ type: "error", message: e instanceof Error ? e.message : String(e) });
       opts.chatInputRef?.current?.insertIfEmpty(inputText);
+      return false;
     } finally {
       bashRunningRef.current = false;
       setPendingBash(null);
@@ -1464,13 +1498,18 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     setModelNames(d.models);
     setModelThinkingLevels(d.thinkingLevels ?? {});
     setModelThinkingLevelMaps(d.thinkingLevelMaps ?? {});
+    setModelAuthConfigured(d.authConfigured ?? {});
     const nextModelList = d.modelList ?? [];
     setModelList(nextModelList);
     if (isNew) {
       const match = d.defaultModel
         ? nextModelList.find((m) => m.id === d.defaultModel?.modelId && m.provider === d.defaultModel?.provider)
         : undefined;
-      const displayModel = match ?? nextModelList[0];
+      // 默认模型优先落在已认证 provider 上：未认证且无环境凭据的模型必失败，不作为新会话默认。
+      const configuredMap = d.authConfigured ?? {};
+      const displayModel = match
+        ?? nextModelList.find((m) => configuredMap[m.provider] !== false)
+        ?? nextModelList[0];
       setNewSessionDefaultModel(displayModel ? { provider: displayModel.provider, modelId: displayModel.id } : null);
     }
   }, [isNew, newSessionCwd, session?.cwd]);
@@ -1973,7 +2012,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   return {
     // State
     data, loading, error, activeLeafId, messages, entryIds, streamState,
-    agentRunning, modelNames, modelList, modelThinkingLevels, modelThinkingLevelMaps, newSessionModel, thinkingLevel,
+    agentRunning, modelNames, modelList, modelAuthConfigured, modelThinkingLevels, modelThinkingLevelMaps, newSessionModel, thinkingLevel,
     retryInfo, contextUsage, systemPrompt, forkingEntryId,
     isCompacting, compactError, compactResult, currentModel, displayModel, sessionStats,
     slashCommands, slashCommandsLoading, queuedMessages,

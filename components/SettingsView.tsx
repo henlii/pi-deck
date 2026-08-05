@@ -28,6 +28,8 @@ interface SettingsViewProps {
   initialPage?: SettingsPageId | null;
   /** Models 保存后刷新聊天区的模型列表 */
   onModelsChanged?: () => void;
+  /** Models 页内认证状态变化（OAuth 登录/登出、API Key 保存/移除）后刷新模型列表 */
+  onAuthStateChange?: () => void;
   /** Plugins reload 后需要重建会话（沿用旧 AppShell 行为） */
   onPluginsReloaded?: () => void;
 }
@@ -332,7 +334,7 @@ function TrustPage({ cwd }: { cwd: string | null }) {
   );
 }
 
-export function SettingsView({ cwd, sessionId, onClose, onModelsChanged, onPluginsReloaded, initialPage }: SettingsViewProps) {
+export function SettingsView({ cwd, sessionId, onClose, onModelsChanged, onAuthStateChange, onPluginsReloaded, initialPage }: SettingsViewProps) {
   const { t } = useI18n();
   const isMobile = useIsMobile();
   const [activePage, setActivePage] = useState<SettingsPageId>(readInitialPage);
@@ -372,7 +374,7 @@ export function SettingsView({ cwd, sessionId, onClose, onModelsChanged, onPlugi
       case "appearance":
         return <AppearancePage />;
       case "models":
-        return <ModelsConfig embedded onClose={onModelsChanged ?? onClose} />;
+        return <ModelsConfig embedded onClose={onModelsChanged ?? onClose} onAuthStateChange={onAuthStateChange} />;
       case "defaults":
         return <AgentDefaultsConfig cwd={cwd} />;
       case "skills":

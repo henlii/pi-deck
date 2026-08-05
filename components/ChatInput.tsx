@@ -23,7 +23,11 @@ interface ModelOption {
 }
 
 interface Props {
-  onSend: (message: string, images?: AttachedImage[]) => void;
+  /**
+   * P0-1：返回发送确认结果——false = 发送失败（draft 由上层恢复，此处不清空）；
+   * true/undefined = 已确认或无可确认（清空 draft）。
+   */
+  onSend: (message: string, images?: AttachedImage[]) => Promise<boolean> | boolean;
   onAbort: () => void;
   onSteer?: (message: string, images?: AttachedImage[]) => void;
   onFollowUp?: (message: string, images?: AttachedImage[]) => void;
@@ -33,6 +37,8 @@ interface Props {
   isAutoModelSelection?: boolean;
   modelNames?: Record<string, string>;
   modelList?: { id: string; name: string; provider: string }[];
+  /** providerId → 是否有可用凭据；未认证且无环境凭据的 provider 模型在列表中灰显禁用。 */
+  modelAuthConfigured?: Record<string, boolean>;
   onModelChange?: (provider: string, modelId: string) => void;
   onCompact?: () => void;
   onAbortCompaction?: () => void;
@@ -206,7 +212,7 @@ function QueuedMessageRow({ kind, text }: { kind: "steer" | "follow-up"; text: s
 }
 
 export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
-  onSend, onAbort, onSteer, onFollowUp, isStreaming, model, isAutoModelSelection, modelNames, modelList, onModelChange,
+  onSend, onAbort, onSteer, onFollowUp, isStreaming, model, isAutoModelSelection, modelNames, modelList, modelAuthConfigured, onModelChange,
   onCompact, onAbortCompaction, isCompacting, compactError, compactResult,
   thinkingLevel, onThinkingLevelChange, availableThinkingLevels, thinkingLevelMap,
   retryInfo, queuedMessages, onRecallQueue,
@@ -446,8 +452,10 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
         return;
       }
     }
-    onSend(msg, attachedImages.length ? attachedImages : undefined);
-    clearInput();
+    // P0-1：仅在发送确认（消息已提交 / 未抛错）后清空 draft；
+    // 发送失败时 draft 由 useAgentSession 经 insertIfEmpty 恢复，此处保留不清。
+    const submitted = await onSend(msg, attachedImages.length ? attachedImages : undefined);
+    if (submitted !== false) clearInput();
   }, [value, attachedImages, isStreaming, onBuiltinCommand, onSend, clearInput, onAudioUnlock]);
 
   const slashQuery = value.startsWith("/") && !/\s/.test(value.slice(1))
@@ -1737,7 +1745,9 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                         overflow: "hidden", overflowY: "auto",
                         }}
                       >
-                      {modelsByProvider.map((group, gi) => (
+                      {modelsByProvider.map((group, gi) => {
+                        const authBlocked = modelAuthConfigured?.[group.provider] === false;
+                        return (
                         <div key={group.provider}>
                           {(modelsByProvider.length > 1) && (
                             <div style={{
@@ -1745,17 +1755,35 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                               fontSize: 10, fontWeight: 600, color: "var(--text-dim)",
                               textTransform: "uppercase", letterSpacing: "0.07em",
                               borderTop: gi > 0 ? "1px solid var(--border)" : "none",
+                              display: "flex", alignItems: "center", gap: 6,
                             }}>
-                              {group.provider}
+                              <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{group.provider}</span>
+                              {authBlocked && (
+                                <span
+                                  title={t("models_authRequiredToViewModels")}
+                                  style={{
+                                    flexShrink: 0, fontSize: 9, padding: "1px 6px",
+                                    borderRadius: 999, border: "1px solid var(--border)",
+                                    color: "var(--text-dim)", textTransform: "none",
+                                    letterSpacing: 0, fontWeight: 400,
+                                  }}
+                                >
+                                  {t("models_authRequired")}
+                                </span>
+                              )}
                             </div>
                           )}
                           {group.options.map((opt) => {
                             const isActive = opt.modelId === model?.modelId && opt.provider === model?.provider;
+                            const blocked = authBlocked && !isActive;
                             return (
                               <button
                                 key={`${opt.provider}:${opt.modelId}`}
                                 role="option"
                                 aria-selected={isActive}
+                                aria-disabled={blocked || undefined}
+                                disabled={blocked}
+                                title={blocked ? t("models_authRequiredToViewModels") : undefined}
                                 onClick={() => {
                                   setModelDropdownOpen(false);
                                   // 键盘选择后焦点回 trigger；指针用户不受程序聚焦影响。
@@ -1768,13 +1796,14 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                                   minHeight: isMobile ? 44 : undefined,
                                   background: isActive ? "var(--bg-selected)" : "none",
                                   border: "none",
-                                  color: isActive ? "var(--text)" : "var(--text-muted)",
-                                  cursor: "pointer", fontSize: 12, textAlign: "left",
+                                  color: blocked ? "var(--text-dim)" : (isActive ? "var(--text)" : "var(--text-muted)"),
+                                  cursor: blocked ? "not-allowed" : "pointer", fontSize: 12, textAlign: "left",
                                   fontWeight: isActive ? 600 : 400,
                                   whiteSpace: "nowrap",
+                                  opacity: blocked ? 0.55 : 1,
                                 }}
-                                onMouseEnter={(e) => { if (!isActive) e.currentTarget.style.background = "var(--bg-hover)"; }}
-                                onMouseLeave={(e) => { if (!isActive) e.currentTarget.style.background = "none"; }}
+                                onMouseEnter={(e) => { if (!isActive && !blocked) e.currentTarget.style.background = "var(--bg-hover)"; }}
+                                onMouseLeave={(e) => { if (!isActive && !blocked) e.currentTarget.style.background = "none"; }}
                               >
                                 {isActive
                                   ? <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><polyline points="1.5 5 4 7.5 8.5 2.5" /></svg>
@@ -1785,7 +1814,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                             );
                           })}
                         </div>
-                      ))}
+                        );
+                      })}
                     </div>,
                     document.body,
                   )}

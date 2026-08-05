@@ -711,10 +711,26 @@ export class AgentSessionWrapper {
         const streamingBehavior = command.streamingBehavior as "steer" | "followUp" | undefined;
         this.promptRunning = true;
         notifyRunningChange();
+        // P0-1：首条 prompt 提交确认——send 不得只报告「调度成功」。
+        // SDK 的 preflightResult 在预检（model/auth/streaming）失败时回调 false
+        // 并随后 reject，预检通过（消息即将提交落盘）时回调 true；旧 SDK / 桩
+        // 不回调时由 catch 兜底 settle。仅预检通过后 send 才返回，否则抛明确错误。
+        let resolveSubmit: ((r: { ok: boolean; error?: string }) => void) | null = null;
+        const submit = new Promise<{ ok: boolean; error?: string }>((resolve) => {
+          resolveSubmit = resolve;
+        });
+        const settleSubmit = (r: { ok: boolean; error?: string }) => {
+          resolveSubmit?.(r);
+          resolveSubmit = null;
+        };
         this.inner.prompt(command.message as string, {
           ...(promptImages?.length ? { images: promptImages } : {}),
           ...(streamingBehavior ? { streamingBehavior } : {}),
           source: "rpc",
+          preflightResult: (ok: boolean) => settleSubmit({
+            ok,
+            error: ok ? undefined : "Prompt rejected before submission",
+          }),
         }).then(() => {
           this.promptRunning = false;
           if (!streamingBehavior) this.emit({ type: "prompt_done" });
@@ -734,6 +750,9 @@ export class AgentSessionWrapper {
               ...(streamingBehavior ? { streamingBehavior } : {}),
             }),
           );
+          // P0-1：SDK 未调用 preflightResult（旧 SDK / 异常路径）时兜底 settle，
+          // 让 send 抛错而非静默成功；已 settle（预检回调）时 no-op。
+          settleSubmit({ ok: false, error: errorMessage });
           this.emit({
             type: "prompt_error",
             errorMessage,
@@ -741,6 +760,11 @@ export class AgentSessionWrapper {
           if (!streamingBehavior) this.emit({ type: "prompt_done" });
           notifyRunningChange();
         });
+
+        const submitResult = await submit;
+        if (!submitResult.ok) {
+          throw new Error(submitResult.error ?? "Prompt failed before submission");
+        }
         return null;
       }
 

@@ -6,6 +6,8 @@ export interface ModelsData {
   defaultModel: { provider: string; modelId: string } | null;
   thinkingLevels: Record<string, string[]>;
   thinkingLevelMaps: Record<string, Record<string, string | null>>;
+  /** providerId → 该 provider 是否已有可用凭据（AuthStorage / runtime / models.json / 环境变量）。 */
+  authConfigured: Record<string, boolean>;
 }
 
 interface ModelsCacheState {

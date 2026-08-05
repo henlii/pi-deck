@@ -150,6 +150,11 @@ export interface AgentSessionLike {
     images?: Array<{ type: "image"; data: string; mimeType: string }>;
     streamingBehavior?: "steer" | "followUp";
     source?: "interactive" | "rpc";
+    /**
+     * P0-1：SDK 预检（model/auth/streaming）结果回调。true = 预检通过、
+     * 消息即将提交落盘；false = 配置无效、消息不会进入会话。
+     */
+    preflightResult?: (ok: boolean) => void;
   }): Promise<void>;
   abort(): Promise<void>;
   executeBash(command: string, onChunk?: (chunk: string) => void, options?: { excludeFromContext?: boolean }): Promise<{ output: string; exitCode?: number; cancelled?: boolean; truncated?: boolean; fullOutputPath?: string }>;

@@ -1254,6 +1254,7 @@ function AppShellInner() {
           setSettingsOpen(false);
           setModelsRefreshKey((key) => key + 1);
         }}
+        onAuthStateChange={() => setModelsRefreshKey((key) => key + 1)}
         onPluginsReloaded={() => setSessionKey((key) => key + 1)}
       />
     )}
