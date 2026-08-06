@@ -1454,7 +1454,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
       {/* 全文命中片段：点击深链打开对应会话 */}
       {!archiveViewOpen && searchOpen && searchMode === "fulltext" && fulltextHits.length > 0 && (
         <div style={{
-          flex: "0 0 auto", maxHeight: 160, overflowY: "auto",
+          flex: "0 0 auto", maxHeight: 160, overflowY: "auto", overflowX: "hidden",
           borderBottom: "1px solid var(--border)", padding: "4px 0",
         }}>
           {fulltextHits.slice(0, 12).map((hit, index) => (
@@ -1504,7 +1504,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
           </div>
         )}
       {/* 项目树：Project → (非主 Worktree) → Session → child */}
-      <div ref={sessionListRef} style={{ flex: "1 1 auto", overflowY: "auto", padding: "2px 0", minHeight: 80 }}>
+      <div ref={sessionListRef} style={{ flex: "1 1 auto", overflowY: "auto", overflowX: "hidden", padding: "2px 0", minHeight: 80 }}>
         {loading && (
           <div style={{ padding: "16px 14px", color: "var(--text-muted)", fontSize: 12 }}>
             {t("sidebar_loading")}
@@ -1791,6 +1791,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                   style={{
                     maxHeight: 150,
                     overflowY: "auto",
+                    overflowX: "hidden",
                     border: "1px solid var(--border)",
                     borderRadius: 7,
                     background: "var(--bg-panel)",
