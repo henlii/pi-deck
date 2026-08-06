@@ -977,13 +977,13 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     () => buildSidebarTree(allSessions, { selectedCwd, selectedProjectRoot: selectedProject, knownWorktreesByProject }),
     [allSessions, selectedCwd, selectedProject, knownWorktreesByProject],
   );
-  // 有子会话（fork 分支）的会话 id 集合：最近区行据此显示折叠按钮，
-  // 折叠状态与项目树共享同一 collapsedSessionIds / toggleSessionCollapse。
-  const sessionIdsWithChildren = useMemo(() => {
-    const ids = new Set<string>();
+  // 会话 id → 树节点映射（含 children）：最近区行用与项目树相同的
+  // SessionTreeItem 渲染，折叠/展开行为完全一致（共享 collapsedSessionIds）。
+  const sessionNodeById = useMemo(() => {
+    const map = new Map<string, SessionDisplayNode>();
     const walk = (nodes: SessionDisplayNode[]) => {
       for (const node of nodes) {
-        if (node.children.length > 0) ids.add(node.session.id);
+        map.set(node.session.id, node);
         if (node.children.length > 0) walk(node.children);
       }
     };
@@ -991,7 +991,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
       walk(project.mainTree);
       for (const group of project.worktrees) walk(group.tree);
     }
-    return ids;
+    return map;
   }, [sidebarTree]);
   // 已关闭项目先从树中隐藏（纯 UI 过滤，不删数据），再进入搜索管线。
   const openTree = useMemo(
@@ -1580,8 +1580,27 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
             </div>
             {showRecentSessions && <div>
               {recentSessions.map((s) => {
-                const hasChildren = sessionIdsWithChildren.has(s.id);
-                return (
+                const node = sessionNodeById.get(s.id);
+                // 最近区行与项目树同一渲染：有子会话时折叠/展开显示子会话。
+                return node ? (
+                  <SessionTreeItem
+                    key={s.id}
+                    node={node}
+                    selectedSessionId={selectedSessionId}
+                    runningSessionIds={runningSessionIds}
+                    subagentRunningIds={subagentRunningIds}
+                    unreadSessionIds={unreadSessionIds}
+                    onSelectSession={handleSelectSessionFromList}
+                    onRenamed={loadSessions}
+                    onSessionDeleted={handleSessionDeletedLocal}
+                    onSessionArchive={handleArchiveSession}
+                    depth={0}
+                    collapsedSessionIds={collapsedSessionIds}
+                    searchActive={searchActive}
+                    onToggleCollapse={toggleSessionCollapse}
+                    displayMode={displayMode}
+                  />
+                ) : (
                   <SessionItem
                     key={s.id}
                     session={s}
@@ -1593,9 +1612,6 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                     onDeleted={handleSessionDeletedLocal}
                     onArchive={handleArchiveSession}
                     depth={0}
-                    hasChildren={hasChildren}
-                    collapsed={isSessionNodeEffectivelyCollapsed(collapsedSessionIds, s.id, searchActive)}
-                    onToggleCollapse={() => toggleSessionCollapse(s.id)}
                     displayMode={displayMode}
                   />
                 );
