@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="./docs/assets/pidance-logo.svg" alt="Pidance — Move with Pi" width="760">
+  <img src="./docs/assets/pidance-banner.png" alt="Pidance — Move with Pi" width="760">
   <p><strong>让 Pi 的会话、工具与项目工作流在浏览器里自然舞动。</strong></p>
   <p>
     <a href="./README.en.md">English</a> ·
