@@ -1129,10 +1129,19 @@ span.linenumber {
   }
   .sidebar-indent-indicator {
     opacity: 0;
+    pointer-events: none;
   }
   .sidebar-row:hover > .sidebar-indent-indicator,
   .sidebar-row:focus-within > .sidebar-indent-indicator {
     opacity: 1;
+    pointer-events: auto;
+  }
+}
+
+@media (hover: none), (pointer: coarse) {
+  .sidebar-indent-indicator {
+    opacity: 1;
+    pointer-events: auto;
   }
 }
 

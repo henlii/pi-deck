@@ -141,6 +141,8 @@ export const en = {
   sidebar_readOnly: 'Read-only',
   sidebar_expandChild: 'Expand child sessions',
   sidebar_collapseChild: 'Collapse child sessions',
+  sidebar_expandRecentSessions: 'Expand recent sessions',
+  sidebar_collapseRecentSessions: 'Collapse recent sessions',
   // archive
   sidebar_archive: 'Archive',
   sidebar_archiveSession: 'Archive session',

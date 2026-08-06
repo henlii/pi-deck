@@ -100,7 +100,8 @@ const SIDEBAR_GUTTER = 6;
 const SIDEBAR_INDICATOR_SLOT = 16;
 const SIDEBAR_INDICATOR_GAP = 6;
 const SIDEBAR_DEPTH_STEP = 14;
-const SIDEBAR_BASE_LEFT = SIDEBAR_GUTTER + SIDEBAR_INDICATOR_SLOT + SIDEBAR_INDICATOR_GAP;
+// 额外向右移动一整级：指示器/图标共用 gutter，文字从下一步进开始。
+const SIDEBAR_BASE_LEFT = SIDEBAR_GUTTER + SIDEBAR_INDICATOR_SLOT + SIDEBAR_INDICATOR_GAP + SIDEBAR_DEPTH_STEP;
 const sidebarRowPaddingLeft = (depth: number) => SIDEBAR_BASE_LEFT + depth * SIDEBAR_DEPTH_STEP;
 const sidebarIndicatorLeft = (depth: number) => SIDEBAR_GUTTER + depth * SIDEBAR_DEPTH_STEP;
 
@@ -880,10 +881,8 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
 
   /** 最近会话：按 modified 降序取 top 5；排除 subagent 子会话与已关闭项目。 */
   const recentSessions = useMemo(
-    () => (showRecentSessions
-      ? deriveRecentSessions({ sessions: allSessions, closedProjectRoots: closedRoots })
-      : []),
-    [showRecentSessions, allSessions, closedRoots],
+    () => deriveRecentSessions({ sessions: allSessions, closedProjectRoots: closedRoots }),
+    [allSessions, closedRoots],
   );
 
   const handleNewSession = useCallback((targetCwd = selectedCwd) => {
@@ -1534,16 +1533,36 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
             选中态、运行/未读徽标与树内同会话共享同一数据源。 */}
         {!searchActive && recentSessions.length > 0 && (
           <div style={{ paddingBottom: 5, borderBottom: "1px solid var(--border)", marginBottom: 5 }}>
-            <div data-sidebar-depth={0} style={{
+            <div
+              data-sidebar-depth={0}
+              role="button"
+              tabIndex={0}
+              aria-expanded={showRecentSessions}
+              aria-label={showRecentSessions ? t("sidebar_collapseRecentSessions") : t("sidebar_expandRecentSessions")}
+              onClick={() => setShowRecentSessions(!showRecentSessions)}
+              onKeyDown={(event) => {
+                if (event.key !== "Enter" && event.key !== " ") return;
+                event.preventDefault();
+                setShowRecentSessions(!showRecentSessions);
+              }}
+              className="sidebar-row"
+              style={{
               display: "flex", alignItems: "center", gap: 6, height: 32,
               margin: "1px 6px", paddingLeft: sidebarRowPaddingLeft(0), paddingRight: 8,
               color: "var(--text-dim)", fontSize: 10.5, fontWeight: 600,
               letterSpacing: "0.04em", textTransform: "uppercase",
+              position: "relative", cursor: "pointer", borderRadius: 6,
             }}>
-              <span aria-hidden="true" style={{ display: "flex", flexShrink: 0 }}><HistoryIcon size={13} /></span>
+              <ChevronButton
+                collapsed={!showRecentSessions}
+                label={showRecentSessions ? t("sidebar_collapseRecentSessions") : t("sidebar_expandRecentSessions")}
+                left={sidebarIndicatorLeft(0)}
+                onClick={(event) => { event.stopPropagation(); setShowRecentSessions(!showRecentSessions); }}
+              />
+              <span aria-hidden="true" style={{ position: "absolute", left: sidebarIndicatorLeft(0), top: "50%", display: "flex", width: SIDEBAR_INDICATOR_SLOT, height: 20, alignItems: "center", justifyContent: "center", transform: "translateY(-50%)" }}><HistoryIcon size={13} /></span>
               {t("sidebar_recentSessions")}
             </div>
-            <div>
+            {showRecentSessions && <div>
               {recentSessions.map((s) => (
                 <SessionItem
                   key={s.id}
@@ -1559,7 +1578,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                   displayMode={displayMode}
                 />
               ))}
-            </div>
+            </div>}
           </div>
         )}
         {visibleTree.map((project) => (
@@ -2091,7 +2110,7 @@ function ProjectSection({
             onToggleProject(project.root);
           }}
         />
-        <span style={{ display: "flex", flexShrink: 0, color: "var(--text-dim)" }}>
+        <span aria-hidden="true" style={{ position: "absolute", left: sidebarIndicatorLeft(0), top: "50%", display: "flex", width: SIDEBAR_INDICATOR_SLOT, height: 20, alignItems: "center", justifyContent: "center", transform: "translateY(-50%)", color: "var(--text-dim)" }}>
           <FolderIcon size={13} />
         </span>
         <PathLabel
@@ -2399,7 +2418,7 @@ function WorktreeGroupSection({
             onToggleWorktree(group.path);
           }}
         />
-        <span style={{ display: "flex", flexShrink: 0, color: "var(--text-dim)" }}>
+        <span aria-hidden="true" style={{ position: "absolute", left: sidebarIndicatorLeft(1), top: "50%", display: "flex", width: SIDEBAR_INDICATOR_SLOT, height: 20, alignItems: "center", justifyContent: "center", transform: "translateY(-50%)", color: "var(--text-dim)" }}>
           <BranchIcon size={11} />
         </span>
         <PathLabel
@@ -2846,12 +2865,12 @@ function SessionItem({
           )}
           {/* 关系图标：fork 用分叉图标，subagent 用层叠图标，一眼可区分 */}
           {depth > 0 && relation === "subagent" && (
-            <span style={{ display: "flex", flexShrink: 0, color: "var(--text-dim)" }} aria-hidden="true">
+            <span style={{ position: "absolute", left: sidebarIndicatorLeft(depth), top: "50%", display: "flex", width: SIDEBAR_INDICATOR_SLOT, height: 20, alignItems: "center", justifyContent: "center", transform: "translateY(-50%)", color: "var(--text-dim)" }} aria-hidden="true">
               <LayersIcon size={10} />
             </span>
           )}
           {depth > 0 && relation !== "subagent" && (
-            <span style={{ display: "flex", flexShrink: 0, color: "var(--text-dim)" }} aria-hidden="true">
+            <span style={{ position: "absolute", left: sidebarIndicatorLeft(depth), top: "50%", display: "flex", width: SIDEBAR_INDICATOR_SLOT, height: 20, alignItems: "center", justifyContent: "center", transform: "translateY(-50%)", color: "var(--text-dim)" }} aria-hidden="true">
               <BranchIcon size={10} />
             </span>
           )}

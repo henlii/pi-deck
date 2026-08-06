@@ -413,6 +413,7 @@ export function ChevronButton({ collapsed, label, left, onClick }: {
         display: "flex", alignItems: "center", justifyContent: "center",
         position: "absolute", left, top: "50%",
         width: 16, height: 20, padding: 0, flexShrink: 0,
+        zIndex: 1,
         background: "none", border: "none", borderRadius: 5,
         color: "var(--text-dim)", cursor: "pointer",
         transform: `translateY(-50%)${collapsed ? " rotate(-90deg)" : ""}`,

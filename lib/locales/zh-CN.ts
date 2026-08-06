@@ -141,6 +141,8 @@ export const zhCN: Record<TranslationKey, string> = {
   sidebar_readOnly: '只读',
   sidebar_expandChild: '展开子会话',
   sidebar_collapseChild: '折叠子会话',
+  sidebar_expandRecentSessions: '展开最近会话',
+  sidebar_collapseRecentSessions: '折叠最近会话',
   // 归档
   sidebar_archive: '归档',
   sidebar_archiveSession: '归档会话',
