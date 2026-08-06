@@ -10,7 +10,7 @@ import { realpathSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
-import { buildActiveBranchPath, type OmLedgerEntry } from "./om-ledger";
+import { buildActiveBranchPath, type SessionBranchEntry } from "./session-branch-path";
 
 export type WorkspaceSnapshotKind = "baseline" | "before" | "after" | "manual";
 
@@ -54,7 +54,7 @@ const execFileAsync = promisify(execFile);
 const GIT_DIFF_TIMEOUT_MS = 10_000;
 const GIT_DIFF_MAX_BUFFER = 4 * 1024 * 1024;
 
-export type WorkspaceHistoryEntry = OmLedgerEntry;
+export type WorkspaceHistoryEntry = SessionBranchEntry;
 
 type SnapshotData = {
   v: 1;

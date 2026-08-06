@@ -47,6 +47,7 @@ import { useI18n } from "@/lib/i18n";
 import { loadUnreadSessionIds, saveUnreadSessionIds } from "@/lib/unread-sessions-storage";
 import {
   AnimatedDropdown,
+  ArchiveIcon,
   BranchIcon,
   BranchPlusIcon,
   ChatPlusIcon,
@@ -75,6 +76,9 @@ import {
   XIcon,
 } from "@/components/session-sidebar/display";
 import { ProjectRowMenu, SessionRowMenu } from "@/components/session-sidebar/menus";
+import { ArchiveView } from "@/components/ArchiveView";
+import { canArchiveSession } from "./session-capabilities";
+import { archiveSession, archiveFailureKind } from "@/lib/session-archive-client";
 import { useWorktreePreload } from "@/hooks/useWorktreePreload";
 import { trackRunningStartedAt } from "@/lib/running-duration";
 
@@ -165,6 +169,12 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   const wtNewInputRef = useRef<HTMLInputElement>(null);
   const [sessionRefreshDone, setSessionRefreshDone] = useState(false);
   const [runningSessionIds, setRunningSessionIds] = useState<Set<string>>(() => new Set());
+  // ── 归档（P0-2）：服务端返回的归档列表/计数 + Archive 视图开关 + 动作状态 ──
+  const [archivedSessions, setArchivedSessions] = useState<SessionInfo[]>([]);
+  const [archivedCount, setArchivedCount] = useState(0);
+  const [archiveViewOpen, setArchiveViewOpen] = useState(false);
+  const [archiveBusyId, setArchiveBusyId] = useState<string | null>(null);
+  const [archiveError, setArchiveError] = useState<string | null>(null);
   // subagent 活跃运行（子会话 + 等待中的主会话）；由 /api/subagent-runs 推导。
   const [subagentRunningIds, setSubagentRunningIds] = useState<Set<string>>(() => new Set());
   const subagentPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -268,11 +278,13 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
       // 卸载后不得 setState。
       if (!mountedRef.current || !shouldApplySessionListResponse(gen, sessionListFetchGenRef.current)) return;
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json() as { sessions: SessionInfo[]; runningSessionIds?: string[] };
+      const data = await res.json() as { sessions: SessionInfo[]; runningSessionIds?: string[]; archivedSessions?: SessionInfo[]; archivedCount?: number };
       if (!mountedRef.current || !shouldApplySessionListResponse(gen, sessionListFetchGenRef.current)) return;
       setServerSessions(data.sessions);
       serverSessionsRef.current = data.sessions;
       saveCachedSessionList(data.sessions);
+      setArchivedSessions(data.archivedSessions ?? []);
+      setArchivedCount(data.archivedCount ?? 0);
       setPendingIds((prev) => reconcilePendingSessionIds(prev, data.sessions));
       setPendingById((prev) => {
         if (prev.size === 0) return prev;
@@ -817,6 +829,40 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     loadSessions();
   }, [onSessionDeleted, loadSessions]);
 
+  /** 归档收口：菜单动作 → POST archive → 成功后统一重拉 /api/sessions。
+   *  409（running）/ 403（readOnly）等失败按分类展示 i18n 文案。 */
+  const handleArchiveSession = useCallback(async (sessionId: string) => {
+    if (archiveBusyId !== null) return;
+    setArchiveBusyId(sessionId);
+    setArchiveError(null);
+    try {
+      const result = await archiveSession(sessionId);
+      if (!result.ok) {
+        const kind = archiveFailureKind(result);
+        setArchiveError(
+          kind === "running" ? t("archive_runningConflict")
+            : kind === "readOnly" ? t("archive_readOnlyForbidden")
+              : kind === "network" ? t("archive_networkError")
+                : result.error ?? t("archive_unknownError"),
+        );
+        return;
+      }
+      loadSessions();
+    } catch (e) {
+      setArchiveError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setArchiveBusyId(null);
+    }
+  }, [archiveBusyId, loadSessions, t]);
+
+  /** Archive 视图开/关：打开时清空上次错误；数据刷新由 ArchiveView 挂载 effect 承担。 */
+  const toggleArchiveView = useCallback(() => {
+    setArchiveViewOpen((open) => {
+      if (!open) setArchiveError(null);
+      return !open;
+    });
+  }, []);
+
   /** 「最近会话」区开/关：唯一写入入口经偏好 seam。 */
   const setShowRecentSessions = useCallback((show: boolean) => {
     updatePrefs((prev) => (prev.showRecentSessions === show ? prev : { ...prev, showRecentSessions: show }));
@@ -1216,6 +1262,30 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
             >
               <SearchIcon size={18} />
             </SidebarIconButton>
+            <div style={{ position: "relative", display: "flex" }}>
+              <SidebarIconButton
+                label={t("sidebar_archive")}
+                active={archiveViewOpen}
+                expanded={archiveViewOpen}
+                onClick={toggleArchiveView}
+              >
+                <ArchiveIcon size={18} />
+              </SidebarIconButton>
+              {archivedCount > 0 && (
+                <span
+                  title={t("archive_viewCount", { count: archivedCount })}
+                  style={{
+                    position: "absolute", top: -3, right: -3, zIndex: 1,
+                    minWidth: 15, height: 15, padding: "0 4px", boxSizing: "border-box",
+                    borderRadius: 999, background: "var(--accent)", color: "#fff",
+                    fontSize: 9, fontWeight: 700, lineHeight: "15px", textAlign: "center",
+                    pointerEvents: "none",
+                  }}
+                >
+                  {archivedCount > 99 ? "99+" : archivedCount}
+                </span>
+              )}
+            </div>
             <div ref={displayMenuRef} style={{ position: "relative" }}>
               <SidebarIconButton
                 label={t("sidebar_displayOptions")}
@@ -1279,8 +1349,9 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
           </div>
         </div>
 
-        {/* 搜索行：第二行展示、自动聚焦、Esc 先清空再关闭；范围覆盖全部项目 */}
-        {searchOpen && (
+        {/* 搜索行：第二行展示、自动聚焦、Esc 先清空再关闭；范围覆盖全部项目。
+            Archive 视图打开时隐藏（归档列表自带查找语义，首版不叠加搜索）。 */}
+        {!archiveViewOpen && searchOpen && (
           <div style={{ marginTop: 8 }}>
             <div style={{ display: "flex", gap: 4, marginBottom: 6 }}>
               <button
@@ -1371,7 +1442,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
       </div>
 
       {/* 全文命中片段：点击深链打开对应会话 */}
-      {searchOpen && searchMode === "fulltext" && fulltextHits.length > 0 && (
+      {!archiveViewOpen && searchOpen && searchMode === "fulltext" && fulltextHits.length > 0 && (
         <div style={{
           flex: "0 0 auto", maxHeight: 160, overflowY: "auto",
           borderBottom: "1px solid var(--border)", padding: "4px 0",
@@ -1404,6 +1475,24 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
         </div>
       )}
 
+      {/* Archive 视图：侧栏内替换项目树（首版列表 + 恢复 + 删除；打开只读浏览为后续）。
+          数据源为 /api/sessions 默认响应的 archivedSessions/archivedCount。 */}
+      {archiveViewOpen ? (
+        <ArchiveView
+          sessions={archivedSessions}
+          count={archivedCount}
+          homeDir={homeDir}
+          loading={loading}
+          onRefresh={loadSessions}
+          onBack={() => setArchiveViewOpen(false)}
+        />
+      ) : (
+        <>
+        {archiveError && (
+          <div role="alert" style={{ padding: "6px 12px", borderBottom: "1px solid var(--border)", background: "var(--status-danger-bg)", color: "var(--status-danger)", fontSize: 11, lineHeight: 1.4, overflowWrap: "anywhere", flexShrink: 0 }}>
+            {archiveError}
+          </div>
+        )}
       {/* 项目树：Project → (非主 Worktree) → Session → child */}
       <div ref={sessionListRef} style={{ flex: "1 1 auto", overflowY: "auto", padding: "2px 0", minHeight: 80 }}>
         {loading && (
@@ -1456,6 +1545,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                   onClick={() => handleSelectSessionFromList(s)}
                   onRenamed={loadSessions}
                   onDeleted={handleSessionDeletedLocal}
+                  onArchive={handleArchiveSession}
                   depth={0}
                   displayMode={displayMode}
                 />
@@ -1521,9 +1611,12 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
             onRequestRemoveWorktree={(path) => void handleRemoveWorktree(project.root, path, false)}
             onConfirmRemoveWorktree={(path) => void handleRemoveWorktree(project.root, path, true)}
             onCancelRemoveWorktree={() => setWtConfirmRemove(null)}
+            onSessionArchive={handleArchiveSession}
            />
          ))}
        </div>
+       </>
+      )}
 
       {/* 项目信任决策：写入 ~/.pi/agent/trust.json，只影响此后新建的 AgentSession。 */}
       <ProjectTrustDialog
@@ -1883,6 +1976,7 @@ function ProjectSection({
   onRequestRemoveWorktree,
   onConfirmRemoveWorktree,
   onCancelRemoveWorktree,
+  onSessionArchive,
 }: {
   project: SidebarProjectNode;
   homeDir: string;
@@ -1926,6 +2020,7 @@ function ProjectSection({
   onRequestRemoveWorktree: (path: string) => void;
   onConfirmRemoveWorktree: (path: string) => void;
   onCancelRemoveWorktree: () => void;
+  onSessionArchive: (sessionId: string) => void;
 }) {
   const { t } = useI18n();
   const collapsed = isSessionNodeEffectivelyCollapsed(collapsedProjectRoots, project.root, searchActive);
@@ -2056,6 +2151,7 @@ function ProjectSection({
                 onSelectSession={onSelectSession}
                 onRenamed={onRenamed}
                 onSessionDeleted={onSessionDeleted}
+                onSessionArchive={onSessionArchive}
                 depth={0}
                 collapsedSessionIds={collapsedSessionIds}
                 searchActive={searchActive}
@@ -2103,6 +2199,7 @@ function ProjectSection({
               onRequestRemove={() => onRequestRemoveWorktree(group.path)}
               onConfirmRemove={() => onConfirmRemoveWorktree(group.path)}
               onCancelRemove={onCancelRemoveWorktree}
+              onSessionArchive={onSessionArchive}
             />
           ))}
 
@@ -2202,6 +2299,7 @@ function WorktreeGroupSection({
   onRequestRemove,
   onConfirmRemove,
   onCancelRemove,
+  onSessionArchive,
 }: {
   group: SidebarWorktreeGroup;
   homeDir: string;
@@ -2230,6 +2328,7 @@ function WorktreeGroupSection({
   onRequestRemove: () => void;
   onConfirmRemove: () => void;
   onCancelRemove: () => void;
+  onSessionArchive: (sessionId: string) => void;
 }) {
   const { t } = useI18n();
   const collapsed = isSessionNodeEffectivelyCollapsed(collapsedWorktreePaths, group.path, searchActive);
@@ -2364,6 +2463,7 @@ function WorktreeGroupSection({
               onSelectSession={onSelectSession}
               onRenamed={onRenamed}
               onSessionDeleted={onSessionDeleted}
+              onSessionArchive={onSessionArchive}
               depth={0}
               collapsedSessionIds={collapsedSessionIds}
               searchActive={searchActive}
@@ -2401,6 +2501,7 @@ function SessionTreeItem({
   onSelectSession,
   onRenamed,
   onSessionDeleted,
+  onSessionArchive,
   depth,
   collapsedSessionIds,
   searchActive,
@@ -2415,6 +2516,7 @@ function SessionTreeItem({
   onSelectSession: (s: SessionInfo) => void;
   onRenamed?: () => void;
   onSessionDeleted?: (id: string) => void;
+  onSessionArchive?: (id: string) => void;
   depth: number;
   collapsedSessionIds: ReadonlySet<string>;
   searchActive: boolean;
@@ -2437,6 +2539,7 @@ function SessionTreeItem({
           onClick={() => onSelectSession(node.session)}
           onRenamed={onRenamed}
           onDeleted={(id) => onSessionDeleted?.(id)}
+          onArchive={(id) => onSessionArchive?.(id)}
           depth={depth}
           hasChildren={hasChildren}
           collapsed={collapsed}
@@ -2457,6 +2560,7 @@ function SessionTreeItem({
               onSelectSession={onSelectSession}
               onRenamed={onRenamed}
               onSessionDeleted={onSessionDeleted}
+              onSessionArchive={onSessionArchive}
               depth={depth + 1}
               collapsedSessionIds={collapsedSessionIds}
               searchActive={searchActive}
@@ -2480,6 +2584,7 @@ function SessionItem({
   onClick,
   onRenamed,
   onDeleted,
+  onArchive,
   depth = 0,
   hasChildren = false,
   collapsed = false,
@@ -2495,6 +2600,7 @@ function SessionItem({
   onClick: () => void;
   onRenamed?: () => void;
   onDeleted?: (id: string) => void;
+  onArchive?: (id: string) => void;
   depth?: number;
   hasChildren?: boolean;
   collapsed?: boolean;
@@ -2510,6 +2616,14 @@ function SessionItem({
   const inputRef = useRef<HTMLInputElement>(null);
 
   const capabilities = getSessionCapabilities(session);
+  // 归档能力：running 或只读 subagent 禁用（后端 409/403 的 UI 先行拦截 + 原因说明）。
+  const isRunningNow = isRunning === true;
+  const archiveCanUse = canArchiveSession(session, isRunningNow);
+  const archiveDisabledReason = !archiveCanUse
+    ? isRunningNow
+      ? t("archive_rowDisabledRunning")
+      : t("archive_rowDisabledReadOnly")
+    : null;
   // P1-5：共享运行计时上下文（first-seen startedAt + 1Hz now）；刷新后无记录 → undefined。
   const runningTime = useContext(RunningTimeContext);
   const runningStartedAt = session.id ? runningTime.startedAt.get(session.id) : undefined;
@@ -2789,7 +2903,7 @@ function SessionItem({
         </div>
 
           {/* 写操作与导出统一收口；只读会话仍可复制 ID 和导出。 */}
-          <SessionRowMenu session={session} title={title} canRename={capabilities.canRename} canDelete={capabilities.canDelete} onRename={startRename} onDelete={handleDeleteClick}/>
+          <SessionRowMenu session={session} title={title} canRename={capabilities.canRename} canDelete={capabilities.canDelete} canArchive={archiveCanUse} archiveDisabledReason={archiveDisabledReason} onRename={startRename} onDelete={handleDeleteClick} onArchive={() => onArchive?.(session.id)}/>
         </>
       )}
     </div>

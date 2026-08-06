@@ -11,6 +11,7 @@ import {
 } from "../session-export-links";
 import {
   AnimatedDropdown,
+  ArchiveIcon,
   MoreVerticalIcon,
   PencilIcon,
   ProjectMenuItem,
@@ -126,7 +127,7 @@ export function ProjectRowMenu({ open, onOpenChange, projectName, onEdit, onClos
   );
 }
 
-export function SessionRowMenu({ session, title, canRename, canDelete, onRename, onDelete }: { session: SessionInfo; title: string; canRename: boolean; canDelete: boolean; onRename: () => void; onDelete: () => void }) {
+export function SessionRowMenu({ session, title, canRename, canDelete, canArchive, archiveDisabledReason, onRename, onDelete, onArchive }: { session: SessionInfo; title: string; canRename: boolean; canDelete: boolean; canArchive: boolean; archiveDisabledReason: string | null; onRename: () => void; onDelete: () => void; onArchive: () => void }) {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const [position, setPosition] = useState<{ top: number; right: number } | null>(null);
@@ -174,6 +175,7 @@ export function SessionRowMenu({ session, title, canRename, canDelete, onRename,
     {open && position && <div ref={menuRef} role="menu" aria-label={label} style={{ position: "fixed", top: position.top, right: position.right, zIndex: 600, minWidth: 190, padding: 4, background: "var(--bg-elevated)", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", boxShadow: "var(--shadow-float)" }}>
       {canRename && <button type="button" role="menuitem" style={itemStyle} {...hover} onClick={() => { close(); onRename(); }}>{menuIcon(<PencilIcon size={13}/>)}{t("sidebar_renameSession")}</button>}
       <button type="button" role="menuitem" style={itemStyle} {...hover} onClick={() => { close(); void copyText(session.id); }}>{menuIcon(<svg {...iconProps(13)}><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>)}{t("sidebar_copySessionId")}</button>
+      {(canArchive || archiveDisabledReason !== null) && <button type="button" role="menuitem" disabled={!canArchive} title={!canArchive ? archiveDisabledReason ?? undefined : undefined} style={{ ...itemStyle, opacity: !canArchive ? 0.45 : 1, cursor: !canArchive ? "not-allowed" : "pointer" }} onClick={() => { if (!canArchive) return; close(); onArchive(); }}>{menuIcon(<ArchiveIcon size={13}/>)}{t("sidebar_archiveSession")}</button>}
       {canExportSession(session) && <><a role="menuitem" href={buildSessionExportHtmlHref(session.id)} download style={itemStyle} {...hover} onClick={() => close()}>{menuIcon(<svg {...iconProps(13)}><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>)}{t("sidebar_exportSessionHtml")}</a>
       <a role="menuitem" href={buildSessionExportJsonlHref(session.id, null)} download style={itemStyle} {...hover} onClick={() => close()}>{menuIcon(<svg {...iconProps(13)}><path d="M8 3H7a2 2 0 0 0-2 2v4a2 2 0 0 1-2 2 2 2 0 0 1 2 2v4a2 2 0 0 0 2 2h1"/><path d="M16 21h1a2 2 0 0 0 2-2v-4a2 2 0 0 1 2-2 2 2 0 0 1-2-2V5a2 2 0 0 0-2-2h-1"/></svg>)}{t("sidebar_exportSessionJsonl")}</a></>}
       {canDelete && <><div style={{ height: 1, margin: "4px 6px", background: "var(--border)" }}/><button type="button" role="menuitem" style={{ ...itemStyle, color: "var(--status-danger)" }} onClick={() => { close(); onDelete(); }}>{menuIcon(<TrashIcon size={13}/>)}{t("sidebar_deleteSession")}</button></>}

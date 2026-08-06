@@ -20,12 +20,16 @@ const GIT_TIMEOUT_MS = 10_000;
 const GIT_STATUS_MAX_BUFFER = 8 * 1024 * 1024;
 
 // ============================================================================
-// Git 数据响应缓存（P1-3 定向刷新）
+// Git 数据响应缓存（P1-3 定向刷新 + P1-6 HEAD 校验）
 //
 // diff 与 status 分离缓存、分离失效：
-//   - diff：按 (cwd, filePath) 键控，以 (mtimeMs, size) 校验——文件未变时
-//     同内容重复请求零 git 调用；单文件修改只重抓该文件（mtime/size 变化
-//     即定向失效该条目）。
+//   - diff：按 (cwd, filePath) 键控，以 (mtimeMs, size, head) 校验——
+//     文件未变且仓库 HEAD 未变时同内容重复请求零 diff/status git 调用；
+//     单文件修改只重抓该文件（mtime/size 变化即定向失效该条目）。
+//   - HEAD 校验：diff 基线是 `git diff HEAD`，切换分支 / reset / checkout
+//     后 HEAD 变化而工作树文件未变时，仅凭 mtime/size 会返回旧 diff；
+//     因此每次请求用同一次 `git rev-parse --show-toplevel HEAD` 批量取
+//     HEAD 标识并入校验，HEAD 不匹配即整体失效该仓库条目。
 //   - status：按 cwd 键控的短 TTL 防抖——聚合视图在全量刷新场景（agent
 //     结束后 / 文件保存后）合并高频重复请求，但不与 diff 缓存互相污染。
 // 缓存为模块级 Map（热重载自动清空，丢失无害，仅影响下次冷抓速度）。
@@ -34,6 +38,8 @@ const GIT_STATUS_MAX_BUFFER = 8 * 1024 * 1024;
 interface GitDiffCacheEntry {
   mtimeMs: number;
   size: number;
+  /** 缓存生成时的 HEAD 标识（unborn HEAD 为 null）；HEAD 变化即条目失效。 */
+  head: string | null;
   response: GitFileDiffResponse;
 }
 
@@ -70,6 +76,31 @@ async function findRepositoryRoot(cwd: string): Promise<string | null> {
     return (await git(cwd, ["rev-parse", "--show-toplevel"])).trim() || null;
   } catch {
     return null;
+  }
+}
+
+/** 仓库根 + 当前 HEAD 标识，一次 rev-parse 批量获取（P1-6）。 */
+interface RepositoryInfo {
+  repositoryRoot: string;
+  head: string | null;
+}
+
+async function findRepositoryInfo(cwd: string): Promise<RepositoryInfo | null> {
+  try {
+    // `--show-toplevel` 与 `HEAD` 同一次调用分别输出到独立行，省一次进程开销。
+    const output = (await git(cwd, ["rev-parse", "--show-toplevel", "HEAD"])).trim();
+    const [repositoryRoot, head] = output.split("\n");
+    if (!repositoryRoot) return null;
+    return { repositoryRoot, head: head?.trim() || null };
+  } catch {
+    // unborn HEAD（仓库尚无提交）：HEAD 无法解析，回退只取 toplevel，
+    // head 记 null——无提交时 diff 无基线，仅 untracked 文件可出 patch。
+    try {
+      const repositoryRoot = (await git(cwd, ["rev-parse", "--show-toplevel"])).trim();
+      return repositoryRoot ? { repositoryRoot, head: null } : null;
+    } catch {
+      return null;
+    }
   }
 }
 
@@ -175,8 +206,9 @@ export async function getGitFileDiff(
   filePath: string,
   options: { force?: boolean } = {},
 ): Promise<GitFileDiffResponse> {
-  const repositoryRoot = await findRepositoryRoot(cwd);
-  if (!repositoryRoot || !isWithinPath(repositoryRoot, filePath)) return { supported: false };
+  const repositoryInfo = await findRepositoryInfo(cwd);
+  if (!repositoryInfo || !isWithinPath(repositoryInfo.repositoryRoot, filePath)) return { supported: false };
+  const { repositoryRoot, head } = repositoryInfo;
 
   const resolvedFilePath = path.resolve(filePath);
   let stat: fs.Stats;
@@ -189,11 +221,20 @@ export async function getGitFileDiff(
   }
   if (!stat.isFile() || stat.size > TEXT_PREVIEW_MAX_BYTES) return { supported: false };
 
-  // 响应缓存：文件 (mtimeMs, size) 未变时直接复用上次 patch，零 git 调用。
-  // mtime/size 变化即该文件 diff 定向失效——单文件修改只重抓对应 diff。
+  // 响应缓存：文件 (mtimeMs, size) 与仓库 HEAD 均未变时直接复用上次 patch，
+  // 零 diff/status git 调用（HEAD 已随 toplevel 同一次 rev-parse 取得）。
+  // mtime/size 变化即该文件 diff 定向失效——单文件修改只重抓对应 diff；
+  // HEAD 变化（分支切换 / reset / checkout）即便工作树文件未变也整体失效
+  // ——diff 基线是 HEAD，基线变了缓存即过期（P1-6）。
   const cacheKey = buildDiffCacheKey(cwd, filePath);
   const cached = gitDiffCache.get(cacheKey);
-  if (!options.force && cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) {
+  if (
+    !options.force &&
+    cached &&
+    cached.mtimeMs === stat.mtimeMs &&
+    cached.size === stat.size &&
+    cached.head === head
+  ) {
     return cached.response;
   }
 
@@ -231,6 +272,6 @@ export async function getGitFileDiff(
   const response: GitFileDiffResponse = patch.includes("\n@@ ")
     ? { supported: true, status, patch }
     : { supported: false };
-  gitDiffCache.set(cacheKey, { mtimeMs: stat.mtimeMs, size: stat.size, response });
+  gitDiffCache.set(cacheKey, { mtimeMs: stat.mtimeMs, size: stat.size, head, response });
   return response;
 }

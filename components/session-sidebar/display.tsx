@@ -277,6 +277,15 @@ export const HistoryIcon = ({ size = 14 }: { size?: number }) => (
   </svg>
 );
 
+/** lucide archive：归档入口（侧栏工具栏与行菜单共用）。 */
+export const ArchiveIcon = ({ size = 18 }: { size?: number }) => (
+  <svg {...iconProps(size)}>
+    <rect x="2" y="3" width="20" height="5" rx="1" />
+    <path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8" />
+    <path d="M10 12h4" />
+  </svg>
+);
+
 export const ChatPlusIcon = ({ size = 18 }: { size?: number }) => (
   <svg {...iconProps(size)}>
     <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />

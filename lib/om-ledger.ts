@@ -4,6 +4,12 @@
  * 也不把 ledger 条目伪装成聊天气泡。
  */
 
+import { buildActiveBranchPath, type SessionBranchEntry } from "./session-branch-path";
+
+export { buildActiveBranchPath };
+/** 兼容导出：投影公共 entry 结构（与 session-branch-path 的 SessionBranchEntry 同构） */
+export type OmLedgerEntry = SessionBranchEntry;
+
 export type OmRelevance = "low" | "medium" | "high" | "critical";
 
 export interface OmObservationView {
@@ -43,14 +49,6 @@ const OM_OBSERVATIONS_DROPPED = "om.observations.dropped";
 
 const RELEVANCE_VALUES = ["low", "medium", "high", "critical"] as const;
 const MEMORY_ID_PATTERN = /^[a-f0-9]{12}$/;
-
-export type OmLedgerEntry = {
-  id: string;
-  type: string;
-  parentId?: string | null;
-  customType?: string;
-  data?: unknown;
-};
 
 type Observation = {
   id: string;
@@ -138,36 +136,6 @@ function isReflectionsRecordedData(value: unknown): value is { reflections: Refl
 function isObservationsDroppedData(value: unknown): value is { observationIds: string[]; coversUpToId: string } {
   if (!isPlainRecord(value)) return false;
   return isNonEmptyStringArray(value.observationIds) && isNonEmptyString(value.coversUpToId);
-}
-
-/**
- * 从 leaf 沿 parentId 上溯到 root，再 reverse 为 root→leaf。
- * leaf 为 null 或找不到时用全部 entries 的原始顺序。
- */
-export function buildActiveBranchPath<T extends OmLedgerEntry>(
-  entries: ReadonlyArray<T>,
-  leafId: string | null | undefined,
-): T[] {
-  if (leafId == null) {
-    return [...entries];
-  }
-  const byId = new Map(entries.map((e) => [e.id, e]));
-  if (!byId.has(leafId)) {
-    return [...entries];
-  }
-  const path: T[] = [];
-  const seen = new Set<string>();
-  let current: T | undefined = byId.get(leafId);
-  while (current) {
-    if (seen.has(current.id)) break;
-    seen.add(current.id);
-    path.push(current);
-    const parentId = current.parentId ?? null;
-    if (parentId == null) break;
-    current = byId.get(parentId);
-  }
-  path.reverse();
-  return path;
 }
 
 function takeTail<T>(items: readonly T[], max: number): T[] {

@@ -58,3 +58,16 @@ export function getSessionCapabilities(
 ): SessionCapabilities {
   return session?.readOnly === true ? READ_ONLY_CAPABILITIES : WRITABLE_CAPABILITIES;
 }
+
+/**
+ * 归档能力判定（菜单项禁用逻辑）：
+ * - 只读 subagent 会话不可归档（后端 403 门禁的 UI 先行拦截）；
+ * - running 会话不可归档（后端 409，前端直接禁用并给出原因）。
+ */
+export function canArchiveSession(
+  session: Pick<SessionInfo, "readOnly"> | null | undefined,
+  isRunning: boolean,
+): boolean {
+  if (isRunning) return false;
+  return getSessionCapabilities(session).readOnly === false;
+}

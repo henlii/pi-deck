@@ -39,3 +39,16 @@ test("readOnly 会话全部写/连接能力关闭", async () => {
   assert.equal(caps.canConnectEvents, false);
   assert.equal(caps.canSendSessionCommands, false);
 });
+
+test("canArchiveSession：普通可归档；running 或只读 subagent 禁用", async () => {
+  const { canArchiveSession } = await jiti.import("./session-capabilities.ts");
+  assert.equal(canArchiveSession(undefined, false), true);
+  assert.equal(canArchiveSession({}, false), true);
+  assert.equal(canArchiveSession({ readOnly: undefined }, false), true);
+  // running 会话不可归档（后端 409）。
+  assert.equal(canArchiveSession({}, true), false);
+  assert.equal(canArchiveSession(undefined, true), false);
+  // 只读 subagent 会话不可归档（后端 403）。
+  assert.equal(canArchiveSession({ readOnly: true }, false), false);
+  assert.equal(canArchiveSession({ readOnly: true }, true), false);
+});
