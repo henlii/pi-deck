@@ -324,8 +324,6 @@ export const en = {
   workspace_close: 'Close',
   workspace_selectProject: 'Select project',
   changes_title: 'Changes & diff',
-  changes_show: 'Show changes panel',
-  changes_hide: 'Hide changes panel',
   changes_resizeHandle: 'Resize changes panel',
   changes_selectFile: 'Select a changed file to inspect its diff',
   changes_diffLoading: 'Loading diff…',
@@ -334,7 +332,7 @@ export const en = {
   changes_diffUnavailable: 'Diff is unavailable for this file',
   secondary_title: 'File details',
   secondary_empty: 'Select a file in the sidebar to view its details',
-  secondary_close: 'Close details panel',
+  secondary_closeAll: 'Close all files',
   // right panel (files / diff / session info)
   app_showPanel: 'Show panel',
   app_hidePanel: 'Hide panel',

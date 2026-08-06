@@ -11,6 +11,7 @@ import {
 } from "@/lib/file-paths";
 import type { GitFileStatus, GitFileStatusKind, GitStatusResponse } from "@/lib/git-types";
 import { useI18n } from "@/lib/i18n";
+import { loadSidebarPreferences, saveFileExplorerState } from "@/lib/ui-preferences";
 
 interface FileEntry {
   name: string;
@@ -250,13 +251,16 @@ function TreeNode({
 
   const handleClick = useCallback(() => {
     if (node.isDir) {
-      const next = !open;
-      onToggleExpanded(node.fullPath, next);
-      if (next && !loaded) loadChildren();
+      onToggleExpanded(node.fullPath, !open);
     } else {
       onOpenFile(node.fullPath, node.name);
     }
-  }, [node.isDir, node.fullPath, node.name, loaded, open, loadChildren, onOpenFile, onToggleExpanded]);
+  }, [node.isDir, node.fullPath, node.name, open, onOpenFile, onToggleExpanded]);
+
+  // 展开（含从持久化偏好恢复的展开）时自动加载子目录；加载中重复调用由 loaded 去重。
+  useEffect(() => {
+    if (open && !loaded) loadChildren();
+  }, [open, loaded, loadChildren]);
 
   // 键盘操作：行聚焦时 Enter/Space 等价点击（目录切换展开、文件打开）。
   // 仅处理行自身按键（e.target === e.currentTarget），行内按钮/下载链接自行响应，不冲突。
@@ -439,7 +443,17 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
   const [roots, setRoots] = useState<FileNode[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set());
+  // 展开/滚动按 cwd 持久化（lib/ui-preferences.ts）。
+  // 初始为空 Set 保证 SSR/CSR 首帧一致；持久化值在 cwd effect（含首挂载）中恢复，
+  // 与 AppShell sidebarWidth「挂载后恢复」模式保持一致，避免 hydration mismatch。
+  const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => new Set());
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const scrollSaveTimerRef = useRef<number | null>(null);
+  /** 最新展开集镜像：cwd 切换兜底保存不引入 expandedPaths 依赖（避免 effect 重跑重抓根目录）。 */
+  const expandedPathsRef = useRef(expandedPaths);
+  expandedPathsRef.current = expandedPaths;
+  /** cwd 切换后待恢复的滚动位置；roots 渲染完成后应用。 */
+  const pendingScrollTopRef = useRef<number | null>(null);
   const [treeRefreshKey, setTreeRefreshKey] = useState(0);
   const [highlightedPaths, setHighlightedPaths] = useState<Set<string>>(new Set());
   const [gitFiles, setGitFiles] = useState<GitFileStatus[]>([]);
@@ -481,11 +495,32 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
     return directories;
   }, [cwd, gitFiles]);
 
+  const persistExplorerState = useCallback((expanded: Set<string>, scrollTop: number) => {
+    saveFileExplorerState(cwd, { expanded: [...expanded], scrollTop });
+  }, [cwd]);
+
   const handleToggleExpanded = useCallback((fullPath: string, open: boolean) => {
-    setExpandedPaths((prev) => {
-      const next = new Set(prev);
-      if (open) next.add(fullPath); else next.delete(fullPath);
-      return next;
+    const next = new Set(expandedPaths);
+    if (open) next.add(fullPath); else next.delete(fullPath);
+    setExpandedPaths(next);
+    persistExplorerState(next, scrollRef.current?.scrollTop ?? 0);
+  }, [expandedPaths, persistExplorerState]);
+
+  /** 滚动位置防抖写回（200ms），避免高频滚动刷 localStorage。 */
+  const handleScroll = useCallback(() => {
+    if (scrollSaveTimerRef.current !== null) window.clearTimeout(scrollSaveTimerRef.current);
+    scrollSaveTimerRef.current = window.setTimeout(() => {
+      persistExplorerState(expandedPathsRef.current, scrollRef.current?.scrollTop ?? 0);
+    }, 200);
+  }, [persistExplorerState]);
+
+  /** roots 渲染完成后应用待恢复的滚动位置。 */
+  const restoreScrollAfterPaint = useCallback(() => {
+    if (pendingScrollTopRef.current == null) return;
+    const target = pendingScrollTopRef.current;
+    pendingScrollTopRef.current = null;
+    requestAnimationFrame(() => {
+      if (scrollRef.current) scrollRef.current.scrollTop = target;
     });
   }, []);
 
@@ -590,11 +625,21 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
 
   useEffect(() => {
     const cwdChanged = prevCwdRef.current !== cwd;
+    const previousCwd = prevCwdRef.current;
     prevCwdRef.current = cwd;
 
-    // Reset expanded state only when cwd changes, not on refreshKey bumps
     if (cwdChanged) {
-      setExpandedPaths(new Set());
+      // 保存旧 cwd 的展开/滚动（防抖写回可能尚未落盘，此处兜底）；null 为首挂载无旧值。
+      if (previousCwd !== null) {
+        saveFileExplorerState(previousCwd, {
+          expanded: [...expandedPathsRef.current],
+          scrollTop: scrollRef.current?.scrollTop ?? 0,
+        });
+      }
+      // 恢复新 cwd 的展开/滚动；滚动在 roots 渲染完成后应用。
+      const saved = loadSidebarPreferences().fileExplorerState[cwd] ?? { expanded: [], scrollTop: 0 };
+      setExpandedPaths(new Set(saved.expanded));
+      pendingScrollTopRef.current = saved.scrollTop;
       setHighlightedPaths(new Set());
       setUploadSummary(null);
       setPendingConflict(null);
@@ -608,12 +653,16 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
     void deferToIdle().then(() => {
       if (cancelled) return;
       fetchEntries(cwd, t)
-        .then((entries) => { if (!cancelled) setRoots(entries); })
+        .then((entries) => {
+          if (cancelled) return;
+          setRoots(entries);
+          restoreScrollAfterPaint();
+        })
         .catch((e) => { if (!cancelled) setError(e instanceof Error ? e.message : String(e)); })
         .finally(() => { if (!cancelled) setLoading(false); });
     });
     return () => { cancelled = true; };
-  }, [cwd, refreshKey, t, treeRefreshKey, deferToIdle]);
+  }, [cwd, refreshKey, t, treeRefreshKey, deferToIdle, restoreScrollAfterPaint]);
 
   useEffect(() => {
     let cancelled = false;
@@ -641,7 +690,7 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
   }, [cwd, onAtMentions, uploadSummary]);
 
   return (
-    <div style={{ minHeight: "100%" }}>
+    <div ref={scrollRef} onScroll={handleScroll} style={{ height: "100%", overflowY: "auto", overflowX: "hidden" }}>
       <input ref={uploadInputRef} type="file" multiple hidden onChange={handleUploadInput} />
       {showUploadFeedback && (
         <div style={{ padding: "6px 8px", borderBottom: "1px solid var(--border)" }}>

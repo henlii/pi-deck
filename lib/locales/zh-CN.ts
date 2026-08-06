@@ -324,8 +324,6 @@ export const zhCN: Record<TranslationKey, string> = {
   workspace_close: '关闭',
   workspace_selectProject: '选择项目',
   changes_title: '文件修改与差异',
-  changes_show: '显示修改面板',
-  changes_hide: '隐藏修改面板',
   changes_resizeHandle: '调整修改面板宽度',
   changes_selectFile: '选择有修改的文件以查看差异',
   changes_diffLoading: '正在加载差异…',
@@ -334,7 +332,7 @@ export const zhCN: Record<TranslationKey, string> = {
   changes_diffUnavailable: '此文件暂时无法显示差异',
   secondary_title: '文件详情',
   secondary_empty: '在侧栏中选择文件以查看详情',
-  secondary_close: '关闭详情面板',
+  secondary_closeAll: '关闭全部文件',
   // 右栏（文件 / diff / 会话信息）
   app_showPanel: '显示面板',
   app_hidePanel: '隐藏面板',

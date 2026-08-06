@@ -12,7 +12,6 @@ interface Props {
   open: boolean;
   width: number;
   onWidthChange: (width: number) => void;
-  onClose: () => void;
   cwd: string | null;
   isMobile: boolean;
   mobileReady: boolean;
@@ -20,6 +19,7 @@ interface Props {
   activeTabId: string;
   onSelectTab: (id: string) => void;
   onCloseTab: (id: string) => void;
+  onCloseAllTabs: () => void;
   pendingCloseTabLabel: string | null;
   onSaveAndClose: () => void;
   onDiscardAndClose: () => void;
@@ -30,7 +30,7 @@ interface Props {
 }
 
 /** 二级右侧边栏：由一级文件树/Git 行打开，文件 tab 与扩展内容均挂载于此。 */
-export function ChangesPanel({ open, width, onWidthChange, onClose, cwd, isMobile, mobileReady, tabs, activeTabId, onSelectTab, onCloseTab, pendingCloseTabLabel, onSaveAndClose, onDiscardAndClose, onCancelClose, fileViewerContent, activeMode, gitAffectedPaths }: Props) {
+export function ChangesPanel({ open, width, onWidthChange, cwd, isMobile, mobileReady, tabs, activeTabId, onSelectTab, onCloseTab, onCloseAllTabs, pendingCloseTabLabel, onSaveAndClose, onDiscardAndClose, onCancelClose, fileViewerContent, activeMode, gitAffectedPaths }: Props) {
   const { t } = useI18n();
   const [diff, setDiff] = useState<GitFileDiffResponse | null>(null);
   const [diffLoading, setDiffLoading] = useState(false);
@@ -94,11 +94,10 @@ export function ChangesPanel({ open, width, onWidthChange, onClose, cwd, isMobil
     <aside className={`changes-panel${open ? " changes-panel-open" : " changes-panel-closed"}${dragging ? " changes-panel-dragging" : ""}${mobileReady ? "" : " workspace-mobile-pending"}`} style={{ width: open ? width : 0, minWidth: open ? width : 0 }} aria-label={t("secondary_title")}>
       {open && <div className={`changes-panel-resize-handle${dragging ? " dragging" : ""}`} role="separator" aria-orientation="vertical" tabIndex={0} title={t("changes_resizeHandle")} aria-label={t("changes_resizeHandle")} onPointerDown={handleResizeStart} onPointerMove={handleResizeMove} onPointerUp={handleResizeEnd} onPointerCancel={handleResizeEnd} />}
       <div className="secondary-panel-inner">
-        <div className="workspace-header">
-          <strong style={{ flex: 1, minWidth: 0, fontSize: 11.5, fontWeight: 650 }}>{t("secondary_title")}</strong>
-          <button type="button" className="sidebar-icon-btn" onClick={onClose} title={t("secondary_close")} aria-label={t("secondary_close")}><span aria-hidden="true">×</span></button>
-        </div>
-        {tabs.length > 0 && <div className="secondary-panel-tabs"><TabBar tabs={tabs} activeTabId={activeTabId} onSelectTab={onSelectTab} onCloseTab={onCloseTab} /></div>}
+        {tabs.length > 0 && <div className="secondary-panel-tabs" style={{ display: "flex", alignItems: "stretch", flexShrink: 0 }}>
+          <div style={{ flex: 1, minWidth: 0, overflow: "hidden" }}><TabBar tabs={tabs} activeTabId={activeTabId} onSelectTab={onSelectTab} onCloseTab={onCloseTab} /></div>
+          <button type="button" className="sidebar-icon-btn" onClick={onCloseAllTabs} title={t("secondary_closeAll")} aria-label={t("secondary_closeAll")} style={{ flexShrink: 0, borderRadius: 0, borderLeft: "1px solid var(--border)" }}><span aria-hidden="true">×</span></button>
+        </div>}
         {pendingCloseTabLabel !== null && <div className="file-close-confirm" role="alert"><span className="file-close-confirm__message">{t("app_unsavedChangesIn", { name: pendingCloseTabLabel })}</span><button type="button" className="file-close-confirm__button" onClick={onSaveAndClose}>{t("app_saveAndClose")}</button><button type="button" className="file-close-confirm__button is-danger" onClick={onDiscardAndClose}>{t("app_discardChanges")}</button><button type="button" className="file-close-confirm__button" onClick={onCancelClose}>{t("common_cancel")}</button></div>}
         <div className="secondary-panel-body">{content}</div>
       </div>

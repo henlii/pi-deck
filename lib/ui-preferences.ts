@@ -27,6 +27,13 @@ export const CHANGES_PANEL_WIDTH_MAX = 640;
 export const CHANGES_PANEL_WIDTH_DEFAULT = 360;
 
 /**
+ * 文件树按 cwd 记忆的展开路径与滚动位置（跨刷新持久化）。
+ * key = cwd 绝对路径；expanded 为已展开目录完整路径；scrollTop 为滚动容器像素。
+ * 属于跨刷新偏好，写入本 seam；搜索/临时高亮等瞬时态禁止入内。
+ */
+export type FileExplorerState = Record<string, { expanded: string[]; scrollTop: number }>;
+
+/**
  * 将任意输入钳到侧栏宽度合法范围；非有限数回退默认。
  * 解析与写入共用，保证持久化值始终可渲染。
  */
@@ -61,11 +68,37 @@ export function parseChangesPanelOpen(value: unknown): boolean {
 }
 
 /**
- * 容错解析「最近会话区」开/关：默认开启；仅显式 boolean false 才关闭。
+ * 容错解析「最近会话」区开/关：默认开启；仅显式 boolean false 才关闭。
  * 旧数据缺字段 / 脏数据（0、"false" 等）一律保持默认开启。
  */
 export function parseShowRecentSessions(value: unknown): boolean {
   return value !== false;
+}
+
+/**
+ * 容错解析文件树状态：仅接受纯对象；逐项过滤脏数据。
+ * - key 为 cwd 绝对路径（trim 非空）
+ * - 每项仅接受 { expanded: string[], scrollTop: number } 结构
+ * - expanded 过滤非 string 项；scrollTop 仅接受有限非负数字，否则 0
+ * 绝不抛异常。
+ */
+export function parseFileExplorerState(value: unknown): FileExplorerState {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return {};
+  const result: FileExplorerState = {};
+  for (const [rawCwd, rawState] of Object.entries(value as Record<string, unknown>)) {
+    const cwd = rawCwd.trim();
+    if (!cwd) continue;
+    if (rawState === null || typeof rawState !== "object" || Array.isArray(rawState)) continue;
+    const state = rawState as Record<string, unknown>;
+    const expanded = Array.isArray(state.expanded)
+      ? state.expanded.filter((item): item is string => typeof item === "string")
+      : [];
+    const scrollTop = typeof state.scrollTop === "number" && Number.isFinite(state.scrollTop) && state.scrollTop > 0
+      ? Math.round(state.scrollTop)
+      : 0;
+    result[cwd] = { expanded, scrollTop };
+  }
+  return result;
 }
 
 export interface SidebarPreferences {
@@ -90,6 +123,8 @@ export interface SidebarPreferences {
   changesPanelWidth: number;
   /** 「最近会话」区开/关（项目列表上方的快捷入口）；默认开启。 */
   showRecentSessions: boolean;
+  /** 文件树按 cwd 记忆的展开路径与滚动位置。 */
+  fileExplorerState: FileExplorerState;
 }
 
 export const DEFAULT_SIDEBAR_PREFERENCES: SidebarPreferences = {
@@ -104,6 +139,7 @@ export const DEFAULT_SIDEBAR_PREFERENCES: SidebarPreferences = {
   changesPanelOpen: true,
   changesPanelWidth: CHANGES_PANEL_WIDTH_DEFAULT,
   showRecentSessions: true,
+  fileExplorerState: {},
 };
 
 export const STORAGE_KEY = "pidance:sidebar-preferences";
@@ -170,6 +206,8 @@ export function parseSidebarPreferences(raw: unknown): SidebarPreferences {
     changesPanelWidth: clampChangesPanelWidth(record.changesPanelWidth),
     // 旧数据无最近会话字段：默认开启（仅显式 false 关闭）。
     showRecentSessions: parseShowRecentSessions(record.showRecentSessions),
+    // 旧数据无文件树记忆字段：默认空表。
+    fileExplorerState: parseFileExplorerState(record.fileExplorerState),
   };
 }
 
@@ -186,6 +224,7 @@ export function serializeSidebarPreferences(prefs: SidebarPreferences): string {
     changesPanelOpen: parseChangesPanelOpen(prefs.changesPanelOpen),
     changesPanelWidth: clampChangesPanelWidth(prefs.changesPanelWidth),
     showRecentSessions: parseShowRecentSessions(prefs.showRecentSessions),
+    fileExplorerState: parseFileExplorerState(prefs.fileExplorerState),
   });
 }
 
@@ -290,4 +329,32 @@ export function saveChangesPanelPreferencesToStorage(
 export function saveChangesPanelPreferences(patch: { open?: boolean; width?: number }): void {
   if (typeof window === "undefined") return;
   saveChangesPanelPreferencesToStorage(window.localStorage, patch);
+}
+
+/**
+ * 只更新存储中某 cwd 的文件树状态（展开路径 + 滚动位置），其余偏好原样保留。
+ * 写入方：FileExplorer（唯一 owner）；cwd 切换时保存旧 cwd、恢复新 cwd。
+ */
+export function saveFileExplorerStateToStorage(
+  storage: StorageLike,
+  cwd: string,
+  state: { expanded: string[]; scrollTop: number },
+): void {
+  try {
+    const current = loadSidebarPreferencesFromStorage(storage);
+    const next = parseFileExplorerState(current.fileExplorerState);
+    if (cwd.trim()) next[cwd] = {
+      expanded: parseFileExplorerState({ [cwd]: state })[cwd]?.expanded ?? [],
+      scrollTop: Math.max(0, Math.round(Number.isFinite(state.scrollTop) ? state.scrollTop : 0)),
+    };
+    storage.setItem(STORAGE_KEY, serializeSidebarPreferences({ ...current, fileExplorerState: next }));
+  } catch {
+    // 忽略存储配额 / 隐私模式错误
+  }
+}
+
+/** SSR / 无 localStorage 环境安全 no-op。 */
+export function saveFileExplorerState(cwd: string, state: { expanded: string[]; scrollTop: number }): void {
+  if (typeof window === "undefined") return;
+  saveFileExplorerStateToStorage(window.localStorage, cwd, state);
 }

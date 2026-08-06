@@ -96,8 +96,8 @@ export function RightPanel({ open, width, onWidthChange, onClose, cwd, isMobile,
   }, []);
 
   const navigationTabs = tabs.filter((tab) => tab.kind && tab.kind !== "file" && tab.kind !== "chat");
-  const activeNavigationId = activeTabId.startsWith("file:") ? "files" : activeTabId;
-  const contentTitle = navigationTabs.find((tab) => tab.id === activeNavigationId)?.label ?? t("panel_ariaLabel");
+  // 一级右栏 activeTabId 恒为导航 id（文件 tab 选中已由 AppShell 侧 activeFileTabId 解耦）。
+  const activeNavigationId = activeTabId;
   const changeCount = gitStatus?.isGitRepository ? gitStatus.files.length : 0;
   const desktopTotalWidth = NAVIGATION_RAIL_WIDTH + (open ? width : 0);
   const contentWidth = isMobile ? `calc(100% - ${NAVIGATION_RAIL_WIDTH}px)` : open ? width : 0;
@@ -107,16 +107,21 @@ export function RightPanel({ open, width, onWidthChange, onClose, cwd, isMobile,
       {open && <div className={`workspace-resize-handle${dragging ? " dragging" : ""}`} onPointerDown={handleResizeStart} onPointerMove={handleResizeMove} onPointerUp={handleResizeEnd} onPointerCancel={handleResizeEnd} onDoubleClick={() => onWidthChange(RIGHT_PANEL_WIDTH_DEFAULT)} title={t("workspace_resizeHandle")} aria-hidden="true" />}
       <div className="workspace-inner" style={{ width: desktopTotalWidth, minWidth: desktopTotalWidth, height: "100%", display: "flex" }}>
         <div aria-hidden={!open} inert={!open} style={{ width: contentWidth, minWidth: contentWidth, overflow: "hidden", height: "100%", display: "flex", flexDirection: "column", opacity: open ? 1 : 0, transition: dragging ? "none" : "width 0.2s ease, min-width 0.2s ease, opacity 0.12s ease" }}>
-          <div className="workspace-header">
-            <strong title={contentTitle} style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 11.5, fontWeight: 650 }}>{contentTitle}</strong>
-            {activeTabId === "files" && <><button type="button" onClick={() => fileExplorerRef.current?.openUploadPicker()} disabled={uploadBusy || !cwd} title={t("workspace_upload")} data-tooltip={t("workspace_upload")} aria-label={t("workspace_upload")} className="sidebar-icon-btn"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m17 8-5-5-5 5"/><path d="M12 3v12"/></svg></button><button type="button" onClick={() => setFilesRefreshTick((tick) => tick + 1)} title={t("workspace_refreshFiles")} data-tooltip={t("workspace_refreshFiles")} aria-label={t("workspace_refreshFiles")} className="sidebar-icon-btn"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg></button></>}
-            {activeTabId === "git" && <button type="button" onClick={() => void fetchGitStatus()} disabled={!cwd} title={t("workspace_refreshGitStatus")} data-tooltip={t("workspace_refreshGitStatus")} aria-label={t("workspace_refreshGitStatus")} className="sidebar-icon-btn"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg></button>}
-            <button type="button" onClick={onClose} title={t("workspace_close")} data-tooltip={t("workspace_close")} aria-label={t("workspace_close")} className="sidebar-icon-btn"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
-          </div>
           <div style={{ flex: 1, overflow: "hidden", position: "relative", background: "var(--bg-panel)" }}>
             {!everOpened ? null : !cwd ? <div style={{ padding: "16px 12px", fontSize: 11.5, color: "var(--text-dim)", lineHeight: 1.6 }}>{t("workspace_selectProject")}</div> : <>
-              <div style={{ display: activeTabId === "files" ? "block" : "none", height: "100%", overflowY: "auto", overflowX: "hidden" }}><FileExplorer ref={fileExplorerRef} cwd={cwd} onOpenFile={(filePath, fileName) => onOpenFile(filePath, fileName, "content")} refreshKey={(fileRefreshKey ?? 0) + filesRefreshTick} onAtMention={onAtMention} onAtMentions={onAtMentions} onUploadBusyChange={setUploadBusy}/></div>
-              <div style={{ display: activeTabId === "git" ? "block" : "none", height: "100%", overflowY: "auto", overflowX: "hidden" }}><GitPanel cwd={cwd} status={gitStatus} loading={gitLoading} error={gitError} onOpenFile={(filePath, fileName) => onOpenFile(filePath, fileName, "diff")}/></div>
+              <div style={{ display: activeTabId === "files" ? "flex" : "none", height: "100%", flexDirection: "column" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 4, padding: "4px 8px", borderBottom: "1px solid var(--border)", flexShrink: 0 }}>
+                  <button type="button" onClick={() => fileExplorerRef.current?.openUploadPicker()} disabled={uploadBusy || !cwd} title={t("workspace_upload")} data-tooltip={t("workspace_upload")} aria-label={t("workspace_upload")} className="sidebar-icon-btn"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m17 8-5-5-5 5"/><path d="M12 3v12"/></svg></button>
+                  <button type="button" onClick={() => setFilesRefreshTick((tick) => tick + 1)} title={t("workspace_refreshFiles")} data-tooltip={t("workspace_refreshFiles")} aria-label={t("workspace_refreshFiles")} className="sidebar-icon-btn"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg></button>
+                </div>
+                <div style={{ flex: 1, minHeight: 0 }}><FileExplorer ref={fileExplorerRef} cwd={cwd} onOpenFile={(filePath, fileName) => onOpenFile(filePath, fileName, "content")} refreshKey={(fileRefreshKey ?? 0) + filesRefreshTick} onAtMention={onAtMention} onAtMentions={onAtMentions} onUploadBusyChange={setUploadBusy}/></div>
+              </div>
+              <div style={{ display: activeTabId === "git" ? "flex" : "none", height: "100%", flexDirection: "column" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 4, padding: "4px 8px", borderBottom: "1px solid var(--border)", flexShrink: 0 }}>
+                  <button type="button" onClick={() => void fetchGitStatus()} disabled={!cwd} title={t("workspace_refreshGitStatus")} data-tooltip={t("workspace_refreshGitStatus")} aria-label={t("workspace_refreshGitStatus")} className="sidebar-icon-btn"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg></button>
+                </div>
+                <div style={{ flex: 1, minHeight: 0, overflowY: "auto", overflowX: "hidden" }}><GitPanel cwd={cwd} status={gitStatus} loading={gitLoading} error={gitError} onOpenFile={(filePath, fileName) => onOpenFile(filePath, fileName, "diff")}/></div>
+              </div>
               {activeTabId === "branch" && <div style={{ height: "100%", overflow: "hidden" }}>{branchContent}</div>}
               {activeTabId === "info" && <div style={{ height: "100%", overflow: "hidden" }}>{sessionInfoContent}</div>}
             </>}
