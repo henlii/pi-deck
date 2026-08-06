@@ -272,7 +272,7 @@ test("搜索与折叠偏好隔离：过滤不触碰折叠集合，搜索期强�
   assert.deepEqual([...collapsedProjects], ["/repo"]);
 });
 
-test("collectSubagentParentIdsFromSidebarTree：subagent 不展示后无默认收起目标", async () => {
+test("collectSubagentParentIdsFromSidebarTree：含子节点的父会话默认收起", async () => {
   const {
     buildSidebarTree,
     collectSubagentParentIdsFromSidebarTree,
@@ -304,8 +304,8 @@ test("collectSubagentParentIdsFromSidebarTree：subagent 不展示后无默认�
     [mainParent, mainSub, wtParent, wtSub, forkOnly, forkChild],
     { knownWorktrees: [{ path: "/repo-worktrees/feat", branch: "feat", isMain: false }] },
   );
-  // subagent 子会话不展示 → 默认收起集合恒为空；fork-only 项目不受影响。
-  assert.deepEqual(collectSubagentParentIdsFromSidebarTree(tree).sort(), []);
+  // subagent 子会话不展示；含 fork 子节点的父会话（fo）默认收起。
+  assert.deepEqual(collectSubagentParentIdsFromSidebarTree(tree).sort(), ["fo"]);
 });
 
 test("全文模式：按 session id 集合保留祖先链，不按 name/alias 整树匹配", async () => {

@@ -100,9 +100,11 @@ const SIDEBAR_INDICATOR_SLOT = 16;
 const SIDEBAR_INDICATOR_GAP = 6;
 const SIDEBAR_DEPTH_STEP = 14;
 // 文字起点 = gutter + 指示器槽位 + 间距（图标/chevron 与文字相邻，同 openchamber）。
+// 所有行（最近/项目/工作树/会话）图标与文字各自对齐到同一竖线：视觉上
+// 一竖排图标/空白 + 一竖排左对齐文字。depth 不再产生额外缩进。
 const SIDEBAR_BASE_LEFT = SIDEBAR_GUTTER + SIDEBAR_INDICATOR_SLOT + SIDEBAR_INDICATOR_GAP;
-const sidebarRowPaddingLeft = (depth: number) => SIDEBAR_BASE_LEFT + depth * SIDEBAR_DEPTH_STEP;
-const sidebarIndicatorLeft = (depth: number) => SIDEBAR_GUTTER + depth * SIDEBAR_DEPTH_STEP;
+const sidebarRowPaddingLeft = (depth: number) => SIDEBAR_BASE_LEFT;
+const sidebarIndicatorLeft = (depth: number) => SIDEBAR_GUTTER;
 
 declare global {
   interface Window {

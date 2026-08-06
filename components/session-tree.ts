@@ -189,16 +189,16 @@ export function isSessionNodeEffectivelyCollapsed(
 }
 
 /**
- * 收集「至少有一个 subagent 直接子节点」的父会话 id（递归整棵展示树）。
- * 用于会话列表默认收起子 agent；不写偏好、不变异入参。
+ * 收集「至少有一个子节点」的父会话 id（递归整棵展示树）。
+ * 用于会话列表默认收起子会话（fork 分支）；不写偏好、不变异入参。
  *
- * 只认 relation === "subagent"：仅有 fork 子节点的父会话不默认收起。
+ * subagent 子会话已从展示树过滤（插件功能不绑），此处覆盖 fork 分支。
  */
 export function collectSubagentParentIds(nodes: SessionDisplayNode[]): string[] {
   const ids: string[] = [];
   const walk = (level: SessionDisplayNode[]) => {
     for (const node of level) {
-      if (node.children.some((child) => child.relation === "subagent")) {
+      if (node.children.length > 0) {
         ids.push(node.session.id);
       }
       if (node.children.length > 0) walk(node.children);

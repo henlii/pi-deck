@@ -227,21 +227,20 @@ test("折叠与搜索展开分离：搜索强制展开但不写折叠集合", as
   assert.deepEqual([...collapsed].sort(), ["a", "b"]);
 });
 
-test("collectSubagentParentIds：subagent 不展示后无收集目标，fork-only 父不收起", async () => {
+test("collectSubagentParentIds：所有含子节点的父会话均默认收起", async () => {
   const { buildSessionDisplayTree, collectSubagentParentIds } = await jiti.import("./session-tree.ts");
   const parent = session("p");
   const sub = session("s", { subagent: { parentSessionId: "p", runId: "r1", runIndex: 0 }, readOnly: true });
   const nestedParent = session("np");
   const nestedSub = session("ns", { subagent: { parentSessionId: "np", runId: "r2", runIndex: 0 }, readOnly: true });
-  // nestedParent 作为 subagent 挂在 p 下时：整链不展示，收集结果恒为空。
+  // nestedParent 作为 subagent 挂在 p 下时：整链不展示，收集不涉及。
   nestedParent.subagent = { parentSessionId: "p", runId: "r0", runIndex: 1 };
   nestedParent.readOnly = true;
   nestedSub.subagent = { parentSessionId: "np", runId: "r2", runIndex: 0 };
   const forkOnly = session("fo");
   const forkChild = session("fc", { parentSessionId: "fo" });
   const tree = buildSessionDisplayTree([parent, sub, nestedParent, nestedSub, forkOnly, forkChild]);
-  // subagent 节点不再进入展示树 → 默认收起集合为空。
-  assert.deepEqual(collectSubagentParentIds(tree).sort(), []);
-  // 仅 fork 子节点的父也不进入默认收起集合。
+  // subagent 节点不再进入展示树；仅 fork 子节点的父会话（fo）进入默认收起集合。
+  assert.deepEqual(collectSubagentParentIds(tree).sort(), ["fo"]);
   assert.equal(tree.find((n) => n.session.id === "fo")?.children.length, 1);
 });
