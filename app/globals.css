@@ -1141,6 +1141,7 @@ span.linenumber {
   .sidebar-row:hover .sidebar-indicator-icon,
   .sidebar-row:focus-within .sidebar-indicator-icon {
     opacity: 0;
+    pointer-events: none;
   }
 }
 
@@ -1152,6 +1153,7 @@ span.linenumber {
   /* 触摸设备 chevron 常显，同槽位图标恒隐藏（叶子行图标未加此类，不受影响）。 */
   .sidebar-indicator-icon {
     opacity: 0;
+    pointer-events: none;
   }
 }
 
