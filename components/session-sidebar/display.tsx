@@ -228,7 +228,6 @@ export function SidebarIconButton({
       ref={buttonRef}
       onClick={onClick}
       disabled={disabled}
-      title={label}
       data-tooltip={label}
       aria-label={label}
       aria-expanded={expanded}
@@ -404,8 +403,7 @@ export function ChevronButton({ collapsed, label, left, onClick }: {
   return (
     <button
       type="button"
-      onClick={onClick}
-      title={label}
+      onClick={(e) => { onClick(e); e.currentTarget.blur(); }}
       data-tooltip={label}
       aria-label={label}
       className="sidebar-indent-indicator"

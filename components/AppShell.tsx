@@ -917,7 +917,6 @@ function AppShellInner() {
         <button
           type="button"
           onClick={() => setSettingsOpen(true)}
-          title={t("app_settings")}
           data-tooltip={t("app_settings")}
           aria-label={t("app_settings")}
           className="sidebar-icon-btn tooltip-up"
@@ -930,7 +929,6 @@ function AppShellInner() {
         <button
           type="button"
           onClick={() => setAboutOpen(true)}
-          title={t("app_about")}
           data-tooltip={t("app_about")}
           aria-label={t("app_about")}
           className={`sidebar-icon-btn tooltip-up${aboutOpen ? " sidebar-icon-btn--active" : ""}`}

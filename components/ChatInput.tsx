@@ -1128,11 +1128,10 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 {t("input_queued", { count: (queuedMessages?.steering.length ?? 0) + (queuedMessages?.followUp.length ?? 0) })}
               </span>
               {onRecallQueue && (
-                <button
-                  onClick={onRecallQueue}
-                  title={t("input_recall")}
-                  data-tooltip={t("input_recall")}
-                  className="instant-tooltip tooltip-up"
+                 <button
+                   onClick={onRecallQueue}
+                   data-tooltip={t("input_recall")}
+                   className="instant-tooltip tooltip-up"
                   style={{
                     display: "flex",
                     alignItems: "center",
@@ -1640,7 +1639,6 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
             <button
               onClick={() => fileInputRef.current?.click()}
               disabled={isStreaming}
-              title={t("input_attachImage")}
               data-tooltip={t("input_attachImage")}
               className="instant-tooltip tooltip-up"
               style={{
@@ -2084,7 +2082,6 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
             {isStreaming && (
               <button
                 onClick={onAbort}
-                title={t("chat_cancel")}
                 data-tooltip={t("chat_cancel")}
                 className="instant-tooltip tooltip-up"
                 style={{
@@ -2159,7 +2156,6 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
             {isMobile && controlsMenuOpen && (
               <button
                 type="button"
-                title={t("input_fold")}
                 data-tooltip={t("input_fold")}
                 className="instant-tooltip tooltip-up"
                 aria-label={t("input_fold")}

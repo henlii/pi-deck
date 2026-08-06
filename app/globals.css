@@ -1089,7 +1089,7 @@ span.linenumber {
     position: absolute;
     left: 50%;
     top: calc(100% + 6px);
-    z-index: 1200;
+    z-index: 9000;
     max-width: 260px;
     padding: 5px 8px;
     border: 1px solid var(--border-strong);

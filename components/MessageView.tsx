@@ -266,7 +266,8 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onBranchHere, onNe
           }}>
             <button
               onClick={copyContent}
-              title={t("message_copy")}
+              data-tooltip={t("message_copy")}
+              className="instant-tooltip"
               aria-label={t("message_copy")}
               style={{
                 display: "flex", alignItems: "center", justifyContent: "center",
@@ -293,7 +294,6 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onBranchHere, onNe
               {canBranchHere && (
                 <button
                   onClick={() => { onBranchHere!(entryId!); }}
-                  title={t("message_branchHereTooltip")}
                   data-tooltip={t("message_branchHereTooltip")}
                   className="instant-tooltip"
                   aria-label={t("message_branchHere")}
@@ -559,32 +559,29 @@ function AssistantMessageView({
         {textContent && !isStreaming && (
           <button
             onClick={copyContent}
-            title={t("message_copyAnswer")}
+            data-tooltip={t("message_copyAnswer")}
+            className="instant-tooltip"
             aria-label={t("message_copyAnswer")}
             style={{
-              display: "flex", alignItems: "center", gap: 4,
-              padding: "3px 8px", height: 22,
+              display: "flex", alignItems: "center", justifyContent: "center",
+              padding: "3px 6px", height: 22, width: 22,
               background: "none", border: "none",
               borderRadius: 5,
               color: copied ? "var(--accent)" : "var(--text-dim)",
               cursor: "pointer",
-              fontSize: 11, fontWeight: 400,
-              whiteSpace: "nowrap",
+              transition: "opacity 0.12s, color 0.12s",
               opacity: hovered ? 1 : 0,
               pointerEvents: hovered ? "auto" : "none",
-              transition: "opacity 0.12s, color 0.12s",
             }}
             onMouseEnter={(e) => { if (!copied) e.currentTarget.style.color = "var(--accent)"; }}
             onMouseLeave={(e) => { if (!copied) e.currentTarget.style.color = "var(--text-dim)"; }}
           >
             {copied ? <Check size={11} strokeWidth={1.8} /> : <Copy size={11} strokeWidth={1.8} />}
-            <span>{t("message_copyAnswer")}</span>
           </button>
         )}
         {entryId && !isStreaming && onBranchFromAssistant && (
           <button
             onClick={() => { onBranchFromAssistant!(entryId); }}
-            title={t("message_branchFromAnswerTooltip")}
             data-tooltip={t("message_branchFromAnswerTooltip")}
             className="instant-tooltip"
             aria-label={t("message_branchFromAnswer")}
@@ -608,7 +605,6 @@ function AssistantMessageView({
         {entryId && !isStreaming && onNewSessionFromAnswer && (
           <button
             onClick={() => { onNewSessionFromAnswer!(entryId); }}
-            title={t("message_newSessionFromAnswerTooltip")}
             data-tooltip={t("message_newSessionFromAnswerTooltip")}
             className="instant-tooltip"
             aria-label={t("message_newSessionFromAnswer")}

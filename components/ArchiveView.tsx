@@ -110,7 +110,6 @@ export function ArchiveView({
         <button
           type="button"
           onClick={onBack}
-          title={t("archive_back")}
           data-tooltip={t("archive_back")}
           aria-label={t("archive_back")}
           className="sidebar-icon-btn"

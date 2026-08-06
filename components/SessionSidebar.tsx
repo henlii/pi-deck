@@ -99,8 +99,8 @@ const SIDEBAR_GUTTER = 6;
 const SIDEBAR_INDICATOR_SLOT = 16;
 const SIDEBAR_INDICATOR_GAP = 6;
 const SIDEBAR_DEPTH_STEP = 14;
-// 额外向右移动一整级：指示器/图标共用 gutter，文字从下一步进开始。
-const SIDEBAR_BASE_LEFT = SIDEBAR_GUTTER + SIDEBAR_INDICATOR_SLOT + SIDEBAR_INDICATOR_GAP + SIDEBAR_DEPTH_STEP;
+// 文字起点 = gutter + 指示器槽位 + 间距（图标/chevron 与文字相邻，同 openchamber）。
+const SIDEBAR_BASE_LEFT = SIDEBAR_GUTTER + SIDEBAR_INDICATOR_SLOT + SIDEBAR_INDICATOR_GAP;
 const sidebarRowPaddingLeft = (depth: number) => SIDEBAR_BASE_LEFT + depth * SIDEBAR_DEPTH_STEP;
 const sidebarIndicatorLeft = (depth: number) => SIDEBAR_GUTTER + depth * SIDEBAR_DEPTH_STEP;
 
