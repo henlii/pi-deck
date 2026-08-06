@@ -23,6 +23,7 @@
   },
   "files": [
     "bin",
+    "!bin/*.test.mjs",
     "public",
     ".next",
     "!.next/cache",

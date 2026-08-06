@@ -19,7 +19,7 @@ test("isLoopbackHost：回环地址放行，非回环/未指定拒绝", () => {
 	// 非回环 → false
 	assert.equal(isLoopbackHost("0.0.0.0"), false);
 	assert.equal(isLoopbackHost("::"), false);
-	assert.equal(isLoopbackHost("192.168.1.5"), false);
+	assert.equal(isLoopbackHost("203.0.113.5"), false);
 	assert.equal(isLoopbackHost("10.0.0.1"), false);
 	assert.equal(isLoopbackHost("myhost"), false); // 非回环主机名
 	assert.equal(isLoopbackHost("fe80::1"), false);
@@ -42,7 +42,7 @@ test("shouldRequireAuth：非回环 + 无密码 → 拒绝启动；有密码或�
 	// 非回环 + 无密码 → 拒绝启动
 	assert.equal(shouldRequireAuth("0.0.0.0", undefined), true);
 	assert.equal(shouldRequireAuth("::", undefined), true);
-	assert.equal(shouldRequireAuth("192.168.1.5", undefined), true);
+	assert.equal(shouldRequireAuth("203.0.113.5", undefined), true);
 	assert.equal(shouldRequireAuth("myhost", undefined), true);
 	assert.equal(shouldRequireAuth(null, undefined), true); // 未指定 → Next 默认 0.0.0.0
 	// 回环 + 无密码 → 正常启动（本地开发便利）
