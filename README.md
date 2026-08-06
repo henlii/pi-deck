@@ -1,186 +1,151 @@
-# Pidance
+<div align="center">
+  <img src="./docs/assets/pidance-logo.svg" alt="Pidance — Move with Pi" width="760">
+  <p><strong>让 Pi 的会话、工具与项目工作流在浏览器里自然舞动。</strong></p>
+  <p>
+    <a href="./README.en.md">English</a> ·
+    <a href="https://github.com/henlii/pidance/issues">问题反馈</a> ·
+    <a href="./docs/release.md">发布说明</a>
+  </p>
+</div>
 
-[中文文档](./README.zh-CN.md)
+Pidance 是面向 [Pi](https://github.com/badlogic/pi-mono) coding agent 的开源 Web 客户端。它直接读取本机 Pi 会话文件，并沿用 Pi SDK 的会话与运行时语义，把实时对话、项目文件、Git、工作树、子代理和配置管理汇集到一个浏览器工作区。Pi 仍是数据与执行语义的事实来源；Pidance 负责提供更清晰、更完整的操作界面。
 
-![Pidance banner](https://raw.githubusercontent.com/henlii/pidance/main/docs/assets/pidance-banner.png)
+> 当前版本：`0.1.0` · npm 包：`@henlii/pidance` · CLI：`pidance`
 
-Pidance is a unified Agent workspace built on top of [Pi](https://github.com/badlogic/pi-mono). It does not replace Pi: it reads your local Pi session files and uses Pi's runtime semantics to provide a browser workspace for session browsing, real-time chat, model configuration, skill management, and project file preview.
+## 界面预览
 
-![Sample-data product preview of Pidance: session sidebar, chat with tool cards, and the file workspace](https://raw.githubusercontent.com/henlii/pidance/main/docs/assets/pidance-preview.png)
+![Pidance 新会话工作区](./docs/screenshots/desktop.png)
 
-*Sample-data product preview: session sidebar, chat with tool cards, and the file workspace. All contents are illustrative sample data, not a live session.*
+<p align="center"><sub>新会话工作区：项目与工作树选择、模型、思考等级和右侧上下文面板。截图中的路径已脱敏。</sub></p>
 
-## Roadmap
+![Pidance 外观设置](./docs/screenshots/settings.png)
 
-The roadmap, implementation progress, and acceptance criteria are tracked in phase tracking issues:
+<p align="center"><sub>外观设置：浅色、深色、跟随系统，以及 Chamber / Fusion 两套主题风格。</sub></p>
 
-- [Phase 1: architecture seams and OpenChamber-style product redesign](https://github.com/henlii/pidance/issues/1)
-- [Phase 2: high-value Pi ecosystem blind spots (todo mirror, full-text session search, subagent result cards, project trust)](https://github.com/henlii/pidance/issues/2)
-- [Phase 3: Pi extension ecosystem observability and agent default settings](https://github.com/henlii/pidance/issues/3)
-- [Phase 4: auxiliary info surfaces and low-frequency capabilities](https://github.com/henlii/pidance/issues/4)
+## 功能特性
 
-## Upstream / 上游来源
+- **项目化会话空间**：按 Project → Worktree → Session 浏览会话树，支持搜索、最近会话、归档、恢复、重命名、自动命名与 HTML 导出。
+- **实时 Agent 对话**：通过 SSE 呈现流式回复、思考过程、工具调用、终端 ANSI 输出、压缩状态和运行中状态；页面恢复后自动对账。
+- **安全探索不同方向**：从历史消息继续、创建会话内分支，或 fork 为独立 `.jsonl` 会话；两种分支语义清晰分离。
+- **项目工作区**：浏览与预览源码、Markdown、图片、音频、PDF 和 DOCX，支持文件搜索、`@` 引用、Git 状态与 diff。
+- **Git worktree 工作流**：在界面内选择、创建和移除工作树，新会话与文件工作区自动跟随所选 checkout。
+- **Pi 生态集成**：展示同步与异步子代理运行、扩展 UI 卡片、Todos、诊断、Memory、工作区历史以及观察/反思信息。
+- **集中配置**：管理供应商认证、API Key、模型与测试、会话默认值、技能、插件和项目信任。
+- **精心打磨的界面**：响应式桌面/移动布局、命令面板、会话 minimap、完成提示音、中英双语，以及 Light / Dark / System 主题。
+- **边界明确的安全设计**：项目文件 allow-list、路径与符号链接检查、Host/CSRF 防护；非回环监听必须配置密码。
 
-Pidance is derived from [agegr/pi-web](https://github.com/agegr/pi-web), which is distributed under the MIT License. It is built around [badlogic/pi-mono](https://github.com/badlogic/pi-mono). The project preserves Pi session files and runtime semantics so existing Pi data remains the source of truth. Copyright and derivative-work notices for the upstream project are retained in [LICENSE](./LICENSE).
+## 快速开始
 
-## Quick Start
+需要 Node.js `>= 20.9.0`。
 
-**Run without installing:**
+### 无需安装
 
 ```bash
 npx @henlii/pidance@latest
 ```
 
-**Or install globally:**
+### 全局安装
 
 ```bash
 npm install -g @henlii/pidance
 pidance
 ```
 
-Then open [http://localhost:31415](http://localhost:31415). The CLI will try to open the browser automatically after the server is ready.
-
-**Options:**
+服务就绪后访问 [http://localhost:31415](http://localhost:31415)。CLI 默认会尝试打开浏览器。
 
 ```bash
-pidance --port 8080              # custom port
-pidance --hostname 127.0.0.1     # local access only
-pidance -p 8080 -H 127.0.0.1     # combine options
-pidance --no-open                # do not open the browser automatically
-
-PORT=8080 pidance                # environment variable is also supported
-PIDANCE_NO_OPEN=1 pidance        # do not open the browser (for background services)
+pidance --port 8080
+pidance --hostname 127.0.0.1
+pidance -p 8080 -H 127.0.0.1
+pidance --no-open
 ```
 
-## HTTP Proxy
+也可使用 `PORT` 与 `PIDANCE_NO_OPEN=1`。Pidance 默认读取 `~/.pi/agent`；可通过 `PI_CODING_AGENT_DIR` 指向其他 Pi agent 目录。
 
-Pidance reads the standard `HTTP_PROXY`, `HTTPS_PROXY`, and `NO_PROXY` environment variables for server-side model and API requests.
+### 远程或局域网访问
 
-On macOS or Linux:
+绑定 `0.0.0.0`、`::`、局域网 IP 或其他非回环地址时，必须设置认证密码，否则 CLI 会拒绝启动：
 
 ```bash
-HTTP_PROXY=http://127.0.0.1:7890 \
+PIDANCE_PASSWORD='请使用强密码' pidance --hostname 0.0.0.0
+```
+
+仅本机访问时建议显式绑定 `127.0.0.1`。兼容旧变量 `PI_WEB_PASSWORD`，新部署优先使用 `PIDANCE_PASSWORD`。
+
+### HTTP 代理
+
+服务端模型与 API 请求读取标准的 `HTTP_PROXY`、`HTTPS_PROXY` 和 `NO_PROXY`：
+
+```bash
 HTTPS_PROXY=http://127.0.0.1:7890 \
 NO_PROXY=localhost,127.0.0.1 \
-npx @henlii/pidance@latest
+pidance
 ```
 
-On Windows PowerShell:
-
-```powershell
-$env:HTTP_PROXY = "http://127.0.0.1:7890"
-$env:HTTPS_PROXY = "http://127.0.0.1:7890"
-$env:NO_PROXY = "localhost,127.0.0.1"
-npx @henlii/pidance@latest
-```
-
-## Features
-
-- **Pick work back up**: browse previous pi conversations by project without digging through terminal history or session paths.
-- **Try different directions safely**: continue from an earlier message or fork a session into a separate route.
-- **Work across branches**: switch Git worktrees from the sidebar so new sessions and the Explorer follow the checkout you choose.
-- **Chat beside the project**: browse files on the left and preview source, docs, images, audio, and PDFs on the right while the agent works.
-- **See session state clearly**: context usage, cost, compaction state, and system prompt details are visible from the top bar.
-- **Configure less from the terminal**: manage models, login/API keys, model tests, and skill switches from the web UI.
-
-## Notes
-
-- **Data directory**: Pidance reads `~/.pi/agent/sessions` by default. Set `PI_CODING_AGENT_DIR` to point at another pi agent directory.
-- **Session files**: files are stored as `~/.pi/agent/sessions/<encoded-cwd>/<timestamp>_<uuid>.jsonl`.
-- **Model config**: the Models panel reads and writes `models.json` in the pi agent directory. Model lists and defaults come from pi's config.
-- **File access**: file browsing and preview are scoped to the selected project directory and working directories that appear in sessions.
-- **Git worktrees**: see [Worktrees in Pidance](./docs/worktrees.md) for when the switcher appears, how new worktrees are created, and what removal does.
-- **Forks vs in-session branches**: Fork creates a new `.jsonl` file. "Edit from here" creates another branch inside the same session file.
-
-## Development
+## 开发与测试
 
 ```bash
 npm install
-npm run dev
+npm run dev       # http://localhost:31415
+npm run check     # typecheck + lint + 单元测试
 ```
 
-The local dev server runs at [http://localhost:31415](http://localhost:31415) (Pidance product default; `30141` is reserved for upstream pi-web).
-
-### Deployment
-
-| Port | Role |
-|------|------|
-| **31415** | Product default (`npm run dev` / `npm start` / CLI `pidance`) |
-| **31416** | Continuous local test deploy (`local-deploy.mjs`, Next dev, not public) |
-| **30141** | Upstream pi-web / existing service — do not touch |
-
-Public access is [https://pidance.namixinxi.cn](https://pidance.namixinxi.cn) via Alibaba Cloud Nginx (backend port is deployment config, not the package default). Shell Cookie and Basic Auth are managed by p0017.
-
-Common checks:
+其他验收入口：
 
 ```bash
-node_modules/.bin/tsc --noEmit
-npm run lint
+npm run verify:render-bridge  # 真实 pi-subagents 渲染桥
+npm run test:browser          # 浏览器回归，默认访问 31416
 ```
 
-Avoid running `next build` / `npm run build` during local development. It writes to `.next/` and can interfere with the dev server; leave builds for release work.
+日常开发**不要**执行 `npm run build` 或 `next build`：它会写入 `.next/` 并干扰开发服务。正式构建只在隔离发布 checkout 中通过 `npm run release:check` 执行。
 
-## Project Structure
+### 持续测试部署（31416）
+
+每次应用代码修改完成后，将当前工作区部署到隔离的生产模式测试服务：
+
+```bash
+node .agents/skills/pidance-development/scripts/local-deploy.mjs restart
+```
+
+| 端口 | 用途 |
+| --- | --- |
+| **31415** | Pidance 产品默认：CLI、稳定安装版、`npm run dev` / `npm start` |
+| **31416** | 当前工作区持续测试版：`.next-public` 隔离生产构建，不对外反代 |
+| **30141** | 上游 pi-web；本仓绝不操作 |
+
+## 发布
+
+正式发布采用“双审计”门禁：隔离 checkout 中完成质量检查与构建，生成前审计包清单和内容，显式 `npm pack`，再审计真实 tgz；同一份已验收 tgz 才能用于安装冒烟、npm 与 GitHub Release。脚本不会自动改版本、打 tag、push 或 publish。
+
+完整步骤见 [docs/release.md](./docs/release.md)。
+
+## 架构概览
 
 ```text
-app/
-  api/
-    agent/          # creates/drives AgentSession, exposes SSE, and serves bash output
-    auth/           # OAuth and API key management
-    cwd/validate/   # custom working directory validation
-    default-cwd/    # pi default working directory lookup
-    files/          # file listing, reading, preview, search support, upload, and watching
-    file-index/     # project-wide file indexing and @-mention search
-    git/            # Git diff and status for the active project
-    home/           # current user home directory
-    models/         # available models, default model, thinking levels
-    models-config/  # read/write models.json and test models
-    plugins/        # package plugin management
-    sessions/       # session reads, rename, auto-naming, delete, context, state, deferred thinking, and HTML export
-    skills/         # skill listing, search, install, update, check, and enable/disable
-    worktrees/      # Git worktree listing, creation, and removal
-components/
-  AppShell.tsx        # main layout, URL state, top panels, file tabs
-  SessionSidebar.tsx  # project selector, session tree, Explorer
-  ChatWindow.tsx      # messages, SSE, image drag/drop, minimap
-  ChatInput.tsx       # input bar, model/tools/thinking/compact/slash controls
-  MessageView.tsx     # message, thinking, tool call/result rendering
-  ModelsConfig.tsx    # model and auth configuration panel
-  SkillsConfig.tsx    # skill management panel
-  FileExplorer.tsx    # file tree
-  FileViewer.tsx      # source, diff, image, audio, PDF, DOCX preview
-lib/
-  api-types.ts       # shared API request and response types
-  ansi.ts             # ANSI escape-sequence handling for terminal output
-  bash-output.ts      # bash command output formatting and parsing
-  custom-ui-terminal.ts # terminal adapter for custom UI output
-  git-changes.ts      # Git diff/change collection
-  git-status.ts       # Git status collection and normalization
-  git-types.ts        # shared Git data types
-  http-dispatcher.ts  # HTTP(S) proxy setup for server-side fetch
-  rpc-manager.ts      # AgentSessionWrapper lifecycle and global registry
-  session-reader.ts   # parses .jsonl session files and branch contexts
-  session-file-references.ts # session-linked file reference checks
-  normalize.ts        # normalizes toolCall field names
-  file-access.ts      # file read safety boundary and allowed roots
-  file-fuzzy.ts       # fuzzy file search helpers
-  file-upload.ts      # upload validation and conflict handling
-  file-paths.ts       # path encoding and relative path helpers
-  models-cache.ts     # cached model lists and defaults
-  session-title.ts    # session title and auto-name helpers
-  skill-updates.ts    # skill update operations
-  skill-lock.ts       # skill update locking
-  terminal-input.ts   # terminal input handling
-  worktree.ts         # project/worktree resolution and Git operations
-  markdown.ts         # Markdown/Mermaid/KaTeX plugin configuration
-  pi-types.ts         # pi-related types
-hooks/
-  useAgentSession.ts  # session loading, command sending, SSE state machine
-  useAudio.ts         # completion sound
-  useDragDrop.ts      # image drag/drop
-  useKeyboardShortcuts.ts # keyboard shortcut handling
-  useTheme.ts         # theme switching
-bin/
-  pidance.js          # npm CLI entrypoint (pidance only; pi-web is upstream)
-instrumentation.ts    # initializes the server HTTP dispatcher
+浏览器
+  ├─ 会话 / 文件 / Git REST API ──▶ Next.js Route Handlers ──▶ 本地磁盘与 Pi 配置
+  ├─ 发送消息 ───────────────────▶ SessionService ───────────▶ AgentSession
+  └─ SSE 事件流 ◀──────────────── EventStreamManager ◀────── AgentSession 事件
+
+~/.pi/agent/sessions/*.jsonl 始终是会话事实来源
 ```
+
+- **只读浏览**直接解析 Pi `.jsonl` 会话，不创建 AgentSession。
+- **发送消息**时才在服务端进程内创建或复用 AgentSession wrapper。
+- 会话服务、事件流、扩展 UI、项目上下文和聊天合成器按单向 seam 分层，避免 UI 绕过会话生命周期。
+- 文件端点仅允许访问已选择项目、工作树和会话工作目录等明确根路径。
+
+## 文档
+
+- [Git worktree 使用说明](./docs/worktrees.zh-CN.md)
+- [发布与制品审计](./docs/release.md)
+- [界面设计与主题规范](./docs/ui-redesign/README.md)
+- [主题 Token](./docs/ui-redesign/theme-tokens.md)
+- [会话系统重构说明](./docs/chat-refactor-plan.md)
+- [OpenChamber 升级评估](./docs/openchamber-upgrade-evaluation-2026-08-05.md)
+
+## 上游与许可
+
+Pidance 源自 [agegr/pi-web](https://github.com/agegr/pi-web)，并围绕 [badlogic/pi-mono](https://github.com/badlogic/pi-mono) 的会话与运行时语义构建。感谢两个上游项目及其贡献者。
+
+本项目采用 [MIT License](./LICENSE)。上游版权与派生作品声明保留于 LICENSE：Copyright © 2026 agegr；Copyright © 2026 Henry Li。
