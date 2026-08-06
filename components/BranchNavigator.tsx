@@ -60,10 +60,10 @@ function buildActivePath(nodes: SessionTreeNode[], targetId: string | null): Set
 // Compress a visible linear chain into the first branching/leaf node.
 // Server-side compressed IDs also count as skipped nodes.
 // 带书签 label 的节点保持可见，不被并入链尾（与服务端投影规则一致）。
-function compress(node: SessionTreeNode): { node: SessionTreeNode; skipped: number } {
+function compress(node: SessionTreeNode, preserveRoot = false): { node: SessionTreeNode; skipped: number } {
   let current = node;
   let skipped = current.compressedEntryIds?.length ?? 0;
-  while (current.children.length === 1 && canCompressChainNode(current)) {
+  while (!preserveRoot && current.children.length === 1 && canCompressChainNode(current)) {
     current = current.children[0];
     skipped += 1 + (current.compressedEntryIds?.length ?? 0);
   }
@@ -135,10 +135,11 @@ interface TreeNodeProps {
   switchTargetId: string | null;
   chooserFor: (nodeId: string, indent: number) => ReactNode;
   disabled: boolean;
+  preserveRoot?: boolean;
 }
 
-function TreeNodeView({ node, activePathIds, activeLeafId, depth, isLast, parentLines, onActivate, assistantLabel, bookmarkAria, switchable, switchTargetId, chooserFor, disabled }: TreeNodeProps) {
-  const { node: rep, skipped } = compress(node);
+function TreeNodeView({ node, activePathIds, activeLeafId, depth, isLast, parentLines, onActivate, assistantLabel, bookmarkAria, switchable, switchTargetId, chooserFor, disabled, preserveRoot = false }: TreeNodeProps) {
+  const { node: rep, skipped } = compress(node, preserveRoot);
   const isActive = activePathIds.has(rep.entry.id);
   const isOnPath = activePathIds.has(node.entry.id) || activePathIds.has(rep.entry.id);
   const isCurrentLeaf = rep.entry.id === activeLeafId || !!rep.compressedEntryIds?.includes(activeLeafId ?? "");
@@ -295,6 +296,7 @@ function TreeNodeView({ node, activePathIds, activeLeafId, depth, isLast, parent
           switchTargetId={switchTargetId}
           chooserFor={chooserFor}
           disabled={disabled}
+          preserveRoot={false}
         />
       ))}
     </div>
@@ -805,14 +807,9 @@ export function BranchNavigator({ tree, activeLeafId, onLeafChange, inline, cont
       : null;
 
   // Find first meaningful node (skip pure linear prefix)
-  const compressed = tree.length > 0 ? compress(tree[0]) : null;
-  const firstNode = compressed?.node ?? null;
-  // 带书签的根代表节点自身也要成行；否则沿用「分支点的子节点」语义。
-  const rows = firstNode
-    ? getBranchNodeBookmark(firstNode.label) !== null
-      ? [firstNode]
-      : firstNode.children
-    : [];
+  // 根节点就是会话的主分支起点。始终保留根行，避免主分支在无书签时被
+  // 压缩链吞掉；其 children 仍按原规则压缩，分支切换语义不变。
+  const rows = tree.length > 0 ? [tree[0]] : [];
   const hasContent = !noBranchReason && rows.length > 0;
   const assistantLabel = t("branches_assistant");
   const bookmarkAria = t("branches_bookmarkAria");
@@ -835,6 +832,7 @@ export function BranchNavigator({ tree, activeLeafId, onLeafChange, inline, cont
           switchTargetId={switchTargetId}
           chooserFor={chooserFor}
           disabled={actionsBusy}
+          preserveRoot
         />
       ))}
     </div>

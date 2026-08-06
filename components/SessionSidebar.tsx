@@ -1559,7 +1559,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                 left={sidebarIndicatorLeft(0)}
                 onClick={(event) => { event.stopPropagation(); setShowRecentSessions(!showRecentSessions); }}
               />
-              <span aria-hidden="true" style={{ position: "absolute", left: sidebarIndicatorLeft(0), top: "50%", display: "flex", width: SIDEBAR_INDICATOR_SLOT, height: 20, alignItems: "center", justifyContent: "center", transform: "translateY(-50%)" }}><HistoryIcon size={13} /></span>
+              <span aria-hidden="true" className="sidebar-indicator-icon" style={{ position: "absolute", left: sidebarIndicatorLeft(0), top: "50%", display: "flex", width: SIDEBAR_INDICATOR_SLOT, height: 20, alignItems: "center", justifyContent: "center", transform: "translateY(-50%)" }}><HistoryIcon size={13} /></span>
               {t("sidebar_recentSessions")}
             </div>
             {showRecentSessions && <div>

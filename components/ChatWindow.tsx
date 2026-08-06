@@ -182,6 +182,7 @@ export function ChatWindow({ session, newSessionCwd, newSessionIntentId, guideDe
     handleBuiltinSlashCommand,
     handleThinkingLevelChange, loadSlashCommands,
     handleBranchHere, handleBranchFromAssistant,
+    handleNewSessionFromHere, handleNewSessionFromAnswer,
   } = useAgentSession({
     session, newSessionCwd: effectiveNewSessionCwd, newSessionIntentId, onAgentEnd: wrappedOnAgentEnd, onSessionCreated, onSessionForked,
     modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSessionStatsPanelOpen,
@@ -624,7 +625,9 @@ export function ChatWindow({ session, newSessionCwd, newSessionIntentId, guideDe
                     // 只读/忙碌：分支写入口一律不下发（hook 侧另有 guard）；
                     // live 项无 entryId、不参与分支 action。
                     onBranchHere={!isLive && !sessionBusy && !isNew && !isReadOnly ? handleBranchHere : undefined}
+                    onNewSessionFromHere={!isLive && !sessionBusy && !isNew && !isReadOnly ? handleNewSessionFromHere : undefined}
                     onBranchFromAssistant={!isLive && !sessionBusy && !isNew && !isReadOnly ? handleBranchFromAssistant : undefined}
+                    onNewSessionFromAnswer={!isLive && !sessionBusy && !isNew && !isReadOnly ? handleNewSessionFromAnswer : undefined}
                     forking={!isLive && forkingEntryId === entryIds[idx]}
                     showTimestamp={item.showTimestamp}
                     prevTimestamp={!isLive && idx > 0 ? (messages[idx - 1] as AgentMessage & { timestamp?: number }).timestamp : undefined}

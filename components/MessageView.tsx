@@ -1,7 +1,7 @@
 "use client";
 
 import { memo, useState, useRef, useEffect, useMemo, type ReactNode } from "react";
-import { AlertTriangle, Check, CheckCircle2, ChevronDown, ChevronUp, Copy, FileText, Globe, ListTodo, Pencil, Search, ShieldCheck, Terminal, Webhook, XCircle } from "lucide-react";
+import { AlertTriangle, Check, CheckCircle2, ChevronDown, ChevronUp, Copy, FilePlus, FileText, GitBranch, Globe, ListTodo, Pencil, Search, ShieldCheck, Terminal, Webhook, XCircle } from "lucide-react";
 import { MarkdownBody } from "./MarkdownBody";
 import { copyText } from "@/lib/clipboard";
 import {
@@ -75,8 +75,12 @@ interface Props {
   entryId?: string;
   /** 用户「从此处分支」：回到该消息之前（发送后形成新分支）。 */
   onBranchHere?: (entryId: string) => void;
+  /** 用户「从此处开始新会话」：fork 到该消息之前，预填此消息文本。 */
+  onNewSessionFromHere?: (entryId: string, text: string) => void;
   /** Assistant「基于此回答分支」：轮末锚点（选项 B），发送后长新枝。 */
   onBranchFromAssistant?: (entryId: string) => void;
+  /** Assistant「基于此回答开始新会话」：fork 到该回答轮末，不预填。 */
+  onNewSessionFromAnswer?: (entryId: string) => void;
   forking?: boolean;
   showTimestamp?: boolean;
   prevTimestamp?: number;
@@ -110,12 +114,12 @@ function haveSameRelevantToolResults(
   return true;
 }
 
-export const MessageView = memo(function MessageView({ message, isStreaming, toolResults, toolExecutionSnapshots, modelNames, cwd, onOpenFile, entryId, onBranchHere, onBranchFromAssistant, forking, showTimestamp, prevTimestamp, sessionId }: Props) {
+export const MessageView = memo(function MessageView({ message, isStreaming, toolResults, toolExecutionSnapshots, modelNames, cwd, onOpenFile, entryId, onBranchHere, onNewSessionFromHere, onBranchFromAssistant, onNewSessionFromAnswer, forking, showTimestamp, prevTimestamp, sessionId }: Props) {
   if (message.role === "user") {
-    return <UserMessageView message={message as UserMessage} cwd={cwd} onOpenFile={onOpenFile} entryId={entryId} onBranchHere={onBranchHere} forking={forking} />;
+    return <UserMessageView message={message as UserMessage} cwd={cwd} onOpenFile={onOpenFile} entryId={entryId} onBranchHere={onBranchHere} onNewSessionFromHere={onNewSessionFromHere} forking={forking} />;
   }
   if (message.role === "assistant") {
-    return <AssistantMessageView message={message as AssistantMessage} isStreaming={isStreaming} toolResults={toolResults} toolExecutionSnapshots={toolExecutionSnapshots} modelNames={modelNames} cwd={cwd} onOpenFile={onOpenFile} showTimestamp={showTimestamp} prevTimestamp={prevTimestamp} sessionId={sessionId} entryId={entryId} onBranchFromAssistant={onBranchFromAssistant} />;
+    return <AssistantMessageView message={message as AssistantMessage} isStreaming={isStreaming} toolResults={toolResults} toolExecutionSnapshots={toolExecutionSnapshots} modelNames={modelNames} cwd={cwd} onOpenFile={onOpenFile} showTimestamp={showTimestamp} prevTimestamp={prevTimestamp} sessionId={sessionId} entryId={entryId} onBranchFromAssistant={onBranchFromAssistant} onNewSessionFromAnswer={onNewSessionFromAnswer} />;
   }
   if (message.role === "toolResult") {
     // Rendered inline under its toolCall — skip standalone rendering if paired
@@ -151,19 +155,22 @@ export const MessageView = memo(function MessageView({ message, isStreaming, too
     && prev.onOpenFile === next.onOpenFile
     && prev.entryId === next.entryId
     && prev.onBranchHere === next.onBranchHere
+    && prev.onNewSessionFromHere === next.onNewSessionFromHere
     && prev.onBranchFromAssistant === next.onBranchFromAssistant
+    && prev.onNewSessionFromAnswer === next.onNewSessionFromAnswer
     && prev.forking === next.forking
     && prev.showTimestamp === next.showTimestamp
     && prev.prevTimestamp === next.prevTimestamp
     && prev.sessionId === next.sessionId;
 });
 
-function UserMessageView({ message, cwd, onOpenFile, entryId, onBranchHere, forking }: {
+function UserMessageView({ message, cwd, onOpenFile, entryId, onBranchHere, onNewSessionFromHere, forking }: {
   message: UserMessage;
   cwd?: string;
   onOpenFile?: (filePath: string) => void;
   entryId?: string;
   onBranchHere?: (entryId: string) => void;
+  onNewSessionFromHere?: (entryId: string, text: string) => void;
   forking?: boolean;
 }) {
   const { t } = useI18n();
@@ -185,6 +192,7 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onBranchHere, fork
 
   const time = formatTime(message.timestamp);
   const canBranchHere = !!entryId && !!onBranchHere;
+  const canNewSession = !!entryId && !!onNewSessionFromHere;
 
   const copyContent = () => {
     copyText(content).then(() => {
@@ -275,38 +283,58 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onBranchHere, fork
               {copied ? <Check size={11} strokeWidth={1.8} /> : <Copy size={11} strokeWidth={1.8} />}
             </button>
           </div>
-          {canBranchHere && (
+          {(canBranchHere || canNewSession) && (
             <div style={{
               display: "flex", gap: 3,
               opacity: (hovered || forking) ? 1 : 0,
               pointerEvents: (hovered || forking) ? "auto" : "none",
               transition: "opacity 0.12s",
             }}>
-              <button
-                onClick={() => { onBranchHere!(entryId!); }}
-                title={t("message_branchHereTooltip")}
-                style={{
-                  display: "flex", alignItems: "center", gap: 4,
-                  padding: "3px 8px", height: 22,
-                  background: "none", border: "none",
-                  borderRadius: 5,
-                  color: "var(--text-dim)",
-                  cursor: "pointer",
-                  fontSize: 11, fontWeight: 400,
-                  whiteSpace: "nowrap",
-                  transition: "color 0.12s",
-                }}
-                onMouseEnter={(e) => { e.currentTarget.style.color = "var(--accent)"; }}
-                onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-dim)"; }}
-              >
-                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                  <line x1="6" y1="3" x2="6" y2="15" />
-                  <circle cx="18" cy="6" r="3" />
-                  <circle cx="6" cy="18" r="3" />
-                  <path d="M18 9a9 9 0 0 1-9 9" />
-                </svg>
-                {t("message_branchHere")}
-              </button>
+              {canBranchHere && (
+                <button
+                  onClick={() => { onBranchHere!(entryId!); }}
+                  title={t("message_branchHereTooltip")}
+                  data-tooltip={t("message_branchHereTooltip")}
+                  className="instant-tooltip"
+                  aria-label={t("message_branchHere")}
+                  style={{
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    width: 26, height: 22, padding: 0,
+                    background: "none", border: "none",
+                    borderRadius: 5,
+                    color: "var(--text-dim)",
+                    cursor: "pointer",
+                    transition: "color 0.12s",
+                  }}
+                  onMouseEnter={(e) => { e.currentTarget.style.color = "var(--accent)"; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-dim)"; }}
+                >
+                  <GitBranch size={14} strokeWidth={1.8} />
+                </button>
+              )}
+              {canNewSession && (
+                <button
+                  onClick={() => { onNewSessionFromHere!(entryId!, content); }}
+                  disabled={forking}
+                  title={forking ? t("message_creating") : t("message_newSessionFromHereTooltip")}
+                  data-tooltip={forking ? t("message_creating") : t("message_newSessionFromHereTooltip")}
+                  className="instant-tooltip"
+                  aria-label={t("message_newSessionFromHere")}
+                  style={{
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    width: 26, height: 22, padding: 0,
+                    background: "none", border: "none",
+                    borderRadius: 5,
+                    color: forking ? "var(--accent)" : "var(--text-dim)",
+                    cursor: forking ? "not-allowed" : "pointer",
+                    transition: "color 0.12s",
+                  }}
+                  onMouseEnter={(e) => { if (!forking) e.currentTarget.style.color = "var(--accent)"; }}
+                  onMouseLeave={(e) => { if (!forking) e.currentTarget.style.color = "var(--text-dim)"; }}
+                >
+                  <FilePlus size={14} strokeWidth={1.8} />
+                </button>
+              )}
             </div>
           )}
           {time && <span style={{ fontSize: 10, color: "var(--text-dim)" }}>{time}</span>}
@@ -329,6 +357,7 @@ function AssistantMessageView({
   sessionId,
   entryId,
   onBranchFromAssistant,
+  onNewSessionFromAnswer,
 }: {
   message: AssistantMessage;
   isStreaming?: boolean;
@@ -342,6 +371,7 @@ function AssistantMessageView({
   sessionId?: string;
   entryId?: string;
   onBranchFromAssistant?: (entryId: string) => void;
+  onNewSessionFromAnswer?: (entryId: string) => void;
 }) {
   const { t } = useI18n();
   const time = showTimestamp ? formatTime(message.timestamp) : null;
@@ -555,15 +585,16 @@ function AssistantMessageView({
           <button
             onClick={() => { onBranchFromAssistant!(entryId); }}
             title={t("message_branchFromAnswerTooltip")}
+            data-tooltip={t("message_branchFromAnswerTooltip")}
+            className="instant-tooltip"
+            aria-label={t("message_branchFromAnswer")}
             style={{
-              display: "flex", alignItems: "center", gap: 4,
-              padding: "3px 8px", height: 22,
+              display: "flex", alignItems: "center", justifyContent: "center",
+              width: 26, height: 22, padding: 0,
               background: "none", border: "none",
               borderRadius: 5,
               color: "var(--text-dim)",
               cursor: "pointer",
-              fontSize: 11, fontWeight: 400,
-              whiteSpace: "nowrap",
               opacity: hovered ? 1 : 0,
               pointerEvents: hovered ? "auto" : "none",
               transition: "opacity 0.12s, color 0.12s",
@@ -571,13 +602,31 @@ function AssistantMessageView({
             onMouseEnter={(e) => { e.currentTarget.style.color = "var(--accent)"; }}
             onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-dim)"; }}
           >
-            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-              <line x1="6" y1="3" x2="6" y2="15" />
-              <circle cx="18" cy="6" r="3" />
-              <circle cx="6" cy="18" r="3" />
-              <path d="M18 9a9 9 0 0 1-9 9" />
-            </svg>
-            {t("message_branchFromAnswer")}
+            <GitBranch size={14} strokeWidth={1.8} />
+          </button>
+        )}
+        {entryId && !isStreaming && onNewSessionFromAnswer && (
+          <button
+            onClick={() => { onNewSessionFromAnswer!(entryId); }}
+            title={t("message_newSessionFromAnswerTooltip")}
+            data-tooltip={t("message_newSessionFromAnswerTooltip")}
+            className="instant-tooltip"
+            aria-label={t("message_newSessionFromAnswer")}
+            style={{
+              display: "flex", alignItems: "center", justifyContent: "center",
+              width: 26, height: 22, padding: 0,
+              background: "none", border: "none",
+              borderRadius: 5,
+              color: "var(--text-dim)",
+              cursor: "pointer",
+              opacity: hovered ? 1 : 0,
+              pointerEvents: hovered ? "auto" : "none",
+              transition: "opacity 0.12s, color 0.12s",
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.color = "var(--accent)"; }}
+            onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-dim)"; }}
+          >
+            <FilePlus size={14} strokeWidth={1.8} />
           </button>
         )}
         {time && !isStreaming && (

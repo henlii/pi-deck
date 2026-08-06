@@ -859,6 +859,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     handleLeafChange,
     handleBranchHere,
     handleBranchFromAssistant,
+    handleNewSessionFromHere,
+    handleNewSessionFromAnswer,
     navigateBranch,
     setBranchLabel,
     branchActions,
@@ -2052,6 +2054,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     // Workspace History（仅 type:prompt 派发到扩展）
     handleWorkspaceUndo, handleWorkspaceRedo, handleWorkspaceCheckpoint,
     handleBranchHere, handleBranchFromAssistant,
+    handleNewSessionFromHere, handleNewSessionFromAnswer,
     // 分支书签与带选项切换（D3）
     branchBusy, branchActions, navigateBranch, setBranchLabel,
     // Subscriptions
