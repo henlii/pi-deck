@@ -246,10 +246,53 @@ export function removeArchiveRecordAfterPermanentDelete(fs: SessionArchiveFs, ag
 // ---------------------------------------------------------------------------
 
 /**
- * 将全部真实会话按归档状态分区：
- * - 记录存在且记录 sessionPath 与真实会话 path 一致 → archived（附加 archivedAt）
+ * 权威归档 id 集合：会话 id 与记录 sessionPath 同时匹配才视为已归档。
+ * - 记录存在且记录 sessionPath 与真实会话 path 一致 → id 入集（archived）
  * - 记录存在但 path 不一致 → 视为失效记录：会话保持 active，不隐藏正常会话（A7）
- * - 无记录 → active
+ * - 无记录 → 不入集（active）
+ * 列表投影（partitionSessionsByArchiveState）与全文搜索（search route）共用此
+ * 判定，保证会话移动/重建/恢复等 stale sidecar 场景下侧栏与搜索三处视图一致。
+ */
+export function archivedSessionIdsFor(
+  sessions: readonly SessionInfo[],
+  records: readonly ArchiveRecord[],
+): Set<string> {
+  const byId = new Map<string, ArchiveRecord>();
+  for (const record of records) byId.set(record.sessionId, record);
+  const archivedIds = new Set<string>();
+  for (const session of sessions) {
+    const record = byId.get(session.id);
+    if (record && record.sessionPath === session.path) archivedIds.add(session.id);
+  }
+  return archivedIds;
+}
+
+/**
+ * 按 scope 过滤候选会话 id 集合（全文搜索 route 用）：
+ * - active：保留不在权威归档集合中的 id
+ * - archived：只保留权威归档集合中的 id
+ * 候选 id 若不在真实会话列表中（索引孤儿）→ 不入权威集合 → active 保留、
+ * archived 排除，与「无记录 → active」语义一致。
+ */
+export function filterSessionIdsByArchiveScope(
+  candidateIds: readonly string[],
+  sessions: readonly SessionInfo[],
+  records: readonly ArchiveRecord[],
+  scope: "active" | "archived",
+): Set<string> {
+  const archivedIds = archivedSessionIdsFor(sessions, records);
+  const kept = new Set<string>();
+  for (const id of candidateIds) {
+    const isArchived = archivedIds.has(id);
+    if (scope === "active" ? !isArchived : isArchived) kept.add(id);
+  }
+  return kept;
+}
+
+/**
+ * 将全部真实会话按归档状态分区（复用 archivedSessionIdsFor 权威判定）：
+ * - 记录存在且记录 sessionPath 与真实会话 path 一致 → archived（附加 archivedAt）
+ * - 其余 → active
  * 只读 subagent 子会话同样按记录分区（可归档普通会话；subagent 默认不可归档由
  * archiveSession 的 readOnly 门禁保证）。
  */
@@ -257,14 +300,15 @@ export function partitionSessionsByArchiveState(
   sessions: readonly SessionInfo[],
   records: readonly ArchiveRecord[],
 ): { active: SessionInfo[]; archived: SessionInfo[] } {
+  const archivedIds = archivedSessionIdsFor(sessions, records);
   const byId = new Map<string, ArchiveRecord>();
   for (const record of records) byId.set(record.sessionId, record);
   const active: SessionInfo[] = [];
   const archived: SessionInfo[] = [];
   for (const session of sessions) {
-    const record = byId.get(session.id);
-    if (record && record.sessionPath === session.path) {
-      archived.push({ ...session, archivedAt: record.archivedAt });
+    if (archivedIds.has(session.id)) {
+      const record = byId.get(session.id);
+      archived.push({ ...session, archivedAt: record ? record.archivedAt : undefined });
     } else {
       active.push(session);
     }

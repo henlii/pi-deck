@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { searchSessionsFulltext } from "@/lib/session-fulltext-search";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
-import { listArchiveRecords, realArchiveFs } from "@/lib/session-archive";
+import { filterSessionIdsByArchiveScope, listArchiveRecords, realArchiveFs } from "@/lib/session-archive";
+import { listAllSessions } from "@/lib/session-reader";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -11,6 +12,8 @@ export const runtime = "nodejs";
  * 只读全文搜索：优先 hermes sessions.db FTS5，失败降级有界 JSONL 扫描。
  * scope 默认 active：索引可含全部真实会话，但结果在服务端按归档 sidecar
  * 分区过滤（active/archived 投影服务端完成，客户端不读 sidecar，D4）。
+ * 归档判定走权威 (id, path) 投影（archivedSessionIdsFor）：stale sidecar
+ * （会话移动/重建/恢复）不隐藏 active，与 /api/sessions 列表投影一致。
  */
 export async function GET(req: Request) {
   try {
@@ -34,17 +37,15 @@ export async function GET(req: Request) {
       limits: maxHits !== undefined ? { maxHits } : undefined,
     });
 
-    // 按 scope 过滤：归档记录集一次性读取（损坏/越权安全降级为空集）。
+    // 按 scope 过滤：权威 (id, path) 判定集合一次性构造（损坏/越权 sidecar
+    // 安全降级为空集）；候选 id 不在真实会话列表时视为 active，不隐藏。
     let sessionIds = [...result.sessionIds];
     let hits = [...result.hits];
     if (scope !== "all") {
-      const archivedIds = new Set(listArchiveRecords(realArchiveFs, getAgentDir()).map((r) => r.sessionId));
-      if (scope === "active") {
-        sessionIds = sessionIds.filter((id) => !archivedIds.has(id));
-      } else {
-        sessionIds = sessionIds.filter((id) => archivedIds.has(id));
-      }
-      const kept = new Set(sessionIds);
+      const allSessions = await listAllSessions();
+      const records = listArchiveRecords(realArchiveFs, getAgentDir());
+      const kept = filterSessionIdsByArchiveScope(result.sessionIds, allSessions, records, scope);
+      sessionIds = sessionIds.filter((id) => kept.has(id));
       hits = hits.filter((hit) => kept.has(hit.sessionId));
     }
 

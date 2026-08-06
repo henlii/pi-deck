@@ -25,7 +25,6 @@ import {
   tryAppendActivityBestEffort,
   type NotifyPersistState,
 } from "./session-activity-events";
-import { sessionService } from "./session-service";
 import { shouldInheritModel } from "./model-selection";
 
 // ============================================================================
@@ -154,6 +153,19 @@ type ExtensionBindingOptions = {
   forceEmptySystemPrompt?: boolean;
 };
 
+/**
+ * 分支树导航动作（select_leaf_exact / branch_from_assistant /
+ * create_session_from_leaf 的落地实现）依赖注入 seam。
+ *
+ * 实现位于 session-service（避免 rpc-manager ↔ session-service 双向循环依赖），
+ * 由创建 AgentSessionWrapper 的调用方注入；未注入时对应命令降级抛出明确错误。
+ */
+export type NavigationActions = {
+  selectLeafExact(sessionId: string, entryId: string): Promise<{ cancelled: boolean }>;
+  branchFromAssistant(sessionId: string, assistantEntryId: string): Promise<{ cancelled: boolean }>;
+  createSessionFromLeaf(sessionId: string, entryId: string): Promise<{ cancelled: boolean; newSessionId: string }>;
+};
+
 const CODING_TOOL_NAMES = ["read", "bash", "edit", "write", "grep", "find", "ls"];
 
 // Extensions require a complete Theme, while the web UI applies its own styling.
@@ -255,7 +267,19 @@ export class AgentSessionWrapper {
    */
   private notifyPersistState: NotifyPersistState = createNotifyPersistState();
 
-  constructor(public readonly inner: AgentSessionLike) {}
+  constructor(
+    public readonly inner: AgentSessionLike,
+    /** 导航动作注入 seam（P1-4 环消除）：缺省时三个导航命令降级抛错。 */
+    private readonly navigationActions?: NavigationActions,
+  ) {}
+
+  /** 取注入的导航动作；未注入时抛明确错误（降级语义，与缺省状态可观测）。 */
+  private navigationActionsOrThrow(commandType: string): NavigationActions {
+    if (!this.navigationActions) {
+      throw new Error(`${commandType} is unavailable: navigation actions were not injected`);
+    }
+    return this.navigationActions;
+  }
 
   get sessionId(): string {
     return this.inner.sessionId;
@@ -888,31 +912,35 @@ export class AgentSessionWrapper {
         }
       }
 
-      // P0a：分支树精确 leaf 切换——逻辑下沉 SessionService。
+      // P0a：分支树精确 leaf 切换——逻辑在 SessionService，经构造注入的导航动作落地。
       case "select_leaf_exact": {
         const rawEntryId = command.entryId;
         if (typeof rawEntryId !== "string" || rawEntryId.trim() === "") {
           throw new Error("entryId is required");
         }
-        return sessionService.selectLeafExact(this.sessionId, rawEntryId.trim());
+        return this.navigationActionsOrThrow("select_leaf_exact")
+          .selectLeafExact(this.sessionId, rawEntryId.trim());
       }
 
-      // P0a：assistant 轮末分支锚点——逻辑下沉 SessionService。
+      // P0a：assistant 轮末分支锚点——逻辑在 SessionService，经构造注入的导航动作落地。
       case "branch_from_assistant": {
         const rawEntryId = command.assistantEntryId;
         if (typeof rawEntryId !== "string" || rawEntryId.trim() === "") {
           throw new Error("assistantEntryId is required");
         }
-        return sessionService.branchFromAssistant(this.sessionId, rawEntryId.trim());
+        return this.navigationActionsOrThrow("branch_from_assistant")
+          .branchFromAssistant(this.sessionId, rawEntryId.trim());
       }
 
-      // P0a：through-entry 线性新会话（含 assistant turnEnd 修复）——逻辑下沉 SessionService。
+      // P0a：through-entry 线性新会话（含 assistant turnEnd 修复）——逻辑在
+      // SessionService，经构造注入的导航动作落地。
       case "create_session_from_leaf": {
         const rawEntryId = command.entryId;
         if (typeof rawEntryId !== "string" || rawEntryId.trim() === "") {
           throw new Error("entryId is required");
         }
-        return sessionService.createSessionFromLeaf(this.sessionId, rawEntryId.trim());
+        return this.navigationActionsOrThrow("create_session_from_leaf")
+          .createSessionFromLeaf(this.sessionId, rawEntryId.trim());
       }
 
       case "set_branch_label": {
@@ -1565,7 +1593,8 @@ export async function startRpcSession(
   sessionId: string,
   sessionFile: string,
   cwd: string,
-  toolNames?: string[]
+  toolNames?: string[],
+  navigationActions?: NavigationActions,
 ): Promise<{ session: AgentSessionWrapper; realSessionId: string }> {
   const registry = getRegistry();
   const locks = getLocks();
@@ -1624,7 +1653,7 @@ export async function startRpcSession(
       inner.setActiveToolsByName(withExtensionTools(inner, toolNames));
     }
 
-    const wrapper = new AgentSessionWrapper(inner);
+    const wrapper = new AgentSessionWrapper(inner, navigationActions);
     // P0c：tool preset 下线后不再因 toolNames=[] 强制清空 systemPrompt
     wrapper.start();
 

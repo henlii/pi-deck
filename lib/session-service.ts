@@ -7,6 +7,7 @@ import {
   startRpcSession,
   subscribeRunningSessions,
   type AgentSessionWrapper,
+  type NavigationActions,
 } from "./rpc-manager";
 import {
   cacheSessionPath,
@@ -21,6 +22,7 @@ import { computeTurnEnd } from "./turn-end";
 import type { SessionInfo } from "./types";
 import { shouldInheritModel } from "./model-selection";
 import {
+  archivedSessionIdsFor,
   createArchiveActions,
   listArchiveRecords,
   partitionSessionsByArchiveState,
@@ -76,6 +78,7 @@ export type SessionServiceDeps = {
     sessionFile: string,
     cwd: string,
     toolNames?: string[],
+    navigationActions?: NavigationActions,
   ) => Promise<{ session: AgentSessionWrapper; realSessionId: string }>;
   getRunningRpcSessionIds: () => string[];
   subscribeRunningSessions: (listener: (ids: string[]) => void) => () => void;
@@ -121,8 +124,8 @@ export type SessionService = {
   listActiveSessions(): Promise<SessionInfo[]>;
   /** 全部真实会话（scope=all，含归档）。 */
   listAllSessions(): Promise<SessionInfo[]>;
-  /** 会话是否已归档（服务端权威）。 */
-  isArchived(sessionId: string): boolean;
+  /** 会话是否已归档（服务端权威：按 (id, path) 判定，与列表投影一致）。 */
+  isArchived(sessionId: string): Promise<boolean>;
   archiveSession(sessionId: string): Promise<string>;
   restoreSession(sessionId: string): Promise<SessionInfo | null>;
   archiveSessions(sessionIds: string[]): Promise<ArchiveActionResult>;
@@ -223,8 +226,9 @@ export function createSessionService(overrides: Partial<SessionServiceDeps> = {}
       return deps.listAllSessions();
     },
 
-    isArchived(sessionId) {
-      return currentArchiveRecords().some((record) => record.sessionId === sessionId);
+    async isArchived(sessionId) {
+      const sessions = await deps.listAllSessions();
+      return archivedSessionIdsFor(sessions, currentArchiveRecords()).has(sessionId);
     },
 
     async archiveSession(sessionId) {
@@ -310,7 +314,7 @@ export function createSessionService(overrides: Partial<SessionServiceDeps> = {}
       }
 
       const cwd = deps.openSessionCwd(filePath);
-      const { session } = await deps.startRpcSession(sessionId, filePath, cwd);
+      const { session } = await deps.startRpcSession(sessionId, filePath, cwd, undefined, navigationActions);
       return session;
     },
 
@@ -321,7 +325,7 @@ export function createSessionService(overrides: Partial<SessionServiceDeps> = {}
 
     async start(sessionId, sessionFile, cwd, toolNames) {
       await requireWritableSession(sessionId, service.isReadOnly);
-      return deps.startRpcSession(sessionId, sessionFile, cwd, toolNames);
+      return deps.startRpcSession(sessionId, sessionFile, cwd, toolNames, navigationActions);
     },
 
     async send(sessionId, command) {
@@ -352,7 +356,13 @@ export function createSessionService(overrides: Partial<SessionServiceDeps> = {}
 
       // 临时 key 只用于启动锁，真正 id 由 pi 生成。
       const tempKey = `__new__${deps.now()}`;
-      const { session, realSessionId } = await deps.startRpcSession(tempKey, "", cwd, toolNames);
+      const { session, realSessionId } = await deps.startRpcSession(
+        tempKey,
+        "",
+        cwd,
+        toolNames,
+        navigationActions,
+      );
 
       deps.allowFileRoot(cwd);
       deps.invalidateSessionListCache();
@@ -499,6 +509,17 @@ export function createSessionService(overrides: Partial<SessionServiceDeps> = {}
       deps.getRpcSession(sessionId)?.destroy();
       return { cancelled: false, newSessionId };
     },
+  };
+
+  // P1-4 环消除：三个分支导航动作的落地实现绑定到本 service 实例，随
+  // startRpcSession 注入 wrapper（rpc-manager 不再 import 本模块）。
+  // 动作在 wrapper.send 时执行，彼时 service 已完整初始化，无 TDZ 风险。
+  const navigationActions: NavigationActions = {
+    selectLeafExact: (sessionId, entryId) => service.selectLeafExact(sessionId, entryId),
+    branchFromAssistant: (sessionId, assistantEntryId) =>
+      service.branchFromAssistant(sessionId, assistantEntryId),
+    createSessionFromLeaf: (sessionId, entryId) =>
+      service.createSessionFromLeaf(sessionId, entryId),
   };
 
   return service;
