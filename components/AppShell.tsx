@@ -129,6 +129,7 @@ function AppShellInner() {
   const [rightPanelWidth, setRightPanelWidth] = useState(RIGHT_PANEL_WIDTH_DEFAULT);
   const [changesPanelOpen, setChangesPanelOpen] = useState(true);
   const [changesPanelWidth, setChangesPanelWidth] = useState(CHANGES_PANEL_WIDTH_DEFAULT);
+  const [secondaryPanelMode, setSecondaryPanelMode] = useState<"content" | "diff">("content");
   const [changesPanelDragging, setChangesPanelDragging] = useState(false);
   const changesPanelDragRef = useRef<{ startX: number; startWidth: number } | null>(null);
   const [mobileWorkspaceReady, setMobileWorkspaceReady] = useState(false);
@@ -742,7 +743,7 @@ function AppShellInner() {
     }
   }, [selectedSession, router, invalidateHydrate, removeOptimisticPending]);
 
-  const handleOpenFile = useCallback((filePath: string, fileName: string, sourceSessionId?: string | null, writable = false) => {
+  const handleOpenFile = useCallback((filePath: string, fileName: string, sourceSessionId?: string | null, writable = false, mode: "content" | "diff" = "content") => {
     const bufferKey = makeFileBufferKey(filePath, sourceSessionId);
     const tabId = `file:${bufferKey}`;
     setFileTabs((prev) => {
@@ -752,7 +753,9 @@ function AppShellInner() {
     });
     setPendingCloseTabId(null);
     setActiveRightTabId(tabId);
-    // 分屏语义：打开文件只展开右栏，聊天主区始终可见、不卸载。
+    setSecondaryPanelMode(mode);
+    applyChangesPanelOpen(true);
+    // 文件详情属于二级右栏；一级右栏保持导航，聊天主区始终可见。
     // 移动端右栏为全屏 overlay 抽屉：关闭会话侧栏避免三层覆盖。
     if (isMobile) {
       setSidebarOpen(false);
@@ -760,7 +763,7 @@ function AppShellInner() {
     } else {
       applyRightPanelOpen(true);
     }
-  }, [applyRightPanelOpen, isMobile]);
+  }, [applyChangesPanelOpen, applyRightPanelOpen, isMobile]);
 
   const handleOpenLinkedFile = useCallback((filePath: string) => {
     handleOpenFile(filePath, getFileName(filePath), selectedSession?.id ?? null, Boolean(selectedSession?.id && selectedSession.readOnly !== true));
@@ -808,17 +811,13 @@ function AppShellInner() {
     closeFileTabNow(tab.id, false);
   }, [closeFileTabNow, dispatchFileEditorAction, fileTabs, pendingCloseTabId]);
 
-  // 右栏图标导航常驻最右；文件预览 tab 位于其左侧内容面板内。
+  // 一级右栏只保留固定图标导航；文件预览 tab 迁移到二级右栏。
   const rightTabs = useMemo<Tab[]>(() => [
     { id: "branch", label: t("branches"), filePath: "", kind: "branch" },
     { id: "info", label: t("app_sessionInfo"), filePath: "", kind: "info" },
     { id: "files", label: t("workspace_files"), filePath: "", kind: "files" },
     { id: "git", label: t("workspace_gitChanges"), filePath: "", kind: "git" },
-    ...fileTabs.map((tab) => {
-      const buffer = tab.bufferKey ? getBuffer(fileEditorState, tab.bufferKey) : undefined;
-      return { ...tab, dirty: buffer?.dirty, saving: buffer?.saveState === "saving" };
-    }),
-  ], [fileEditorState, fileTabs, t]);
+  ], [t]);
 
   const handleSelectRightTab = useCallback((tabId: string) => {
     const activeNavigationId = activeRightTabId.startsWith("file:") ? "files" : activeRightTabId;
@@ -1264,7 +1263,7 @@ function AppShellInner() {
         </div>
       </div>
 
-      {changesPanelOpen && !isMobile && (
+      {changesPanelOpen && (
         <aside className="changes-panel" style={{ width: changesPanelWidth }} aria-label={t("changes_title")}>
           <div
             className={`changes-panel-resize-handle${changesPanelDragging ? " dragging" : ""}`}
@@ -1289,7 +1288,7 @@ function AppShellInner() {
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
             </button>
           </div>
-          {activeCwd ? <ChangesPanel cwd={activeCwd} gitRefreshKey={explorerRefreshKey} gitAffectedPaths={gitAffectedPaths} /> : <div className="changes-panel-hint">{t("workspace_selectProject")}</div>}
+          <ChangesPanel open={changesPanelOpen} width={changesPanelWidth} onWidthChange={applyChangesPanelWidth} onClose={() => applyChangesPanelOpen(false)} cwd={activeCwd} isMobile={isMobile} mobileReady={mobileWorkspaceReady} tabs={fileTabs} activeTabId={activeRightTabId} onSelectTab={(tabId) => { setPendingCloseTabId(null); setActiveRightTabId(tabId); }} onCloseTab={handleCloseFileTab} pendingCloseTabLabel={pendingCloseTabId ? fileTabs.find((tab) => tab.id === pendingCloseTabId)?.label ?? null : null} onSaveAndClose={() => void handleSaveAndClose()} onDiscardAndClose={handleDiscardAndClose} onCancelClose={() => setPendingCloseTabId(null)} activeMode={secondaryPanelMode} gitAffectedPaths={gitAffectedPaths} fileViewerContent={activeFileTab?.filePath ? <div style={{ height: "100%", overflow: "hidden" }}><FileViewer filePath={activeFileTab.filePath} cwd={activeCwd ?? undefined} sourceSessionId={activeFileTab.sourceSessionId} writable={activeFileTab.writable === true} buffer={activeFileTab.bufferKey ? getBuffer(fileEditorState, activeFileTab.bufferKey) : undefined} dispatchBuffer={dispatchFileEditorAction} onSave={activeFileTab.bufferKey ? () => saveFileBuffer(activeFileTab.bufferKey!) : undefined} gitAffectedPaths={gitAffectedPaths} onOpenFile={(filePath) => handleOpenFile(filePath, getFileName(filePath), activeFileTab.sourceSessionId, activeFileTab.writable === true)} /></div> : null} />
         </aside>
       )}
 
@@ -1317,26 +1316,6 @@ function AppShellInner() {
         tabs={rightTabs}
         activeTabId={activeRightTabId}
         onSelectTab={handleSelectRightTab}
-        onCloseTab={handleCloseFileTab}
-        pendingCloseTabLabel={pendingCloseTabId ? fileTabs.find((tab) => tab.id === pendingCloseTabId)?.label ?? null : null}
-        onSaveAndClose={() => void handleSaveAndClose()}
-        onDiscardAndClose={handleDiscardAndClose}
-        onCancelClose={() => setPendingCloseTabId(null)}
-        fileViewerContent={activeFileTab?.filePath ? (
-          <div style={{ height: "100%", overflow: "hidden" }}>
-            <FileViewer
-              filePath={activeFileTab.filePath}
-              cwd={activeCwd ?? undefined}
-              sourceSessionId={activeFileTab.sourceSessionId}
-              writable={activeFileTab.writable === true}
-              buffer={activeFileTab.bufferKey ? getBuffer(fileEditorState, activeFileTab.bufferKey) : undefined}
-              dispatchBuffer={dispatchFileEditorAction}
-              onSave={activeFileTab.bufferKey ? () => saveFileBuffer(activeFileTab.bufferKey!) : undefined}
-              gitAffectedPaths={gitAffectedPaths}
-              onOpenFile={(filePath) => handleOpenFile(filePath, getFileName(filePath), activeFileTab.sourceSessionId, activeFileTab.writable === true)}
-            />
-          </div>
-        ) : null}
         sessionInfoContent={(
           <SessionInfoPanel
             session={selectedSession}
@@ -1355,7 +1334,7 @@ function AppShellInner() {
             panel
           />
         )}
-        onOpenFile={(filePath, fileName) => handleOpenFile(filePath, fileName, selectedSession?.id ?? null, Boolean(selectedSession?.id && selectedSession.readOnly !== true))}
+        onOpenFile={(filePath, fileName, mode) => handleOpenFile(filePath, fileName, selectedSession?.id ?? null, Boolean(selectedSession?.id && selectedSession.readOnly !== true), mode)}
         fileRefreshKey={explorerRefreshKey}
         gitRefreshKey={explorerRefreshKey}
         onAtMention={handleAtMention}
@@ -1385,7 +1364,7 @@ function AppShellInner() {
       onClose={() => setPaletteOpen(false)}
       onSelectSession={(session) => handleSelectSession(session)}
       onNewSession={() => handleNewSession()}
-      onOpenFile={(filePath, fileName) => handleOpenFile(filePath, fileName, selectedSession?.id ?? null, Boolean(selectedSession?.id && selectedSession.readOnly !== true))}
+      onOpenFile={(filePath, fileName) => handleOpenFile(filePath, fileName, selectedSession?.id ?? null, Boolean(selectedSession?.id && selectedSession.readOnly !== true), "content")}
       onOpenSettings={(page) => {
         setSettingsOpen(true);
         setSettingsInitialPage(page);

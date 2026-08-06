@@ -1,113 +1,107 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import { affectedPathsInRepository, affectedPathsMatchFile } from "@/lib/git-refresh";
-import type { GitFileDiffResponse, GitStatusResponse } from "@/lib/git-types";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { affectedPathsMatchFile } from "@/lib/git-refresh";
+import type { GitFileDiffResponse } from "@/lib/git-types";
 import { useI18n } from "@/lib/i18n";
+import type { Tab } from "./TabBar";
+import { TabBar } from "./TabBar";
 import { GitDiffView } from "./FileViewer";
-import { GitPanel } from "./GitPanel";
 
 interface Props {
+  open: boolean;
+  width: number;
+  onWidthChange: (width: number) => void;
+  onClose: () => void;
   cwd: string | null;
-  gitRefreshKey?: number;
+  isMobile: boolean;
+  mobileReady: boolean;
+  tabs: Tab[];
+  activeTabId: string;
+  onSelectTab: (id: string) => void;
+  onCloseTab: (id: string) => void;
+  pendingCloseTabLabel: string | null;
+  onSaveAndClose: () => void;
+  onDiscardAndClose: () => void;
+  onCancelClose: () => void;
+  fileViewerContent: ReactNode;
+  activeMode: "content" | "diff";
   gitAffectedPaths?: string[] | null;
 }
 
-/** 独立 Git 变更工作区：上半部复用 GitPanel 列表，下半部复用 FileViewer diff 渲染。 */
-export function ChangesPanel({ cwd, gitRefreshKey, gitAffectedPaths }: Props) {
+/** 二级右侧边栏：由一级文件树/Git 行打开，文件 tab 与扩展内容均挂载于此。 */
+export function ChangesPanel({ open, width, onWidthChange, onClose, cwd, isMobile, mobileReady, tabs, activeTabId, onSelectTab, onCloseTab, pendingCloseTabLabel, onSaveAndClose, onDiscardAndClose, onCancelClose, fileViewerContent, activeMode, gitAffectedPaths }: Props) {
   const { t } = useI18n();
-  const [status, setStatus] = useState<GitStatusResponse | null>(null);
-  const [statusLoading, setStatusLoading] = useState(false);
-  const [statusError, setStatusError] = useState<string | null>(null);
-  const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [diff, setDiff] = useState<GitFileDiffResponse | null>(null);
   const [diffLoading, setDiffLoading] = useState(false);
   const [diffError, setDiffError] = useState<string | null>(null);
-  const statusRequestRef = useRef(0);
-  const diffRequestRef = useRef(0);
+  const [dragging, setDragging] = useState(false);
+  const dragRef = useRef<{ startX: number; startWidth: number } | null>(null);
+  const activeTab = tabs.find((tab) => tab.id === activeTabId);
 
-  const fetchStatus = useCallback(async () => {
-    const requestId = ++statusRequestRef.current;
-    if (!cwd) {
-      setStatus(null);
-      setStatusError(null);
+  const fetchDiff = useCallback(async () => {
+    if (!cwd || activeMode !== "diff" || !activeTab?.filePath) {
+      setDiff(null);
       return;
     }
-    setStatusLoading(true);
-    try {
-      const response = await fetch(`/api/git/status?${new URLSearchParams({ cwd }).toString()}`);
-      const next = await response.json().catch(() => ({})) as GitStatusResponse & { error?: string };
-      if (!response.ok) throw new Error(next.error ?? t("changes_statusError", { status: response.status }));
-      if (requestId !== statusRequestRef.current) return;
-      setStatus(next);
-      setStatusError(null);
-      setSelectedPath((current) => current && next.files.some((file) => file.filePath === current) ? current : next.files[0]?.filePath ?? null);
-    } catch (error) {
-      if (requestId !== statusRequestRef.current) return;
-      setStatus(null);
-      setSelectedPath(null);
-      setDiff(null);
-      setStatusError(error instanceof Error ? error.message : String(error));
-    } finally {
-      if (requestId === statusRequestRef.current) setStatusLoading(false);
-    }
-  }, [cwd, t]);
-
-  const fetchDiff = useCallback(async (filePath: string) => {
-    const requestId = ++diffRequestRef.current;
-    if (!cwd) return;
     setDiffLoading(true);
     setDiffError(null);
     try {
-      const response = await fetch(`/api/git/diff?${new URLSearchParams({ cwd, path: filePath }).toString()}`);
+      const params = new URLSearchParams({ cwd, path: activeTab.filePath });
+      const response = await fetch(`/api/git/diff?${params.toString()}`);
       const next = await response.json().catch(() => ({})) as GitFileDiffResponse & { error?: string };
       if (!response.ok) throw new Error(next.error ?? t("changes_diffError", { status: response.status }));
-      if (requestId !== diffRequestRef.current) return;
       setDiff(next.supported && typeof next.patch === "string" ? next : null);
     } catch (error) {
-      if (requestId !== diffRequestRef.current) return;
       setDiff(null);
       setDiffError(error instanceof Error ? error.message : String(error));
     } finally {
-      if (requestId === diffRequestRef.current) setDiffLoading(false);
+      setDiffLoading(false);
     }
-  }, [cwd, t]);
+  }, [activeMode, activeTab?.filePath, cwd, t]);
 
+  useEffect(() => { void fetchDiff(); }, [fetchDiff]);
   useEffect(() => {
-    setSelectedPath(null);
-    setDiff(null);
-    void fetchStatus();
-  }, [fetchStatus, gitRefreshKey]);
+    if (activeMode === "diff" && activeTab?.filePath && gitAffectedPaths?.some((path) => affectedPathsMatchFile(gitAffectedPaths, path))) void fetchDiff();
+  }, [activeMode, activeTab?.filePath, fetchDiff, gitAffectedPaths]);
 
-  useEffect(() => {
-    if (selectedPath) void fetchDiff(selectedPath);
-    else setDiff(null);
-  }, [fetchDiff, selectedPath]);
+  const handleResizeStart = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (isMobile) return;
+    event.preventDefault();
+    dragRef.current = { startX: event.clientX, startWidth: width };
+    setDragging(true);
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }, [isMobile, width]);
+  const handleResizeMove = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    const drag = dragRef.current;
+    if (drag) onWidthChange(drag.startWidth + drag.startX - event.clientX);
+  }, [onWidthChange]);
+  const handleResizeEnd = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (!dragRef.current) return;
+    dragRef.current = null;
+    setDragging(false);
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+  }, []);
 
-  useEffect(() => {
-    if (!gitAffectedPaths || !status?.repositoryRoot || !affectedPathsInRepository(gitAffectedPaths, status.repositoryRoot)) return;
-    void fetchStatus();
-    if (selectedPath && affectedPathsMatchFile(gitAffectedPaths, selectedPath)) void fetchDiff(selectedPath);
-  }, [fetchDiff, fetchStatus, gitAffectedPaths, selectedPath, status?.repositoryRoot]);
+  const content = !activeTab ? <div className="changes-panel-hint">{t("secondary_empty")}</div>
+    : activeMode === "content" ? fileViewerContent
+      : diffLoading ? <div className="changes-panel-hint">{t("changes_diffLoading")}</div>
+        : diffError ? <div className="changes-panel-hint is-error">{diffError}</div>
+          : diff?.patch ? <GitDiffView patch={diff.patch} />
+            : <div className="changes-panel-hint">{t("changes_diffUnavailable")}</div>;
 
   return (
-    <div className="changes-panel-content">
-      <div className="changes-panel-list">
-        <GitPanel cwd={cwd ?? ""} status={status} loading={statusLoading} error={statusError} selectedFilePath={selectedPath} onOpenFile={(filePath) => setSelectedPath(filePath)} />
+    <aside className={`changes-panel${open ? " changes-panel-open" : " changes-panel-closed"}${dragging ? " changes-panel-dragging" : ""}${mobileReady ? "" : " workspace-mobile-pending"}`} style={{ width: open ? width : 0, minWidth: open ? width : 0 }} aria-label={t("secondary_title")}>
+      {open && <div className={`changes-panel-resize-handle${dragging ? " dragging" : ""}`} role="separator" aria-orientation="vertical" tabIndex={0} title={t("changes_resizeHandle")} aria-label={t("changes_resizeHandle")} onPointerDown={handleResizeStart} onPointerMove={handleResizeMove} onPointerUp={handleResizeEnd} onPointerCancel={handleResizeEnd} />}
+      <div className="secondary-panel-inner">
+        <div className="workspace-header">
+          <strong style={{ flex: 1, minWidth: 0, fontSize: 11.5, fontWeight: 650 }}>{t("secondary_title")}</strong>
+          <button type="button" className="sidebar-icon-btn" onClick={onClose} title={t("secondary_close")} aria-label={t("secondary_close")}><span aria-hidden="true">×</span></button>
+        </div>
+        {tabs.length > 0 && <div className="secondary-panel-tabs"><TabBar tabs={tabs} activeTabId={activeTabId} onSelectTab={onSelectTab} onCloseTab={onCloseTab} /></div>}
+        {pendingCloseTabLabel !== null && <div className="file-close-confirm" role="alert"><span className="file-close-confirm__message">{t("app_unsavedChangesIn", { name: pendingCloseTabLabel })}</span><button type="button" className="file-close-confirm__button" onClick={onSaveAndClose}>{t("app_saveAndClose")}</button><button type="button" className="file-close-confirm__button is-danger" onClick={onDiscardAndClose}>{t("app_discardChanges")}</button><button type="button" className="file-close-confirm__button" onClick={onCancelClose}>{t("common_cancel")}</button></div>}
+        <div className="secondary-panel-body">{content}</div>
       </div>
-      <div className="changes-panel-diff" aria-live="polite">
-        {!selectedPath ? (
-          <div className="changes-panel-hint">{t("changes_selectFile")}</div>
-        ) : diffLoading ? (
-          <div className="changes-panel-hint">{t("changes_diffLoading")}</div>
-        ) : diffError ? (
-          <div className="changes-panel-hint is-error">{diffError}</div>
-        ) : diff?.patch ? (
-          <GitDiffView patch={diff.patch} />
-        ) : (
-          <div className="changes-panel-hint">{t("changes_diffUnavailable")}</div>
-        )}
-      </div>
-    </div>
+    </aside>
   );
 }

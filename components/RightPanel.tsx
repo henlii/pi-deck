@@ -6,7 +6,7 @@ import { RIGHT_PANEL_WIDTH_DEFAULT, RIGHT_PANEL_WIDTH_MAX, RIGHT_PANEL_WIDTH_MIN
 import { useI18n } from "@/lib/i18n";
 import { FileExplorer, type FileExplorerHandle } from "./FileExplorer";
 import { GitPanel } from "./GitPanel";
-import { TabBar, type Tab } from "./TabBar";
+import type { Tab } from "./TabBar";
 import { FileDiff, FileText } from "lucide-react";
 
 interface Props {
@@ -18,21 +18,15 @@ interface Props {
   cwd: string | null;
   isMobile: boolean;
   mobileReady: boolean;
-  /** 图标导航（branch/info/files/git）+ 文件预览 tab（可关）。 */
+  /** 仅包含一级右栏图标导航；文件 tab 属于二级右栏。 */
   tabs: Tab[];
   activeTabId: string;
   onSelectTab: (id: string) => void;
-  onCloseTab: (id: string) => void;
-  pendingCloseTabLabel: string | null;
-  onSaveAndClose: () => void;
-  onDiscardAndClose: () => void;
-  onCancelClose: () => void;
-  fileViewerContent: ReactNode;
   sessionInfoContent: ReactNode;
   branchContent: ReactNode;
   fileRefreshKey?: number;
   gitRefreshKey?: number;
-  onOpenFile: (filePath: string, fileName: string) => void;
+  onOpenFile: (filePath: string, fileName: string, mode?: "content" | "diff") => void;
   onAtMention?: (relativePath: string, isDir: boolean) => void;
   onAtMentions?: (relativePaths: string[]) => void;
 }
@@ -48,7 +42,7 @@ function NavigationIcon({ kind }: { kind: Tab["kind"] }) {
 const NAVIGATION_RAIL_WIDTH = 44;
 
 /** OpenChamber 式右栏：内容面板在左，固定图标轨道常驻窗口最右缘。 */
-export function RightPanel({ open, width, onWidthChange, onClose, cwd, isMobile, mobileReady, tabs, activeTabId, onSelectTab, onCloseTab, pendingCloseTabLabel, onSaveAndClose, onDiscardAndClose, onCancelClose, fileViewerContent, sessionInfoContent, branchContent, fileRefreshKey, gitRefreshKey, onOpenFile, onAtMention, onAtMentions }: Props) {
+export function RightPanel({ open, width, onWidthChange, onClose, cwd, isMobile, mobileReady, tabs, activeTabId, onSelectTab, sessionInfoContent, branchContent, fileRefreshKey, gitRefreshKey, onOpenFile, onAtMention, onAtMentions }: Props) {
   const { t } = useI18n();
   const fileExplorerRef = useRef<FileExplorerHandle>(null);
   const [uploadBusy, setUploadBusy] = useState(false);
@@ -101,11 +95,9 @@ export function RightPanel({ open, width, onWidthChange, onClose, cwd, isMobile,
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
   }, []);
 
-  const isFileTabActive = activeTabId.startsWith("file:");
   const navigationTabs = tabs.filter((tab) => tab.kind && tab.kind !== "file" && tab.kind !== "chat");
-  const fileTabs = tabs.filter((tab) => !tab.kind || tab.kind === "file");
-  const activeNavigationId = isFileTabActive ? "files" : activeTabId;
-  const contentTitle = fileTabs.find((tab) => tab.id === activeTabId)?.label ?? navigationTabs.find((tab) => tab.id === activeNavigationId)?.label ?? t("panel_ariaLabel");
+  const activeNavigationId = activeTabId.startsWith("file:") ? "files" : activeTabId;
+  const contentTitle = navigationTabs.find((tab) => tab.id === activeNavigationId)?.label ?? t("panel_ariaLabel");
   const changeCount = gitStatus?.isGitRepository ? gitStatus.files.length : 0;
   const desktopTotalWidth = NAVIGATION_RAIL_WIDTH + (open ? width : 0);
   const contentWidth = isMobile ? `calc(100% - ${NAVIGATION_RAIL_WIDTH}px)` : open ? width : 0;
@@ -121,15 +113,12 @@ export function RightPanel({ open, width, onWidthChange, onClose, cwd, isMobile,
             {activeTabId === "git" && <button type="button" onClick={() => void fetchGitStatus()} disabled={!cwd} title={t("workspace_refreshGitStatus")} data-tooltip={t("workspace_refreshGitStatus")} aria-label={t("workspace_refreshGitStatus")} className="sidebar-icon-btn"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg></button>}
             <button type="button" onClick={onClose} title={t("workspace_close")} data-tooltip={t("workspace_close")} aria-label={t("workspace_close")} className="sidebar-icon-btn"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
           </div>
-          {fileTabs.length > 0 && <div style={{ flexShrink: 0, borderBottom: "1px solid var(--border)", overflow: "hidden" }}><TabBar tabs={fileTabs} activeTabId={activeTabId} onSelectTab={onSelectTab} onCloseTab={onCloseTab}/></div>}
-          {pendingCloseTabLabel !== null && <div className="file-close-confirm" role="alert"><span className="file-close-confirm__message">{t("app_unsavedChangesIn", { name: pendingCloseTabLabel })}</span><button type="button" className="file-close-confirm__button" onClick={onSaveAndClose}>{t("app_saveAndClose")}</button><button type="button" className="file-close-confirm__button is-danger" onClick={onDiscardAndClose}>{t("app_discardChanges")}</button><button type="button" className="file-close-confirm__button" onClick={onCancelClose}>{t("common_cancel")}</button></div>}
-          <div style={{ flex: 1, overflow: "hidden", position: "relative", background: isFileTabActive ? "var(--bg)" : "var(--bg-panel)" }}>
+          <div style={{ flex: 1, overflow: "hidden", position: "relative", background: "var(--bg-panel)" }}>
             {!everOpened ? null : !cwd ? <div style={{ padding: "16px 12px", fontSize: 11.5, color: "var(--text-dim)", lineHeight: 1.6 }}>{t("workspace_selectProject")}</div> : <>
-              <div style={{ display: activeTabId === "files" ? "block" : "none", height: "100%", overflowY: "auto", overflowX: "hidden" }}><FileExplorer ref={fileExplorerRef} cwd={cwd} onOpenFile={onOpenFile} refreshKey={(fileRefreshKey ?? 0) + filesRefreshTick} onAtMention={onAtMention} onAtMentions={onAtMentions} onUploadBusyChange={setUploadBusy}/></div>
-              <div style={{ display: activeTabId === "git" ? "block" : "none", height: "100%", overflowY: "auto", overflowX: "hidden" }}><GitPanel cwd={cwd} status={gitStatus} loading={gitLoading} error={gitError} onOpenFile={onOpenFile}/></div>
+              <div style={{ display: activeTabId === "files" ? "block" : "none", height: "100%", overflowY: "auto", overflowX: "hidden" }}><FileExplorer ref={fileExplorerRef} cwd={cwd} onOpenFile={(filePath, fileName) => onOpenFile(filePath, fileName, "content")} refreshKey={(fileRefreshKey ?? 0) + filesRefreshTick} onAtMention={onAtMention} onAtMentions={onAtMentions} onUploadBusyChange={setUploadBusy}/></div>
+              <div style={{ display: activeTabId === "git" ? "block" : "none", height: "100%", overflowY: "auto", overflowX: "hidden" }}><GitPanel cwd={cwd} status={gitStatus} loading={gitLoading} error={gitError} onOpenFile={(filePath, fileName) => onOpenFile(filePath, fileName, "diff")}/></div>
               {activeTabId === "branch" && <div style={{ height: "100%", overflow: "hidden" }}>{branchContent}</div>}
               {activeTabId === "info" && <div style={{ height: "100%", overflow: "hidden" }}>{sessionInfoContent}</div>}
-              {isFileTabActive && fileViewerContent}
             </>}
           </div>
         </div>

@@ -332,6 +332,9 @@ export const en = {
   changes_statusError: 'Failed to load changes (HTTP {status})',
   changes_diffError: 'Failed to load diff (HTTP {status})',
   changes_diffUnavailable: 'Diff is unavailable for this file',
+  secondary_title: 'File details',
+  secondary_empty: 'Select a file in the sidebar to view its details',
+  secondary_close: 'Close details panel',
   // right panel (files / diff / session info)
   app_showPanel: 'Show panel',
   app_hidePanel: 'Hide panel',

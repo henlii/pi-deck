@@ -332,6 +332,9 @@ export const zhCN: Record<TranslationKey, string> = {
   changes_statusError: '加载文件修改失败（HTTP {status}）',
   changes_diffError: '加载差异失败（HTTP {status}）',
   changes_diffUnavailable: '此文件暂时无法显示差异',
+  secondary_title: '文件详情',
+  secondary_empty: '在侧栏中选择文件以查看详情',
+  secondary_close: '关闭详情面板',
   // 右栏（文件 / diff / 会话信息）
   app_showPanel: '显示面板',
   app_hidePanel: '隐藏面板',
