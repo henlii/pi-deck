@@ -980,7 +980,7 @@ function TextFileViewer({ filePath, cwd, sourceSessionId, writable = false, buff
   };
 
   return (
-    <div ref={shellRef} className="file-viewer-shell" style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
+    <div ref={shellRef} className="file-viewer-shell" style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0, minWidth: 0, overflow: "hidden" }}>
       <div
         className="file-viewer-toolbar"
         style={{
@@ -1063,7 +1063,7 @@ function TextFileViewer({ filePath, cwd, sourceSessionId, writable = false, buff
       )}
 
       {/* Content area */}
-      <div className="file-viewer-content" style={{ flex: 1, overflow: "auto", background: "var(--bg)" }}>
+      <div className="file-viewer-content" style={{ flex: "1 1 auto", minHeight: 0, minWidth: 0, display: "flex", flexDirection: "column", overflow: "auto", background: "var(--bg)" }}>
         {displayMode === "diff" && hasGitDiff ? (
           <><div className="file-viewer-context-label">{t("viewer_gitDiffSavedWorktree")}</div><GitDiffView patch={gitDiff.patch!} /></>
         ) : isHtml && displayMode === "preview" ? (

@@ -2110,7 +2110,7 @@ function ProjectSection({
             onToggleProject(project.root);
           }}
         />
-        <span aria-hidden="true" style={{ position: "absolute", left: sidebarIndicatorLeft(0), top: "50%", display: "flex", width: SIDEBAR_INDICATOR_SLOT, height: 20, alignItems: "center", justifyContent: "center", transform: "translateY(-50%)", color: "var(--text-dim)" }}>
+        <span aria-hidden="true" className="sidebar-indicator-icon" style={{ position: "absolute", left: sidebarIndicatorLeft(0), top: "50%", display: "flex", width: SIDEBAR_INDICATOR_SLOT, height: 20, alignItems: "center", justifyContent: "center", transform: "translateY(-50%)", color: "var(--text-dim)" }}>
           <FolderIcon size={13} />
         </span>
         <PathLabel
@@ -2418,7 +2418,7 @@ function WorktreeGroupSection({
             onToggleWorktree(group.path);
           }}
         />
-        <span aria-hidden="true" style={{ position: "absolute", left: sidebarIndicatorLeft(1), top: "50%", display: "flex", width: SIDEBAR_INDICATOR_SLOT, height: 20, alignItems: "center", justifyContent: "center", transform: "translateY(-50%)", color: "var(--text-dim)" }}>
+        <span aria-hidden="true" className="sidebar-indicator-icon" style={{ position: "absolute", left: sidebarIndicatorLeft(1), top: "50%", display: "flex", width: SIDEBAR_INDICATOR_SLOT, height: 20, alignItems: "center", justifyContent: "center", transform: "translateY(-50%)", color: "var(--text-dim)" }}>
           <BranchIcon size={11} />
         </span>
         <PathLabel
@@ -2863,14 +2863,16 @@ function SessionItem({
               style={{ position: "absolute", left: sidebarIndicatorLeft(depth), top: "50%", width: SIDEBAR_INDICATOR_SLOT, height: 20, transform: "translateY(-50%)" }}
             />
           )}
-          {/* 关系图标：fork 用分叉图标，subagent 用层叠图标，一眼可区分 */}
+          {/* 关系图标：fork 用分叉图标，subagent 用层叠图标，一眼可区分。
+              有子节点（hasChildren）时图标与 chevron 同槽位，hover 由 CSS
+              .sidebar-indicator-icon 隐藏让位；叶子行无 chevron，图标恒显示。 */}
           {depth > 0 && relation === "subagent" && (
-            <span style={{ position: "absolute", left: sidebarIndicatorLeft(depth), top: "50%", display: "flex", width: SIDEBAR_INDICATOR_SLOT, height: 20, alignItems: "center", justifyContent: "center", transform: "translateY(-50%)", color: "var(--text-dim)" }} aria-hidden="true">
+            <span aria-hidden="true" className={hasChildren ? "sidebar-indicator-icon" : undefined} style={{ position: "absolute", left: sidebarIndicatorLeft(depth), top: "50%", display: "flex", width: SIDEBAR_INDICATOR_SLOT, height: 20, alignItems: "center", justifyContent: "center", transform: "translateY(-50%)", color: "var(--text-dim)" }}>
               <LayersIcon size={10} />
             </span>
           )}
           {depth > 0 && relation !== "subagent" && (
-            <span style={{ position: "absolute", left: sidebarIndicatorLeft(depth), top: "50%", display: "flex", width: SIDEBAR_INDICATOR_SLOT, height: 20, alignItems: "center", justifyContent: "center", transform: "translateY(-50%)", color: "var(--text-dim)" }} aria-hidden="true">
+            <span aria-hidden="true" className={hasChildren ? "sidebar-indicator-icon" : undefined} style={{ position: "absolute", left: sidebarIndicatorLeft(depth), top: "50%", display: "flex", width: SIDEBAR_INDICATOR_SLOT, height: 20, alignItems: "center", justifyContent: "center", transform: "translateY(-50%)", color: "var(--text-dim)" }}>
               <BranchIcon size={10} />
             </span>
           )}

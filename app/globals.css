@@ -1136,6 +1136,12 @@ span.linenumber {
     opacity: 1;
     pointer-events: auto;
   }
+  /* hover/focus 显示 chevron 时隐藏同槽位关系图标，避免两图标重叠。
+     sidebar-indicator-icon 只加在有 chevron 的行（项目/工作树/有子节点会话）。 */
+  .sidebar-row:hover .sidebar-indicator-icon,
+  .sidebar-row:focus-within .sidebar-indicator-icon {
+    opacity: 0;
+  }
 }
 
 @media (hover: none), (pointer: coarse) {
@@ -1143,6 +1149,15 @@ span.linenumber {
     opacity: 1;
     pointer-events: auto;
   }
+  /* 触摸设备 chevron 常显，同槽位图标恒隐藏（叶子行图标未加此类，不受影响）。 */
+  .sidebar-indicator-icon {
+    opacity: 0;
+  }
+}
+
+/* 行首重叠槽位：图标默认显示，hover/focus 由上方规则淡出让位给 chevron。 */
+.sidebar-indicator-icon {
+  transition: opacity 0.12s ease;
 }
 
 /* ── 扩展卡片文字按钮（OpenChamber 风格：Submit/Cancel） ── */
@@ -1479,6 +1494,28 @@ span.linenumber {
 .changes-panel-resize-handle.dragging {
   background: color-mix(in srgb, var(--accent) 35%, transparent);
 }
+.secondary-panel-inner {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+.secondary-panel-tabs {
+  min-width: 0;
+  min-height: 0;
+  flex: 0 0 auto;
+}
+.secondary-panel-body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
 .workspace-navigation-rail {
   display: flex;
   padding: 8px 0;
@@ -1782,10 +1819,12 @@ span.linenumber {
 }
 .file-source-editor {
   display: block;
+  flex: 1 1 auto;
   box-sizing: border-box;
   width: 100%;
   min-width: max-content;
-  min-height: 100%;
+  min-height: 0;
+  height: 100%;
   margin: 0;
   padding: 14px 18px;
   resize: none;

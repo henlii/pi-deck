@@ -22,21 +22,31 @@ export interface SessionDisplayNode {
  * - 本函数绝不修改 SessionInfo，更不会把 subagent.parentSessionId 写进
  *   parentSessionId 字段。
  *
+ * 子会话不展示（Pidance 针对 Pi 主体，不绑特定插件）：
+ * - 所有 session.subagent 标记的会话（pi-subagents 插件产物）在入口整体跳过，
+ *   不创建树节点；其嵌套 subagent 后代同样被跳过，一并隐藏；
+ * - subagent 下挂的普通 fork 子会话不丢失：沿 parentSessionId 链自动上溯
+ *   重挂到集合内最近祖先（fork 链解析天然覆盖）；
+ * - 磁盘会话文件、发现逻辑与父会话的 subagent 运行徽标不受影响（本函数
+ *   只影响树投影）。
+ *
  * 安全降级：父缺失、关系成环（含 fork/subagent 混合环）的节点一律降级为
  * 可访问根项——任何会话都不会从列表中丢失。
  *
- * 排序：同一父节点下 subagent 子会话按 runIndex 升序在前（一次调用产生的
- * 多个 run 次序可读），fork 子会话按 modified 降序在后；根层按 modified 降序。
+ * 排序：同一父节点下 fork 子会话按 modified 降序；根层按 modified 降序。
  */
 export function buildSessionDisplayTree(sessions: SessionInfo[]): SessionDisplayNode[] {
+  // 子会话不进入展示树（见上注释）：跳过全部 subagent 标记会话。
+  // fork 链上溯会自动把挂在 subagent 下的 fork 子会话重挂到最近集合内祖先。
+  const displaySessions = sessions.filter((session) => !session.subagent);
   const byId = new Map<string, SessionDisplayNode>();
-  for (const session of sessions) {
+  for (const session of displaySessions) {
     byId.set(session.id, { session, relation: null, children: [] });
   }
 
   // fork 链向上解析：带环保护地找集合内最近祖先（沿用原 buildSessionTree 语义）。
   const forkParentOf = new Map<string, string>();
-  for (const session of sessions) {
+  for (const session of displaySessions) {
     if (session.parentSessionId) forkParentOf.set(session.id, session.parentSessionId);
   }
   const resolveForkAncestor = (id: string): string | null => {
@@ -52,13 +62,9 @@ export function buildSessionDisplayTree(sessions: SessionInfo[]): SessionDisplay
     return chain.find((ancestor) => byId.has(ancestor)) ?? null;
   };
 
-  // 每个节点的「生效父节点 + 关系」。subagent 优先，且不链式上溯。
+  // 每个节点的「生效父节点 + 关系」。subagent 已过滤，此处只解析 fork。
   const effectiveParent = new Map<string, { parentId: string; relation: SessionRelationKind }>();
-  for (const session of sessions) {
-    if (session.subagent) {
-      effectiveParent.set(session.id, { parentId: session.subagent.parentSessionId, relation: "subagent" });
-      continue;
-    }
+  for (const session of displaySessions) {
     const ancestor = resolveForkAncestor(session.id);
     if (ancestor) effectiveParent.set(session.id, { parentId: ancestor, relation: "fork" });
   }

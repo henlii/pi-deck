@@ -57,7 +57,7 @@ test("非主 worktree 分组：cwd !== projectRoot 的会话归入分组并带�
   assert.equal(tree[0].worktrees[0].tree[0].session.id, "w1");
 });
 
-test("fork/subagent child 语义在项目树分组内原样保留", async () => {
+test("fork child 语义在项目树分组内保留；subagent 子会话不展示", async () => {
   const { buildSidebarTree } = await jiti.import("./session-sidebar-model.ts");
   const parent = session("p", { cwd: "/repo", projectRoot: "/repo", modified: "2026-07-09T00:00:00.000Z" });
   const fork = session("f", { cwd: "/repo", projectRoot: "/repo", parentSessionId: "p", modified: "2026-07-08T00:00:00.000Z" });
@@ -72,14 +72,15 @@ test("fork/subagent child 语义在项目树分组内原样保留", async () => 
   const tree = buildSidebarTree([parent, fork, sub, wtParent, wtChild]);
   const mainTree = tree[0].mainTree;
   assert.equal(mainTree.length, 1);
-  assert.deepEqual(mainTree[0].children.map((n) => [n.session.id, n.relation]), [["s", "subagent"], ["f", "fork"]]);
+  // subagent 子会话被过滤，仅 fork 子会话保留。
+  assert.deepEqual(mainTree[0].children.map((n) => [n.session.id, n.relation]), [["f", "fork"]]);
   assert.equal(tree[0].worktrees[0].tree[0].children[0].session.id, "wc");
   assert.equal(tree[0].worktrees[0].tree[0].children[0].relation, "fork");
   // 输入 SessionInfo 不被修改。
   assert.equal(sub.parentSessionId, undefined);
 });
 
-test("孤儿/循环降级在分组内保留：父缺失的 subagent 成为组内根项", async () => {
+test("subagent 会话不展示：worktree 组内不留孤儿根项", async () => {
   const { buildSidebarTree } = await jiti.import("./session-sidebar-model.ts");
   const orphan = session("o", {
     cwd: "/repo-worktrees/feat", projectRoot: "/repo", worktreeBranch: "feat",
@@ -87,11 +88,10 @@ test("孤儿/循环降级在分组内保留：父缺失的 subagent 成为组内
     readOnly: true,
   });
   const tree = buildSidebarTree([orphan]);
-  assert.equal(tree[0].worktrees[0].tree.length, 1);
-  assert.equal(tree[0].worktrees[0].tree[0].relation, null);
+  assert.equal(tree[0].worktrees[0].tree.length, 0);
 });
 
-test("搜索命中 child 时保留完整 project → worktree → session 祖先链", async () => {
+test("搜索命中 fork child 时保留完整 project → worktree → session 祖先链；subagent 不参与", async () => {
   const { buildSidebarTree, filterSidebarTree } = await jiti.import("./session-sidebar-model.ts");
   const parent = session("p", { cwd: "/repo", projectRoot: "/repo", name: "main work" });
   const fork = session("f", { cwd: "/repo", projectRoot: "/repo", parentSessionId: "p", firstMessage: "investigate flaky" });
@@ -109,7 +109,10 @@ test("搜索命中 child 时保留完整 project → worktree → session 祖先
   });
   const otherProject = session("x", { cwd: "/other", projectRoot: "/other", name: "unrelated" });
   const tree = buildSidebarTree([parent, fork, wtParent, wtChild, wtSub, otherProject]);
-  const filtered = filterSidebarTree(tree, "explore");
+  // subagent 的 agent 名不再可命中（节点不展示）。
+  assert.deepEqual(filterSidebarTree(tree, "explore"), []);
+  // 命中 fork child 的 firstMessage：保留 project 与命中 worktree 组的祖先链。
+  const filtered = filterSidebarTree(tree, "ordinary");
   assert.equal(filtered.length, 1);
   assert.equal(filtered[0].root, "/repo");
   // 主仓未命中被剪掉，但项目与命中 worktree 组保留。
@@ -118,8 +121,6 @@ test("搜索命中 child 时保留完整 project → worktree → session 祖先
   const wtTree = filtered[0].worktrees[0].tree;
   assert.equal(wtTree[0].session.id, "wp");
   assert.equal(wtTree[0].children[0].session.id, "wc");
-  assert.equal(wtTree[0].children[0].children[0].session.id, "ws");
-  assert.equal(wtTree[0].children[0].children[0].relation, "subagent");
 });
 
 test("搜索命中项目根路径保留整个项目；命中分支名保留整个分组", async () => {
@@ -271,7 +272,7 @@ test("搜索与折叠偏好隔离：过滤不触碰折叠集合，搜索期强�
   assert.deepEqual([...collapsedProjects], ["/repo"]);
 });
 
-test("collectSubagentParentIdsFromSidebarTree 覆盖主仓与 worktree 组内树", async () => {
+test("collectSubagentParentIdsFromSidebarTree：subagent 不展示后无默认收起目标", async () => {
   const {
     buildSidebarTree,
     collectSubagentParentIdsFromSidebarTree,
@@ -301,10 +302,10 @@ test("collectSubagentParentIdsFromSidebarTree 覆盖主仓与 worktree 组内树
   });
   const tree = buildSidebarTree(
     [mainParent, mainSub, wtParent, wtSub, forkOnly, forkChild],
-    [{ path: "/repo-worktrees/feat", branch: "feat" }],
+    { knownWorktrees: [{ path: "/repo-worktrees/feat", branch: "feat", isMain: false }] },
   );
-  const ids = collectSubagentParentIdsFromSidebarTree(tree).sort();
-  assert.deepEqual(ids, ["mp", "wp"]);
+  // subagent 子会话不展示 → 默认收起集合恒为空；fork-only 项目不受影响。
+  assert.deepEqual(collectSubagentParentIdsFromSidebarTree(tree).sort(), []);
 });
 
 test("全文模式：按 session id 集合保留祖先链，不按 name/alias 整树匹配", async () => {
