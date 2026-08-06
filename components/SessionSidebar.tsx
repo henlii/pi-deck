@@ -94,6 +94,10 @@ const RunningTimeContext = createContext<{ startedAt: ReadonlyMap<string, number
   now: 0,
 });
 
+// 与 OpenChamber 的固定 gutter 语义一致：每行先预留一个独立的折叠指示器槽位，
+// 再放项目/工作树/会话内容；叶子会话保留透明槽位，避免标题随层级能力跳动。
+const SIDEBAR_INDENT_INDICATOR_SLOT = 20;
+
 declare global {
   interface Window {
     piDesktop?: {
@@ -1526,7 +1530,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
           <div style={{ paddingBottom: 5, borderBottom: "1px solid var(--border)", marginBottom: 5 }}>
             <div style={{
               display: "flex", alignItems: "center", gap: 6, height: 32,
-              margin: "1px 6px", paddingLeft: 2, paddingRight: 8,
+              margin: "1px 6px", paddingLeft: 2 + SIDEBAR_INDENT_INDICATOR_SLOT, paddingRight: 8,
               color: "var(--text-dim)", fontSize: 10.5, fontWeight: 600,
               letterSpacing: "0.04em", textTransform: "uppercase",
             }}>
@@ -2063,7 +2067,7 @@ function ProjectSection({
           gap: 6,
           height: 32,
           margin: "1px 6px",
-          paddingLeft: 2,
+          paddingLeft: 2 + SIDEBAR_INDENT_INDICATOR_SLOT,
           paddingRight: 8,
           borderRadius: 6,
           cursor: "pointer",
@@ -2368,7 +2372,7 @@ function WorktreeGroupSection({
           gap: 6,
           height: 30,
           margin: "1px 6px",
-          paddingLeft: 18,
+          paddingLeft: 18 + SIDEBAR_INDENT_INDICATOR_SLOT,
           paddingRight: 8,
           borderRadius: 6,
           cursor: "pointer",
@@ -2714,7 +2718,7 @@ function SessionItem({
         alignItems: "center",
         width: "calc(100% - 12px)",
         margin: "1px 6px",
-        paddingLeft: depth > 0 ? depth * 16 + 10 : 10,
+        paddingLeft: depth * 16 + 10 + SIDEBAR_INDENT_INDICATOR_SLOT,
         paddingRight: 8,
         borderRadius: 6,
         cursor: confirmDelete || renaming ? "default" : "pointer",

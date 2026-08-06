@@ -29,7 +29,7 @@ Pidance is an open-source web client for the [Pi](https://github.com/badlogic/pi
 - **Safe exploration**: continue from an earlier message, create an in-session branch, or fork to an independent `.jsonl` session without conflating those semantics.
 - **Project workspace**: browse and preview source, Markdown, images, audio, PDFs, and DOCX; search files, use `@` mentions, and inspect Git status and diffs.
 - **Git worktree workflow**: select, create, and remove worktrees in the UI while new sessions and the file workspace follow the chosen checkout.
-- **Pi ecosystem integration**: inspect synchronous and asynchronous subagent runs, extension UI cards, todos, diagnostics, memory, workspace history, and observation/reflection data.
+- **Pi ecosystem integration**: inspect synchronous and asynchronous subagent run status, interact with generic extension UI cards, and view read-only projections of structured todos.
 - **Central configuration**: manage provider authentication, API keys, models and model tests, session defaults, skills, plugins, and project trust.
 - **Polished interface**: responsive desktop/mobile layouts, a command palette, session minimap, completion sound, English and Chinese, plus Light / Dark / System themes.
 - **Explicit security boundaries**: project file allowlists, path and symlink checks, Host and CSRF guards, and mandatory passwords for non-loopback listeners.
