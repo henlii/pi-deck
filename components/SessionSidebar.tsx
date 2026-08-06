@@ -61,7 +61,6 @@ import {
   formatRelativeTime,
   GroupPagination,
   HomeIcon,
-  LayersIcon,
   PathLabel,
   PiWebTitle,
   RefreshIcon,
@@ -2837,7 +2836,7 @@ function SessionItem({
           {hasChildren ? (
             <button
               type="button"
-              className="sidebar-chevron-btn sidebar-indent-indicator"
+              className="sidebar-chevron-btn sidebar-indent-indicator sidebar-chevron-always"
               onClick={(e) => { e.stopPropagation(); onToggleCollapse?.(); }}
               title={collapsed ? t("sidebar_expandChild") : t("sidebar_collapseChild")}
               data-tooltip={collapsed ? t("sidebar_expandChild") : t("sidebar_collapseChild")}
@@ -2862,19 +2861,6 @@ function SessionItem({
               aria-hidden="true"
               style={{ position: "absolute", left: sidebarIndicatorLeft(depth), top: "50%", width: SIDEBAR_INDICATOR_SLOT, height: 20, transform: "translateY(-50%)" }}
             />
-          )}
-          {/* 关系图标：fork 用分叉图标，subagent 用层叠图标，一眼可区分。
-              有子节点（hasChildren）时图标与 chevron 同槽位，hover 由 CSS
-              .sidebar-indicator-icon 隐藏让位；叶子行无 chevron，图标恒显示。 */}
-          {depth > 0 && relation === "subagent" && (
-            <span aria-hidden="true" className={hasChildren ? "sidebar-indicator-icon" : undefined} style={{ position: "absolute", left: sidebarIndicatorLeft(depth), top: "50%", display: "flex", width: SIDEBAR_INDICATOR_SLOT, height: 20, alignItems: "center", justifyContent: "center", transform: "translateY(-50%)", color: "var(--text-dim)" }}>
-              <LayersIcon size={10} />
-            </span>
-          )}
-          {depth > 0 && relation !== "subagent" && (
-            <span aria-hidden="true" className={hasChildren ? "sidebar-indicator-icon" : undefined} style={{ position: "absolute", left: sidebarIndicatorLeft(depth), top: "50%", display: "flex", width: SIDEBAR_INDICATOR_SLOT, height: 20, alignItems: "center", justifyContent: "center", transform: "translateY(-50%)", color: "var(--text-dim)" }}>
-              <BranchIcon size={10} />
-            </span>
           )}
           <div style={{ flex: 1, minWidth: 0 }}>
             <div

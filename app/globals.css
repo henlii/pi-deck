@@ -1157,6 +1157,13 @@ span.linenumber {
   }
 }
 
+/* 会话行（有子会话）折叠按钮常显：覆盖 hover 隐藏，与项目/worktree 行
+   的图标槽位对齐（同一 sidebarIndicatorLeft 规则）。 */
+.sidebar-chevron-always {
+  opacity: 1;
+  pointer-events: auto;
+}
+
 /* 行首重叠槽位：图标默认显示，hover/focus 由上方规则淡出让位给 chevron。 */
 .sidebar-indicator-icon {
   transition: opacity 0.12s ease;
