@@ -395,9 +395,10 @@ export const MoreVerticalIcon = ({ size = 14 }: { size?: number }) => (
 );
 
 /** 折叠 chevron：20×20 透明小按钮，旋转表示折叠态。 */
-export function ChevronButton({ collapsed, label, onClick }: {
+export function ChevronButton({ collapsed, label, left, onClick }: {
   collapsed: boolean;
   label: string;
+  left: number;
   onClick: (e: React.MouseEvent) => void;
 }) {
   return (
@@ -410,10 +411,11 @@ export function ChevronButton({ collapsed, label, onClick }: {
       className="sidebar-indent-indicator"
       style={{
         display: "flex", alignItems: "center", justifyContent: "center",
-        width: 20, height: 20, padding: 0, flexShrink: 0,
+        position: "absolute", left, top: "50%",
+        width: 16, height: 20, padding: 0, flexShrink: 0,
         background: "none", border: "none", borderRadius: 5,
         color: "var(--text-dim)", cursor: "pointer",
-        transform: collapsed ? "rotate(-90deg)" : "none",
+        transform: `translateY(-50%)${collapsed ? " rotate(-90deg)" : ""}`,
         transition: "transform 0.15s",
       }}
     >

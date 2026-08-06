@@ -94,9 +94,15 @@ const RunningTimeContext = createContext<{ startedAt: ReadonlyMap<string, number
   now: 0,
 });
 
-// 与 OpenChamber 的固定 gutter 语义一致：每行先预留一个独立的折叠指示器槽位，
-// 再放项目/工作树/会话内容；叶子会话保留透明槽位，避免标题随层级能力跳动。
-const SIDEBAR_INDENT_INDICATOR_SLOT = 20;
+// 统一侧栏树几何：指示器固定在 gutter，每深入一层只增加一个 14px 步进；
+// 行内容从 BASE_LEFT 开始。叶子行仍渲染透明指示器槽，避免内容横向跳动。
+const SIDEBAR_GUTTER = 6;
+const SIDEBAR_INDICATOR_SLOT = 16;
+const SIDEBAR_INDICATOR_GAP = 6;
+const SIDEBAR_DEPTH_STEP = 14;
+const SIDEBAR_BASE_LEFT = SIDEBAR_GUTTER + SIDEBAR_INDICATOR_SLOT + SIDEBAR_INDICATOR_GAP;
+const sidebarRowPaddingLeft = (depth: number) => SIDEBAR_BASE_LEFT + depth * SIDEBAR_DEPTH_STEP;
+const sidebarIndicatorLeft = (depth: number) => SIDEBAR_GUTTER + depth * SIDEBAR_DEPTH_STEP;
 
 declare global {
   interface Window {
@@ -1528,17 +1534,16 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
             选中态、运行/未读徽标与树内同会话共享同一数据源。 */}
         {!searchActive && recentSessions.length > 0 && (
           <div style={{ paddingBottom: 5, borderBottom: "1px solid var(--border)", marginBottom: 5 }}>
-            <div style={{
+            <div data-sidebar-depth={0} style={{
               display: "flex", alignItems: "center", gap: 6, height: 32,
-              margin: "1px 6px", paddingLeft: 2 + SIDEBAR_INDENT_INDICATOR_SLOT, paddingRight: 8,
+              margin: "1px 6px", paddingLeft: sidebarRowPaddingLeft(0), paddingRight: 8,
               color: "var(--text-dim)", fontSize: 10.5, fontWeight: 600,
               letterSpacing: "0.04em", textTransform: "uppercase",
             }}>
-              <span aria-hidden="true" style={{ width: 20, flexShrink: 0 }} />
               <span aria-hidden="true" style={{ display: "flex", flexShrink: 0 }}><HistoryIcon size={13} /></span>
               {t("sidebar_recentSessions")}
             </div>
-            <div style={{ paddingLeft: 24 }}>
+            <div>
               {recentSessions.map((s) => (
                 <SessionItem
                   key={s.id}
@@ -2048,6 +2053,7 @@ function ProjectSection({
       {/* 项目行仅控制折叠；cwd 由会话行或新建会话入口切换。 */}
       <div
         className="sidebar-row"
+        data-sidebar-depth={0}
         role="button"
         tabIndex={0}
         aria-expanded={!collapsed}
@@ -2067,7 +2073,8 @@ function ProjectSection({
           gap: 6,
           height: 32,
           margin: "1px 6px",
-          paddingLeft: 2 + SIDEBAR_INDENT_INDICATOR_SLOT,
+          position: "relative",
+          paddingLeft: sidebarRowPaddingLeft(0),
           paddingRight: 8,
           borderRadius: 6,
           cursor: "pointer",
@@ -2078,6 +2085,7 @@ function ProjectSection({
         <ChevronButton
           collapsed={collapsed}
           label={collapseLabel}
+          left={sidebarIndicatorLeft(0)}
           onClick={(e) => {
             e.stopPropagation();
             onToggleProject(project.root);
@@ -2139,7 +2147,7 @@ function ProjectSection({
       {!collapsed && (
         <div>
           {/* 主仓会话：主 worktree 隐式，直接列在项目下 */}
-          <div style={{ paddingLeft: 24 }}>
+          <div>
             {getVisibleTopLevelNodes(
               project.mainTree,
               getGroupVisibleCount(groupVisibleCounts, `main:${project.root}`),
@@ -2156,7 +2164,7 @@ function ProjectSection({
                 onRenamed={onRenamed}
                 onSessionDeleted={onSessionDeleted}
                 onSessionArchive={onSessionArchive}
-                depth={0}
+                depth={1}
                 collapsedSessionIds={collapsedSessionIds}
                 searchActive={searchActive}
                 onToggleCollapse={onToggleCollapse}
@@ -2353,6 +2361,7 @@ function WorktreeGroupSection({
       {/* 工作树行仅控制折叠；cwd 由会话行或新建会话入口切换。 */}
       <div
         className="sidebar-row"
+        data-sidebar-depth={1}
         role="button"
         tabIndex={0}
         aria-expanded={!collapsed}
@@ -2372,7 +2381,8 @@ function WorktreeGroupSection({
           gap: 6,
           height: 30,
           margin: "1px 6px",
-          paddingLeft: 18 + SIDEBAR_INDENT_INDICATOR_SLOT,
+          position: "relative",
+          paddingLeft: sidebarRowPaddingLeft(1),
           paddingRight: 8,
           borderRadius: 6,
           cursor: "pointer",
@@ -2383,6 +2393,7 @@ function WorktreeGroupSection({
         <ChevronButton
           collapsed={collapsed}
           label={collapseLabel}
+          left={sidebarIndicatorLeft(1)}
           onClick={(e) => {
             e.stopPropagation();
             onToggleWorktree(group.path);
@@ -2455,7 +2466,7 @@ function WorktreeGroupSection({
       )}
 
       {!collapsed && (
-        <div style={{ paddingLeft: 34 }}>
+        <div>
           {getVisibleTopLevelNodes(group.tree, visibleCount, searchActive).map((node) => (
             <SessionTreeItem
               key={node.session.id}
@@ -2468,7 +2479,7 @@ function WorktreeGroupSection({
               onRenamed={onRenamed}
               onSessionDeleted={onSessionDeleted}
               onSessionArchive={onSessionArchive}
-              depth={0}
+              depth={2}
               collapsedSessionIds={collapsedSessionIds}
               searchActive={searchActive}
               onToggleCollapse={onToggleCollapse}
@@ -2709,6 +2720,7 @@ function SessionItem({
   return (
     <div
       className="sidebar-row"
+      data-sidebar-depth={depth}
       onClick={confirmDelete || renaming ? undefined : onClick}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => { setHovered(false); }}
@@ -2718,7 +2730,8 @@ function SessionItem({
         alignItems: "center",
         width: "calc(100% - 12px)",
         margin: "1px 6px",
-        paddingLeft: depth * 16 + 10 + SIDEBAR_INDENT_INDICATOR_SLOT,
+        position: "relative",
+        paddingLeft: sidebarRowPaddingLeft(depth),
         paddingRight: 8,
         borderRadius: 6,
         cursor: confirmDelete || renaming ? "default" : "pointer",
@@ -2802,30 +2815,35 @@ function SessionItem({
               槽位常驻（无 child 留空）保证各行标题对齐。搜索期由
               isSessionNodeEffectivelyCollapsed 强制展开；原生 button 支持
               Enter/Space；粗指针命中区由 globals.css 媒体查询扩大。 */}
-          <span style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 20, height: 20, flexShrink: 0 }}>
-            {hasChildren && (
-              <button
-                type="button"
-                className="sidebar-chevron-btn sidebar-indent-indicator"
-                onClick={(e) => { e.stopPropagation(); onToggleCollapse?.(); }}
-                title={collapsed ? t("sidebar_expandChild") : t("sidebar_collapseChild")}
-                data-tooltip={collapsed ? t("sidebar_expandChild") : t("sidebar_collapseChild")}
-                aria-label={collapsed ? t("sidebar_expandChild") : t("sidebar_collapseChild")}
-                style={{
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                  width: 20, height: 20, padding: 0, flexShrink: 0, position: "relative",
-                  background: "none", border: "none", borderRadius: 5,
-                  color: "var(--text-dim)", cursor: "pointer",
-                  transform: collapsed ? "rotate(-90deg)" : "none",
-                  transition: "transform 0.15s",
-                }}
-              >
-                <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <polyline points="2 3.5 5 6.5 8 3.5" />
-                </svg>
-              </button>
-            )}
-          </span>
+          {hasChildren ? (
+            <button
+              type="button"
+              className="sidebar-chevron-btn sidebar-indent-indicator"
+              onClick={(e) => { e.stopPropagation(); onToggleCollapse?.(); }}
+              title={collapsed ? t("sidebar_expandChild") : t("sidebar_collapseChild")}
+              data-tooltip={collapsed ? t("sidebar_expandChild") : t("sidebar_collapseChild")}
+              aria-label={collapsed ? t("sidebar_expandChild") : t("sidebar_collapseChild")}
+              style={{
+                display: "flex", alignItems: "center", justifyContent: "center",
+                position: "absolute", left: sidebarIndicatorLeft(depth), top: "50%",
+                width: SIDEBAR_INDICATOR_SLOT, height: 20, padding: 0,
+                background: "none", border: "none", borderRadius: 5,
+                color: "var(--text-dim)", cursor: "pointer",
+                transform: `translateY(-50%)${collapsed ? " rotate(-90deg)" : ""}`,
+                transition: "transform 0.15s",
+              }}
+            >
+              <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <polyline points="2 3.5 5 6.5 8 3.5" />
+              </svg>
+            </button>
+          ) : (
+            <span
+              className="sidebar-indent-placeholder"
+              aria-hidden="true"
+              style={{ position: "absolute", left: sidebarIndicatorLeft(depth), top: "50%", width: SIDEBAR_INDICATOR_SLOT, height: 20, transform: "translateY(-50%)" }}
+            />
+          )}
           {/* 关系图标：fork 用分叉图标，subagent 用层叠图标，一眼可区分 */}
           {depth > 0 && relation === "subagent" && (
             <span style={{ display: "flex", flexShrink: 0, color: "var(--text-dim)" }} aria-hidden="true">
