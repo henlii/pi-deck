@@ -100,11 +100,10 @@ const SIDEBAR_INDICATOR_SLOT = 16;
 const SIDEBAR_INDICATOR_GAP = 6;
 const SIDEBAR_DEPTH_STEP = 14;
 // 文字起点 = gutter + 指示器槽位 + 间距（图标/chevron 与文字相邻，同 openchamber）。
-// 所有行（最近/项目/工作树/会话）图标与文字各自对齐到同一竖线：视觉上
-// 一竖排图标/空白 + 一竖排左对齐文字。depth 不再产生额外缩进。
+// 同深度行图标/文字各自对齐；子会话（depth>0）逐层缩进以区分层级。
 const SIDEBAR_BASE_LEFT = SIDEBAR_GUTTER + SIDEBAR_INDICATOR_SLOT + SIDEBAR_INDICATOR_GAP;
-const sidebarRowPaddingLeft = (depth: number) => SIDEBAR_BASE_LEFT;
-const sidebarIndicatorLeft = (depth: number) => SIDEBAR_GUTTER;
+const sidebarRowPaddingLeft = (depth: number) => SIDEBAR_BASE_LEFT + depth * SIDEBAR_DEPTH_STEP;
+const sidebarIndicatorLeft = (depth: number) => SIDEBAR_GUTTER + depth * SIDEBAR_DEPTH_STEP;
 
 declare global {
   interface Window {
@@ -2185,7 +2184,7 @@ function ProjectSection({
                 onRenamed={onRenamed}
                 onSessionDeleted={onSessionDeleted}
                 onSessionArchive={onSessionArchive}
-                depth={1}
+                depth={0}
                 collapsedSessionIds={collapsedSessionIds}
                 searchActive={searchActive}
                 onToggleCollapse={onToggleCollapse}
@@ -2382,7 +2381,7 @@ function WorktreeGroupSection({
       {/* 工作树行仅控制折叠；cwd 由会话行或新建会话入口切换。 */}
       <div
         className="sidebar-row"
-        data-sidebar-depth={1}
+        data-sidebar-depth={0}
         role="button"
         tabIndex={0}
         aria-expanded={!collapsed}
@@ -2403,7 +2402,7 @@ function WorktreeGroupSection({
           height: 30,
           margin: "1px 6px",
           position: "relative",
-          paddingLeft: sidebarRowPaddingLeft(1),
+          paddingLeft: sidebarRowPaddingLeft(0),
           paddingRight: 8,
           borderRadius: 6,
           cursor: "pointer",
@@ -2414,7 +2413,7 @@ function WorktreeGroupSection({
         <ChevronButton
           collapsed={collapsed}
           label={collapseLabel}
-          left={sidebarIndicatorLeft(1)}
+          left={sidebarIndicatorLeft(0)}
           onClick={(e) => {
             e.stopPropagation();
             onToggleWorktree(group.path);
@@ -2500,7 +2499,7 @@ function WorktreeGroupSection({
               onRenamed={onRenamed}
               onSessionDeleted={onSessionDeleted}
               onSessionArchive={onSessionArchive}
-              depth={2}
+              depth={0}
               collapsedSessionIds={collapsedSessionIds}
               searchActive={searchActive}
               onToggleCollapse={onToggleCollapse}
@@ -2865,6 +2864,12 @@ function SessionItem({
               style={{ position: "absolute", left: sidebarIndicatorLeft(depth), top: "50%", width: SIDEBAR_INDICATOR_SLOT, height: 20, transform: "translateY(-50%)" }}
             />
           )}
+          {/* 运行中：圆环套在图标列（比折叠/项目图标略大，底部对齐，视觉上套住图标）。 */}
+          {isRunning && (
+            <span aria-hidden="true" style={{ position: "absolute", left: sidebarIndicatorLeft(depth), top: "50%", display: "flex", width: SIDEBAR_INDICATOR_SLOT, height: 20, alignItems: "flex-end", justifyContent: "center", transform: "translateY(-50%)", pointerEvents: "none" }}>
+              <RunningSessionIndicator size={14} />
+            </span>
+          )}
           <div style={{ flex: 1, minWidth: 0 }}>
             <div
               style={{
@@ -2879,8 +2884,7 @@ function SessionItem({
               }}
               title={title}
             >
-              {/* 状态指示置前：运行中 / 未读显示在标题之前（OpenChamber 风格） */}
-              {isRunning && <RunningSessionIndicator size={10} />}
+              {/* 状态指示置前：未读显示在标题之前（OpenChamber 风格）；运行中已上移到图标列。 */}
               {!isRunning && isUnread && <UnreadSessionIndicator size={10} />}
               {/* Compact：运行时长内联在圆点后（行右侧信息区）；折叠父组只留圆点 */}
               {showRunningDuration && compact && (

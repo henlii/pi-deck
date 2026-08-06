@@ -587,7 +587,8 @@ export function RunningSessionIndicator({ size = 14 }: { size?: number }) {
         color: "var(--status-running)",
       }}
     >
-      <span aria-hidden="true" style={{ display: "block", width: 6, height: 6, borderRadius: "50%", background: "currentColor" }} />
+      {/* 空心圆环：套在图标列之上（比折叠/项目图标略大、置于行底部）。 */}
+      <span aria-hidden="true" style={{ display: "block", width: size - 4, height: size - 4, borderRadius: "50%", border: "2px solid currentColor", background: "transparent", boxSizing: "border-box" }} />
     </span>
   );
 }
