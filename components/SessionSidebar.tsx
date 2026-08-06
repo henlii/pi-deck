@@ -977,6 +977,22 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     () => buildSidebarTree(allSessions, { selectedCwd, selectedProjectRoot: selectedProject, knownWorktreesByProject }),
     [allSessions, selectedCwd, selectedProject, knownWorktreesByProject],
   );
+  // 有子会话（fork 分支）的会话 id 集合：最近区行据此显示折叠按钮，
+  // 折叠状态与项目树共享同一 collapsedSessionIds / toggleSessionCollapse。
+  const sessionIdsWithChildren = useMemo(() => {
+    const ids = new Set<string>();
+    const walk = (nodes: SessionDisplayNode[]) => {
+      for (const node of nodes) {
+        if (node.children.length > 0) ids.add(node.session.id);
+        if (node.children.length > 0) walk(node.children);
+      }
+    };
+    for (const project of sidebarTree) {
+      walk(project.mainTree);
+      for (const group of project.worktrees) walk(group.tree);
+    }
+    return ids;
+  }, [sidebarTree]);
   // 已关闭项目先从树中隐藏（纯 UI 过滤，不删数据），再进入搜索管线。
   const openTree = useMemo(
     () => filterClosedProjects(sidebarTree, closedRoots),
@@ -1563,21 +1579,27 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
               {t("sidebar_recentSessions")}
             </div>
             {showRecentSessions && <div>
-              {recentSessions.map((s) => (
-                <SessionItem
-                  key={s.id}
-                  session={s}
-                  isSelected={s.id === selectedSessionId}
-                  isRunning={runningSessionIds.has(s.id) || subagentRunningIds.has(s.id)}
-                  isUnread={unreadSessionIds.has(s.id)}
-                  onClick={() => handleSelectSessionFromList(s)}
-                  onRenamed={loadSessions}
-                  onDeleted={handleSessionDeletedLocal}
-                  onArchive={handleArchiveSession}
-                  depth={0}
-                  displayMode={displayMode}
-                />
-              ))}
+              {recentSessions.map((s) => {
+                const hasChildren = sessionIdsWithChildren.has(s.id);
+                return (
+                  <SessionItem
+                    key={s.id}
+                    session={s}
+                    isSelected={s.id === selectedSessionId}
+                    isRunning={runningSessionIds.has(s.id) || subagentRunningIds.has(s.id)}
+                    isUnread={unreadSessionIds.has(s.id)}
+                    onClick={() => handleSelectSessionFromList(s)}
+                    onRenamed={loadSessions}
+                    onDeleted={handleSessionDeletedLocal}
+                    onArchive={handleArchiveSession}
+                    depth={0}
+                    hasChildren={hasChildren}
+                    collapsed={isSessionNodeEffectivelyCollapsed(collapsedSessionIds, s.id, searchActive)}
+                    onToggleCollapse={() => toggleSessionCollapse(s.id)}
+                    displayMode={displayMode}
+                  />
+                );
+              })}
             </div>}
           </div>
         )}
@@ -2114,6 +2136,11 @@ function ProjectSection({
         <span aria-hidden="true" className="sidebar-indicator-icon" style={{ position: "absolute", left: sidebarIndicatorLeft(0), top: "50%", display: "flex", width: SIDEBAR_INDICATOR_SLOT, height: 20, alignItems: "center", justifyContent: "center", transform: "translateY(-50%)", color: "var(--text-dim)" }}>
           <FolderIcon size={13} />
         </span>
+        {projectHasRunning && (
+          <span aria-hidden="true" style={{ position: "absolute", left: sidebarIndicatorLeft(0), top: "50%", display: "flex", width: SIDEBAR_INDICATOR_SLOT, height: 20, alignItems: "center", justifyContent: "center", transform: "translateY(-50%)", pointerEvents: "none" }}>
+            <RunningSessionIndicator size={14} />
+          </span>
+        )}
         <PathLabel
           text={projectName}
           style={{
@@ -2123,7 +2150,6 @@ function ProjectSection({
             fontFamily: "var(--font-mono)",
           }}
         />
-        {projectHasRunning && <RunningSessionIndicator size={10} />}
         {trustEntry && (
           <ProjectTrustBadge
             status={trustEntry.status}
@@ -2419,9 +2445,14 @@ function WorktreeGroupSection({
             onToggleWorktree(group.path);
           }}
         />
-        <span aria-hidden="true" className="sidebar-indicator-icon" style={{ position: "absolute", left: sidebarIndicatorLeft(1), top: "50%", display: "flex", width: SIDEBAR_INDICATOR_SLOT, height: 20, alignItems: "center", justifyContent: "center", transform: "translateY(-50%)", color: "var(--text-dim)" }}>
+        <span aria-hidden="true" className="sidebar-indicator-icon" style={{ position: "absolute", left: sidebarIndicatorLeft(0), top: "50%", display: "flex", width: SIDEBAR_INDICATOR_SLOT, height: 20, alignItems: "center", justifyContent: "center", transform: "translateY(-50%)", color: "var(--text-dim)" }}>
           <BranchIcon size={11} />
         </span>
+        {groupHasRunning && (
+          <span aria-hidden="true" style={{ position: "absolute", left: sidebarIndicatorLeft(0), top: "50%", display: "flex", width: SIDEBAR_INDICATOR_SLOT, height: 20, alignItems: "center", justifyContent: "center", transform: "translateY(-50%)", pointerEvents: "none" }}>
+            <RunningSessionIndicator size={14} />
+          </span>
+        )}
         <PathLabel
           text={label}
           style={{
@@ -2864,9 +2895,9 @@ function SessionItem({
               style={{ position: "absolute", left: sidebarIndicatorLeft(depth), top: "50%", width: SIDEBAR_INDICATOR_SLOT, height: 20, transform: "translateY(-50%)" }}
             />
           )}
-          {/* 运行中：圆环套在图标列（比折叠/项目图标略大，底部对齐，视觉上套住图标）。 */}
+          {/* 运行中：圆环套在图标列（与折叠/项目图标同槽位，居中，旋转动画）。 */}
           {isRunning && (
-            <span aria-hidden="true" style={{ position: "absolute", left: sidebarIndicatorLeft(depth), top: "50%", display: "flex", width: SIDEBAR_INDICATOR_SLOT, height: 20, alignItems: "flex-end", justifyContent: "center", transform: "translateY(-50%)", pointerEvents: "none" }}>
+            <span aria-hidden="true" style={{ position: "absolute", left: sidebarIndicatorLeft(depth), top: "50%", display: "flex", width: SIDEBAR_INDICATOR_SLOT, height: 20, alignItems: "center", justifyContent: "center", transform: "translateY(-50%)", pointerEvents: "none" }}>
               <RunningSessionIndicator size={14} />
             </span>
           )}
