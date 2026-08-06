@@ -14,6 +14,7 @@ interface Props {
   loading: boolean;
   error: string | null;
   onOpenFile: (filePath: string, fileName: string) => void;
+  selectedFilePath?: string | null;
 }
 
 /** 展示排序：冲突优先，其次修改/新增/删除/重命名，未跟踪垫底。 */
@@ -30,7 +31,7 @@ const STATUS_RANK: Record<GitFileStatusKind, number> = {
  * 只读 Git 工作区变更面板：复用 /api/git/status 数据（由 RightPanel 抓取），
  * 点击文件行打开现有文件预览（FileViewer 自带 Diff 模式），不提供 stage/commit。
  */
-export function GitPanel({ cwd, status, loading, error, onOpenFile }: Props) {
+export function GitPanel({ cwd, status, loading, error, onOpenFile, selectedFilePath }: Props) {
   const { t } = useI18n();
   const sortedFiles = useMemo(() => {
     if (!status) return [];
@@ -70,16 +71,17 @@ export function GitPanel({ cwd, status, loading, error, onOpenFile }: Props) {
         {t(sortedFiles.length === 1 ? "git_changesCount_one" : "git_changesCount", { count: sortedFiles.length })} · {status.repositoryRoot ?? cwd}
       </div>
       {sortedFiles.map((file) => (
-        <GitFileRow key={file.filePath} file={file} cwd={cwd} onOpenFile={onOpenFile} />
+        <GitFileRow key={file.filePath} file={file} cwd={cwd} onOpenFile={onOpenFile} selected={file.filePath === selectedFilePath} />
       ))}
     </div>
   );
 }
 
-function GitFileRow({ file, cwd, onOpenFile }: {
+function GitFileRow({ file, cwd, onOpenFile, selected }: {
   file: GitFileStatus;
   cwd: string;
   onOpenFile: (filePath: string, fileName: string) => void;
+  selected: boolean;
 }) {
   const { t } = useI18n();
   const name = getFileName(file.filePath) || file.filePath;
@@ -88,10 +90,11 @@ function GitFileRow({ file, cwd, onOpenFile }: {
   return (
     <button
       type="button"
-      className="git-file-row"
+      className={`git-file-row${selected ? " is-selected" : ""}`}
       onClick={() => onOpenFile(file.filePath, name)}
       title={`${file.filePath} — ${statusLabel}`}
       aria-label={t("git_openFile" as TranslationKey, { path: relative, status: statusLabel })}
+      aria-pressed={selected}
     >
       <span
         aria-hidden="true"

@@ -203,7 +203,7 @@ function diffLines(patch: string): DiffLine[] {
   }));
 }
 
-function DiffView({ patch }: { patch: string }) {
+export function GitDiffView({ patch }: { patch: string }) {
   const { t } = useI18n();
   const diff = diffLines(patch);
 
@@ -1065,7 +1065,7 @@ function TextFileViewer({ filePath, cwd, sourceSessionId, writable = false, buff
       {/* Content area */}
       <div className="file-viewer-content" style={{ flex: 1, overflow: "auto", background: "var(--bg)" }}>
         {displayMode === "diff" && hasGitDiff ? (
-          <><div className="file-viewer-context-label">{t("viewer_gitDiffSavedWorktree")}</div><DiffView patch={gitDiff.patch!} /></>
+          <><div className="file-viewer-context-label">{t("viewer_gitDiffSavedWorktree")}</div><GitDiffView patch={gitDiff.patch!} /></>
         ) : isHtml && displayMode === "preview" ? (
           <iframe
             srcDoc={visibleContent}

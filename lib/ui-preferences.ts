@@ -21,6 +21,11 @@ export const RIGHT_PANEL_WIDTH_MIN = 320;
 export const RIGHT_PANEL_WIDTH_MAX = 720;
 export const RIGHT_PANEL_WIDTH_DEFAULT = 400;
 
+/** Git 变更侧栏可调宽边界。 */
+export const CHANGES_PANEL_WIDTH_MIN = 240;
+export const CHANGES_PANEL_WIDTH_MAX = 640;
+export const CHANGES_PANEL_WIDTH_DEFAULT = 360;
+
 /**
  * 将任意输入钳到侧栏宽度合法范围；非有限数回退默认。
  * 解析与写入共用，保证持久化值始终可渲染。
@@ -39,9 +44,20 @@ export function clampRightPanelWidth(value: unknown): number {
   return Math.min(RIGHT_PANEL_WIDTH_MAX, Math.max(RIGHT_PANEL_WIDTH_MIN, Math.round(value)));
 }
 
+/** 将任意输入钳到 Git 变更侧栏宽度合法范围；非有限数回退默认。 */
+export function clampChangesPanelWidth(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return CHANGES_PANEL_WIDTH_DEFAULT;
+  return Math.min(CHANGES_PANEL_WIDTH_MAX, Math.max(CHANGES_PANEL_WIDTH_MIN, Math.round(value)));
+}
+
 /** 容错解析右栏开/关：仅接受显式 boolean true，其余（含旧数据缺字段）一律关闭。 */
 export function parseRightPanelOpen(value: unknown): boolean {
   return value === true;
+}
+
+/** Git 变更侧栏旧数据缺字段时默认打开；仅显式 false 关闭。 */
+export function parseChangesPanelOpen(value: unknown): boolean {
+  return value !== false;
 }
 
 /**
@@ -68,6 +84,10 @@ export interface SidebarPreferences {
   rightPanelOpen: boolean;
   /** 右侧内容面板宽度（px，不含图标栏）；损坏/越界值解析时 clamp。 */
   rightPanelWidth: number;
+  /** Git 变更侧栏开/关；与右侧内容面板互不影响。 */
+  changesPanelOpen: boolean;
+  /** Git 变更侧栏宽度（px）。 */
+  changesPanelWidth: number;
   /** 「最近会话」区开/关（项目列表上方的快捷入口）；默认开启。 */
   showRecentSessions: boolean;
 }
@@ -81,6 +101,8 @@ export const DEFAULT_SIDEBAR_PREFERENCES: SidebarPreferences = {
   sidebarWidth: SIDEBAR_WIDTH_DEFAULT,
   rightPanelOpen: false,
   rightPanelWidth: RIGHT_PANEL_WIDTH_DEFAULT,
+  changesPanelOpen: true,
+  changesPanelWidth: CHANGES_PANEL_WIDTH_DEFAULT,
   showRecentSessions: true,
 };
 
@@ -144,6 +166,8 @@ export function parseSidebarPreferences(raw: unknown): SidebarPreferences {
     // 旧数据无右栏字段：右栏默认关闭、宽度默认。
     rightPanelOpen: parseRightPanelOpen(record.rightPanelOpen),
     rightPanelWidth: clampRightPanelWidth(record.rightPanelWidth),
+    changesPanelOpen: parseChangesPanelOpen(record.changesPanelOpen),
+    changesPanelWidth: clampChangesPanelWidth(record.changesPanelWidth),
     // 旧数据无最近会话字段：默认开启（仅显式 false 关闭）。
     showRecentSessions: parseShowRecentSessions(record.showRecentSessions),
   };
@@ -159,6 +183,8 @@ export function serializeSidebarPreferences(prefs: SidebarPreferences): string {
     sidebarWidth: clampSidebarWidth(prefs.sidebarWidth),
     rightPanelOpen: parseRightPanelOpen(prefs.rightPanelOpen),
     rightPanelWidth: clampRightPanelWidth(prefs.rightPanelWidth),
+    changesPanelOpen: parseChangesPanelOpen(prefs.changesPanelOpen),
+    changesPanelWidth: clampChangesPanelWidth(prefs.changesPanelWidth),
     showRecentSessions: parseShowRecentSessions(prefs.showRecentSessions),
   });
 }
@@ -241,4 +267,27 @@ export function saveRightPanelPreferencesToStorage(
 export function saveRightPanelPreferences(patch: { open?: boolean; width?: number }): void {
   if (typeof window === "undefined") return;
   saveRightPanelPreferencesToStorage(window.localStorage, patch);
+}
+
+/** 只更新 Git 变更侧栏开/关与宽度，其余偏好保持不变。 */
+export function saveChangesPanelPreferencesToStorage(
+  storage: StorageLike,
+  patch: { open?: boolean; width?: number },
+): void {
+  try {
+    const current = loadSidebarPreferencesFromStorage(storage);
+    storage.setItem(STORAGE_KEY, serializeSidebarPreferences({
+      ...current,
+      changesPanelOpen: patch.open === undefined ? current.changesPanelOpen : parseChangesPanelOpen(patch.open),
+      changesPanelWidth: patch.width === undefined ? current.changesPanelWidth : clampChangesPanelWidth(patch.width),
+    }));
+  } catch {
+    // 忽略存储配额 / 隐私模式错误
+  }
+}
+
+/** SSR / 无 localStorage 环境安全 no-op。 */
+export function saveChangesPanelPreferences(patch: { open?: boolean; width?: number }): void {
+  if (typeof window === "undefined") return;
+  saveChangesPanelPreferencesToStorage(window.localStorage, patch);
 }

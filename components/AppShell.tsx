@@ -8,6 +8,7 @@ import { ChatWindow } from "./ChatWindow";
 import { FileViewer } from "./FileViewer";
 import type { Tab } from "./TabBar";
 import { RightPanel } from "./RightPanel";
+import { ChangesPanel } from "./ChangesPanel";
 import { SessionInfoPanel } from "./SessionInfoPanel";
 import { SettingsView } from "./SettingsView";
 import { CommandPalette } from "./CommandPalette";
@@ -33,13 +34,18 @@ import type { ChatInputHandle } from "./ChatInput";
 import type { SessionStatsInfo } from "@/lib/pi-types";
 import { ProjectProvider, useProjectActions, useProjectIdentity } from "./ProjectProvider";
 import {
+  CHANGES_PANEL_WIDTH_DEFAULT,
+  CHANGES_PANEL_WIDTH_MAX,
+  CHANGES_PANEL_WIDTH_MIN,
   RIGHT_PANEL_WIDTH_DEFAULT,
   SIDEBAR_WIDTH_DEFAULT,
   SIDEBAR_WIDTH_MAX,
   SIDEBAR_WIDTH_MIN,
+  clampChangesPanelWidth,
   clampRightPanelWidth,
   clampSidebarWidth,
   loadSidebarPreferences,
+  saveChangesPanelPreferences,
   saveRightPanelPreferences,
   saveSidebarWidth,
 } from "@/lib/ui-preferences";
@@ -121,6 +127,10 @@ function AppShellInner() {
   // ── 右侧工具区：图标栏桌面常驻；此状态控制内容面板/移动端整组抽屉 ──
   const [rightPanelOpen, setRightPanelOpen] = useState(false);
   const [rightPanelWidth, setRightPanelWidth] = useState(RIGHT_PANEL_WIDTH_DEFAULT);
+  const [changesPanelOpen, setChangesPanelOpen] = useState(true);
+  const [changesPanelWidth, setChangesPanelWidth] = useState(CHANGES_PANEL_WIDTH_DEFAULT);
+  const [changesPanelDragging, setChangesPanelDragging] = useState(false);
+  const changesPanelDragRef = useRef<{ startX: number; startWidth: number } | null>(null);
   const [mobileWorkspaceReady, setMobileWorkspaceReady] = useState(false);
   // ── 桌面会话栏调宽：AppShell 是宽度唯一 owner（布局 owner），从偏好恢复并即时落盘 ──
   // 首次客户端渲染必须与 SSR 一致；挂载后再恢复浏览器持久化宽度。
@@ -183,6 +193,8 @@ function AppShellInner() {
     setSidebarWidth(prefs.sidebarWidth);
     setRightPanelOpen(prefs.rightPanelOpen);
     setRightPanelWidth(prefs.rightPanelWidth);
+    setChangesPanelOpen(prefs.changesPanelOpen);
+    setChangesPanelWidth(prefs.changesPanelWidth);
   }, []);
 
   // 右栏内容宽度/桌面开关的唯一写入口：AppShell 是布局 owner，变更即时落盘。
@@ -196,6 +208,54 @@ function AppShellInner() {
     setRightPanelOpen(open);
     saveRightPanelPreferences({ open });
   }, []);
+
+  const applyChangesPanelWidth = useCallback((width: number) => {
+    const clamped = clampChangesPanelWidth(width);
+    setChangesPanelWidth(clamped);
+    saveChangesPanelPreferences({ width: clamped });
+  }, []);
+
+  const applyChangesPanelOpen = useCallback((open: boolean) => {
+    setChangesPanelOpen(open);
+    saveChangesPanelPreferences({ open });
+  }, []);
+
+  const handleChangesPanelResizeStart = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    changesPanelDragRef.current = { startX: event.clientX, startWidth: changesPanelWidth };
+    setChangesPanelDragging(true);
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }, [changesPanelWidth]);
+
+  const handleChangesPanelResizeMove = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    const drag = changesPanelDragRef.current;
+    if (!drag) return;
+    applyChangesPanelWidth(drag.startWidth + drag.startX - event.clientX);
+  }, [applyChangesPanelWidth]);
+
+  const handleChangesPanelResizeEnd = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (!changesPanelDragRef.current) return;
+    changesPanelDragRef.current = null;
+    setChangesPanelDragging(false);
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+  }, []);
+
+  const handleChangesPanelResizeKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
+    const step = event.shiftKey ? 32 : 8;
+    if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      applyChangesPanelWidth(changesPanelWidth + step);
+    } else if (event.key === "ArrowRight") {
+      event.preventDefault();
+      applyChangesPanelWidth(changesPanelWidth - step);
+    } else if (event.key === "Home") {
+      event.preventDefault();
+      applyChangesPanelWidth(CHANGES_PANEL_WIDTH_MIN);
+    } else if (event.key === "End") {
+      event.preventDefault();
+      applyChangesPanelWidth(CHANGES_PANEL_WIDTH_MAX);
+    }
+  }, [applyChangesPanelWidth, changesPanelWidth]);
 
   // On mobile the sidebar is an overlay drawer; hide it by default so the chat
   // is visible on load. Runs once the breakpoint resolves after hydration.
@@ -1099,6 +1159,28 @@ function AppShellInner() {
               </button>
             );
           })()}
+          {!isMobile && <button
+            type="button"
+            onClick={() => applyChangesPanelOpen(!changesPanelOpen)}
+            title={changesPanelOpen ? t("changes_hide") : t("changes_show")}
+            data-tooltip={changesPanelOpen ? t("changes_hide") : t("changes_show")}
+            className="instant-tooltip"
+            aria-label={changesPanelOpen ? t("changes_hide") : t("changes_show")}
+            aria-pressed={changesPanelOpen}
+            style={{
+              marginLeft: showChat && (sessionStats || contextUsage) ? 0 : "auto",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              width: 36, height: 36, padding: 0,
+              background: changesPanelOpen ? "var(--bg-selected)" : "none",
+              border: "none", borderLeft: "1px solid var(--border)",
+              color: changesPanelOpen ? "var(--text)" : "var(--text-muted)",
+              cursor: "pointer", flexShrink: 0,
+            }}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M4 4h16v16H4z" /><path d="M8 9h8M8 13h5M8 17h7" />
+            </svg>
+          </button>}
           {/* 右栏（文件/diff/会话信息面板）开关；stats 按钮缺省时自身右对齐 */}
           {isMobile && <button
             type="button"
@@ -1181,6 +1263,35 @@ function AppShellInner() {
           </div>
         </div>
       </div>
+
+      {changesPanelOpen && !isMobile && (
+        <aside className="changes-panel" style={{ width: changesPanelWidth }} aria-label={t("changes_title")}>
+          <div
+            className={`changes-panel-resize-handle${changesPanelDragging ? " dragging" : ""}`}
+            role="separator"
+            aria-orientation="vertical"
+            tabIndex={0}
+            title={t("changes_resizeHandle")}
+            aria-label={t("changes_resizeHandle")}
+            aria-valuenow={changesPanelWidth}
+            aria-valuemin={CHANGES_PANEL_WIDTH_MIN}
+            aria-valuemax={CHANGES_PANEL_WIDTH_MAX}
+            onPointerDown={handleChangesPanelResizeStart}
+            onPointerMove={handleChangesPanelResizeMove}
+            onPointerUp={handleChangesPanelResizeEnd}
+            onPointerCancel={handleChangesPanelResizeEnd}
+            onKeyDown={handleChangesPanelResizeKeyDown}
+            onDoubleClick={() => applyChangesPanelWidth(CHANGES_PANEL_WIDTH_DEFAULT)}
+          />
+          <div className="workspace-header">
+            <strong style={{ flex: 1, minWidth: 0, fontSize: 11.5, fontWeight: 650 }}>{t("changes_title")}</strong>
+            <button type="button" className="sidebar-icon-btn" onClick={() => applyChangesPanelOpen(false)} title={t("changes_hide")} aria-label={t("changes_hide")}>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
+          </div>
+          {activeCwd ? <ChangesPanel cwd={activeCwd} gitRefreshKey={explorerRefreshKey} gitAffectedPaths={gitAffectedPaths} /> : <div className="changes-panel-hint">{t("workspace_selectProject")}</div>}
+        </aside>
+      )}
 
       {/* 移动端遮罩：点击关闭右栏 */}
       <div
