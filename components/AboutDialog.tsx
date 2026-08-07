@@ -97,7 +97,7 @@ export function AboutDialog({ open, onClose }: AboutDialogProps) {
       >
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
-          src="/icon.png"
+          src="/brand/pidance-logo.png"
           alt=""
           width={64}
           height={64}
@@ -105,7 +105,7 @@ export function AboutDialog({ open, onClose }: AboutDialogProps) {
             width: 64,
             height: 64,
             borderRadius: 14,
-            objectFit: "cover",
+            objectFit: "contain",
             flexShrink: 0,
           }}
         />
