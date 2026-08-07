@@ -594,6 +594,8 @@ export const en = {
   defaults_streamingEnterQueue: "Queue (send after finish)",
   defaults_streamingEnterSteer: "Steer (inject immediately)",
   defaults_streamingEnterHint: "Desktop: Enter runs the default action; Ctrl/Cmd+Enter runs the opposite. The Send button always queues. Mobile: Enter inserts a newline; tap Send to submit.",
+  defaults_completionSound: "Completion sound",
+  defaults_completionSoundHint: "Play a tone when the agent finishes a turn.",
   input_sendQueueTooltip: "Queue this message after the current run finishes",
   defaults_compactionSection: "Compaction",
   defaults_compactionEnabled: "Enable auto-compaction",

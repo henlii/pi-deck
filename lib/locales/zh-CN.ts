@@ -593,6 +593,8 @@ export const zhCN: Record<TranslationKey, string> = {
   defaults_streamingEnterQueue: "队列（完成后发送）",
   defaults_streamingEnterSteer: "引导（立即中断注入）",
   defaults_streamingEnterHint: "桌面：Enter 执行默认动作，Ctrl/Cmd+Enter 执行相反动作。发送按钮始终排队。手机：回车换行，点发送按钮提交。",
+  defaults_completionSound: "完成提示音",
+  defaults_completionSoundHint: "Agent 完成一轮回复时播放提示音。",
   input_sendQueueTooltip: "排队到当前运行结束后发送",
   defaults_compactionSection: "压缩",
   defaults_compactionEnabled: "启用自动压缩",

@@ -259,12 +259,12 @@ function QueuedMessageRow({ kind, text }: { kind: "steer" | "follow-up"; text: s
 
 export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   onSend, onAbort, onSteer, onFollowUp, isStreaming, model, isAutoModelSelection, modelNames, modelList, modelAuthConfigured, onModelChange,
-  onCompact, onAbortCompaction, isCompacting, compactError, compactResult,
+  onAbortCompaction, isCompacting, compactError, compactResult,
   thinkingLevel, onThinkingLevelChange, availableThinkingLevels, thinkingLevelMap,
   retryInfo, queuedMessages, onRecallQueue,
   slashCommands, slashCommandsLoading, onLoadSlashCommands,
   onBuiltinCommand,
-  soundEnabled, onSoundToggle, onAudioUnlock,
+  onAudioUnlock,
   onPromptWithStreamingBehavior,
   draftKey,
   cwd,
@@ -292,7 +292,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const [modelDropdownOpen, setModelDropdownOpen] = useState(false);
   const [toolDropdownOpen, setToolDropdownOpen] = useState(false);
   const [thinkingDropdownOpen, setThinkingDropdownOpen] = useState(false);
-  const [controlsMenuOpen, setControlsMenuOpen] = useState(false);
+
   const [attachedImages, setAttachedImages] = useState<AttachedImage[]>(() => (
     draftKey ? getDraft(draftKey)?.images.map(draftImageToAttachedImage) ?? [] : []
   ));
@@ -316,14 +316,11 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const toolDropdownPanelRef = useRef<HTMLDivElement>(null);
   const thinkingDropdownRef = useRef<HTMLDivElement>(null);
   const thinkingDropdownPanelRef = useRef<HTMLDivElement>(null);
-  const controlsMenuRef = useRef<HTMLDivElement>(null);
-  const moreButtonRef = useRef<HTMLButtonElement>(null);
-  const controlsBarRef = useRef<HTMLDivElement>(null);
+
   const inputContainerRef = useRef<HTMLDivElement>(null);
   const slashOverlayRef = useRef<HTMLDivElement>(null);
   const atOverlayRef = useRef<HTMLDivElement>(null);
-  const compactAnchorRef = useRef<HTMLDivElement>(null);
-  const compactBubbleRef = useRef<HTMLDivElement>(null);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const isComposingRef = useRef(false);
   const lastCompositionEndAtRef = useRef(0);
@@ -1062,7 +1059,6 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const atListboxId = useId();
   const modelMenuId = useId();
   const thinkingMenuId = useId();
-  const controlsBarId = useId();
   const slashOverlay = useAnchoredOverlay({
     open: slashMenuOpen && slashQuery !== null,
     anchorRef: inputContainerRef,
@@ -1103,25 +1099,6 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     align: "end",
     minWidth: 180,
   });
-  const compactOverlay = useAnchoredOverlay({
-    open: Boolean(compactError),
-    anchorRef: compactAnchorRef,
-    overlayRef: compactBubbleRef,
-    preferredPlacement: "above",
-    gap: 6,
-    margin: 8,
-    align: "end",
-  });
-  const moreOverlay = useAnchoredOverlay({
-    open: isMobile && controlsMenuOpen,
-    anchorRef: moreButtonRef,
-    overlayRef: controlsBarRef,
-    preferredPlacement: "above",
-    gap: 2,
-    margin: 8,
-    align: "end",
-  });
-
   const slashMenuVisible = slashMenuOpen && slashQuery !== null;
   const atMenuVisible = atMenuOpen && atQuery !== null;
   const inputActiveDescendant = slashMenuVisible && filteredSlashCommands.length > 0
@@ -1131,21 +1108,9 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
       : undefined;
   const inputControlsId = slashMenuVisible ? slashListboxId : atMenuVisible ? atListboxId : undefined;
 
-  // 关闭移动端 More 条时必须连带收起其子菜单（思考/工具）：否则条 display:none
-  // 后子菜单锚点 rect 归零、面板隐藏，但 open 状态残留，重开条时菜单幽灵复活。
-  const closeControlsMenu = useCallback((restoreFocus: boolean) => {
-    setThinkingDropdownOpen(false);
-    setToolDropdownOpen(false);
-    setControlsMenuOpen(false);
-    if (restoreFocus) moreButtonRef.current?.focus({ preventScroll: true });
-  }, []);
-
-  // Esc 分层关闭浮层：思考 → 工具 → 模型 → More 条，逐层且焦点回 trigger。
-  // 用 document 冒泡监听：dropdown 的交互焦点在输入框外，textarea 的 onKeyDown
-  // 收不到；e.defaultPrevented 协调，保证 textarea 内 slash/@ 菜单与流式 abort
-  // 的既有 Esc 语义优先，互不干扰。
+  // Esc 分层关闭浮层：思考 → 工具 → 模型，逐层且焦点回 trigger。
   useEffect(() => {
-    const anyOpen = thinkingDropdownOpen || toolDropdownOpen || modelDropdownOpen || controlsMenuOpen;
+    const anyOpen = thinkingDropdownOpen || toolDropdownOpen || modelDropdownOpen;
     if (!anyOpen) return;
     const onKeyDown = (e: globalThis.KeyboardEvent) => {
       if (e.key !== "Escape" || e.defaultPrevented) return;
@@ -1159,13 +1124,11 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
       } else if (modelDropdownOpen) {
         setModelDropdownOpen(false);
         modelButtonRef.current?.focus({ preventScroll: true });
-      } else {
-        closeControlsMenu(true);
       }
     };
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [thinkingDropdownOpen, toolDropdownOpen, modelDropdownOpen, controlsMenuOpen, closeControlsMenu]);
+  }, [thinkingDropdownOpen, toolDropdownOpen, modelDropdownOpen]);
 
   // 菜单打开时把焦点送进面板（选中项优先，无则首项），Esc/选择后焦点回 trigger。
   useEffect(() => {
@@ -1177,13 +1140,6 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   useEffect(() => {
     if (modelDropdownOpen) focusPanelOption(modelDropdownPanelRef.current, '[role="option"]');
   }, [modelDropdownOpen]);
-
-  // 移动端 More 条展开时 trigger 会被 aria-hidden + visibility:hidden——焦点
-  // 必须先移入条内第一个控件，否则键盘/读屏用户上下文丢在不可见元素上。
-  useEffect(() => {
-    if (!isMobile || !controlsMenuOpen) return;
-    controlsBarRef.current?.querySelector<HTMLElement>("button:not([disabled])")?.focus({ preventScroll: true });
-  }, [isMobile, controlsMenuOpen]);
 
   // Close dropdowns on outside click
   useEffect(() => {
@@ -1206,23 +1162,10 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
       ) {
         setThinkingDropdownOpen(false);
       }
-      // 思考/工具面板 portal 在 body 下，不在 controlsMenuRef 内——点它们不算「外部」。
-      // 外部点击关闭 More 条时不回焦：用户已明确把指针移往别处。
-      if (
-        controlsMenuRef.current && !controlsMenuRef.current.contains(e.target as Node) &&
-        !thinkingDropdownPanelRef.current?.contains(e.target as Node) &&
-        !toolDropdownPanelRef.current?.contains(e.target as Node)
-      ) {
-        closeControlsMenu(false);
-      }
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
-  }, [closeControlsMenu]);
-
-  useEffect(() => {
-    if (!isMobile) closeControlsMenu(false);
-  }, [isMobile, closeControlsMenu]);
+  }, []);
 
 
 
@@ -1331,6 +1274,16 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
               <path d="M3 3v5h5" />
             </svg>
             {t("input_retrying")} ({retryInfo.attempt}/{retryInfo.maxAttempts}){retryInfo.errorMessage && <span style={{ opacity: 0.7, marginLeft: 4 }}>— {retryInfo.errorMessage}</span>}
+          </div>
+        )}
+        {compactError && (
+          <div style={{
+            marginBottom: 8, padding: "5px 10px",
+            background: "color-mix(in srgb, var(--status-danger) 8%, transparent)", border: "1px solid color-mix(in srgb, var(--status-danger) 28%, transparent)",
+            borderRadius: 6, fontSize: 12, color: "var(--status-danger)",
+            display: "flex", alignItems: "center", gap: 6,
+          }}>
+            {compactError}
           </div>
         )}
         {compactResultText && (
@@ -1836,11 +1789,11 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
           gap: 6,
         }}>
 
-          {/* LEFT: model + thinking（思考紧贴模型；手机端常显，不藏进 More） */}
-          <div style={{ flex: isMobile ? "1 1 auto" : "0 0 auto", minWidth: 0, display: "flex", alignItems: "center", gap: 2 }}>
+          {/* LEFT: model + thinking（思考紧贴模型；手机端常显） */}
+          <div style={{ flex: "0 1 auto", minWidth: 0, display: "flex", alignItems: "center", gap: 2, maxWidth: isMobile ? "100%" : undefined }}>
             {/* Model selector — visible always, disabled during streaming */}
             {modelOptions.length > 0 && currentName && onModelChange && (
-                <div ref={dropdownRef} style={{ position: "relative", flex: isMobile ? "1 1 auto" : undefined, minWidth: 0 }}>
+                <div ref={dropdownRef} style={{ position: "relative", flex: "0 1 auto", minWidth: 0 }}>
                   <button
                     ref={modelButtonRef}
                     aria-haspopup="listbox"
@@ -1850,32 +1803,33 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                       const opening = !modelDropdownOpen;
                       setModelDropdownOpen(opening);
                       if (opening) {
-                        // 同一时刻只保留一个浮层：关掉右侧菜单/More 条和输入补全，
-                        // 避免 320px 级窄屏下面板互相叠放。
+                        // 同一时刻只保留一个浮层：关掉其它菜单与输入补全。
                         setThinkingDropdownOpen(false);
                         setToolDropdownOpen(false);
-                        setControlsMenuOpen(false);
                         setSlashMenuOpen(false);
                         setAtMenuOpen(false);
                       }
                     }}
                     disabled={isStreaming}
                     style={{
-                      display: "flex", alignItems: "center", gap: 6,
-                      justifyContent: isMobile ? "flex-start" : undefined,
-                      padding: isMobile ? "8px 10px" : "8px 12px",
+                      display: "flex", alignItems: "center", gap: isMobile ? 4 : 6,
+                      justifyContent: "flex-start",
+                      padding: isMobile ? "6px 8px" : "8px 12px",
                       height: 32,
-                      width: isMobile ? "100%" : undefined,
-                      maxWidth: isMobile ? "100%" : 220,
+                      // 手机端不占满整行，避免模型按钮过大挤压思考/停止
+                      width: "auto",
+                      maxWidth: isMobile ? 132 : 220,
                       overflow: "hidden",
                       background: modelDropdownOpen ? "var(--bg-hover)" : "none",
                       border: "none",
                       borderRadius: 9,
                       color: "var(--text-muted)",
                       cursor: isStreaming ? "not-allowed" : "pointer",
-                      fontSize: 12,
+                      fontSize: isMobile ? 11 : 12,
                       opacity: isStreaming ? 0.5 : 1,
                       transition: "background 0.12s, color 0.12s",
+                      flex: "0 1 auto",
+                      minWidth: 0,
                     }}
                     onMouseEnter={(e) => {
                       if (isStreaming) return;
@@ -2001,7 +1955,6 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                     if (opening) {
                       setToolDropdownOpen(false);
                       setModelDropdownOpen(false);
-                      setControlsMenuOpen(false);
                       setSlashMenuOpen(false);
                       setAtMenuOpen(false);
                     }
@@ -2112,151 +2065,26 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
           {/* spacer */}
           {!isMobile && <div style={{ flex: 1 }} />}
 
-          {/* RIGHT: thinking + tools preset + compact + sound (idle) | Stop + sound (streaming) */}
-          <div ref={controlsMenuRef} style={{
+          {/* RIGHT: 仅停止（流式/压缩中）；压缩改走 /compact 命令防误触；提示音改设置页 */}
+          <div style={{
             flex: "0 0 auto",
             display: "flex",
             alignItems: "center",
             justifyContent: "flex-end",
-            position: "relative",
-            marginLeft: isMobile ? 0 : "auto",
+            marginLeft: "auto",
           }}>
-            {isMobile && (
+            {(isStreaming || isCompacting) && (
               <button
-                ref={moreButtonRef}
                 type="button"
-                title={controlsMenuOpen ? undefined : t("input_controlsTitle")}
-                data-tooltip={controlsMenuOpen ? undefined : t("input_controlsTitle")}
-                className="instant-tooltip tooltip-up"
-                aria-label={t("input_controlsTitle")}
-                aria-expanded={controlsMenuOpen}
-                aria-controls={controlsBarId}
-                aria-hidden={controlsMenuOpen || undefined}
-                tabIndex={controlsMenuOpen ? -1 : undefined}
                 onClick={() => {
-                  // 与模型按钮对称：展开 More 条时收起其它浮层，窄屏不叠放。
-                  setModelDropdownOpen(false);
-                  setSlashMenuOpen(false);
-                  setAtMenuOpen(false);
-                  setControlsMenuOpen(true);
+                  if (isCompacting && onAbortCompaction) onAbortCompaction();
+                  else onAbort();
                 }}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  width: "100%",
-                  height: 32,
-                  padding: "8px 10px",
-                  background: "none",
-                  border: "none",
-                  borderRadius: 9,
-                  color: "var(--text-muted)",
-                  cursor: controlsMenuOpen ? "default" : "pointer",
-                  fontSize: 12,
-                  fontWeight: 500,
-                  visibility: controlsMenuOpen ? "hidden" : "visible",
-                  pointerEvents: controlsMenuOpen ? "none" : "auto",
-                  transition: "background 0.12s, color 0.12s",
-                }}
-                onMouseEnter={(e) => {
-                  if (controlsMenuOpen) return;
-                  e.currentTarget.style.background = "var(--bg-hover)";
-                  e.currentTarget.style.color = "var(--text)";
-                }}
-                onMouseLeave={(e) => {
-                  if (controlsMenuOpen) return;
-                  e.currentTarget.style.background = "none";
-                  e.currentTarget.style.color = "var(--text-muted)";
-                }}
-              >
-                {t("input_more")}
-              </button>
-            )}
-            <div ref={controlsBarRef} id={controlsBarId} style={{
-              display: isMobile ? (controlsMenuOpen ? "flex" : "none") : "flex",
-              alignItems: "center",
-              gap: isMobile ? 1 : 2,
-              ...(isMobile ? {
-                zIndex: 60,
-                padding: 1,
-                width: "max-content",
-                flexWrap: "nowrap",
-                justifyContent: "flex-end",
-                border: "1px solid color-mix(in srgb, var(--border) 72%, transparent)",
-                borderRadius: 10,
-                background: "color-mix(in srgb, var(--bg-panel) 92%, var(--bg))",
-                boxShadow: "0 8px 24px rgba(0,0,0,0.14)",
-                backdropFilter: "blur(10px)",
-              } : null),
-              ...(isMobile && controlsMenuOpen ? moreOverlay.style : null),
-            }}>
-            {/* 思考已移到左侧模型旁，不在 More 条重复渲染 */}
-
-            {!isStreaming && onCompact && (
-              <div ref={compactAnchorRef} style={{ position: "relative" }}>
-                {compactError && createPortal(
-                  <div ref={compactBubbleRef} style={{
-                    ...compactOverlay.style,
-                    background: "var(--bg-elevated)", color: "var(--status-danger)",
-                    fontSize: 11, padding: "4px 8px", borderRadius: 5,
-                    whiteSpace: "normal", overflowWrap: "break-word",
-                    pointerEvents: "none",
-                    boxShadow: "0 2px 8px rgba(0,0,0,0.2)", zIndex: 70,
-                  }}>
-                    {compactError}
-                  </div>,
-                  document.body,
-                )}
-                <button
-                  onClick={isCompacting ? onAbortCompaction : onCompact}
-                  disabled={isStreaming && !isCompacting}
-                  style={{
-                    display: "flex", alignItems: "center", justifyContent: "center", gap: 5,
-                    padding: isMobile ? "0 6px" : "8px 12px",
-                    width: isMobile ? "auto" : undefined,
-                    height: 32,
-                    background: isCompacting ? "color-mix(in srgb, var(--status-danger) 8%, transparent)" : "none",
-                    border: "none",
-                    borderRadius: 9,
-                    color: isCompacting ? "var(--status-danger)" : "var(--text-muted)",
-                    cursor: (isStreaming && !isCompacting) ? "not-allowed" : "pointer",
-                    fontSize: 12, opacity: (isStreaming && !isCompacting) ? 0.5 : 1,
-                    transition: "background 0.12s, color 0.12s",
-                  }}
-                  onMouseEnter={(e) => {
-                    if (isStreaming && !isCompacting) return;
-                    e.currentTarget.style.background = isCompacting ? "color-mix(in srgb, var(--status-danger) 16%, transparent)" : "var(--bg-hover)";
-                    e.currentTarget.style.color = isCompacting ? "var(--status-danger)" : "var(--text)";
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.background = isCompacting ? "color-mix(in srgb, var(--status-danger) 8%, transparent)" : "none";
-                    e.currentTarget.style.color = isCompacting ? "var(--status-danger)" : "var(--text-muted)";
-                  }}
-                  title={isCompacting ? t("input_stopCompaction") : t("input_compactContext")}
-                  data-tooltip={isCompacting ? t("input_stopCompaction") : t("input_compactContext")}
-                  className="instant-tooltip tooltip-up"
-                  aria-label={isCompacting ? t("input_stopCompaction") : t("input_compactContext")}
-                >
-                  {isCompacting ? (
-                    <><svg width="10" height="10" viewBox="0 0 10 10" fill="none"><rect x="2" y="2" width="6" height="6" rx="1" fill="currentColor" /></svg>{(!isMobile || controlsMenuOpen) && <span style={{ whiteSpace: "nowrap" }}>{t("input_compacting")}</span>}</>
-                  ) : (
-                    <><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <polyline points="4 14 10 14 10 20" /><polyline points="20 10 14 10 14 4" />
-                      <line x1="10" y1="14" x2="3" y2="21" /><line x1="21" y1="3" x2="14" y2="10" />
-                    </svg>{(!isMobile || controlsMenuOpen) && <span style={{ whiteSpace: "nowrap" }}>{t("input_compact")}</span>}</>
-                  )}
-                </button>
-              </div>
-            )}
-
-            {isStreaming && (
-              <button
-                onClick={onAbort}
-                data-tooltip={t("chat_cancel")}
+                data-tooltip={isCompacting ? t("input_stopCompaction") : t("chat_cancel")}
                 className="instant-tooltip tooltip-up"
                 style={{
                   display: "flex", alignItems: "center", gap: 6,
-                  padding: "8px 14px",
+                  padding: isMobile ? "6px 10px" : "8px 14px",
                   height: 32,
                   background: "color-mix(in srgb, var(--status-danger) 8%, transparent)",
                   border: "1px solid color-mix(in srgb, var(--status-danger) 30%, transparent)",
@@ -2273,94 +2101,9 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
                   <rect x="1.5" y="1.5" width="7" height="7" rx="1.5" fill="currentColor" />
                 </svg>
-                {t("input_stop")}
+                {isCompacting ? t("input_stopCompaction") : t("input_stop")}
               </button>
             )}
-
-            {onSoundToggle !== undefined && (
-              <button
-                onClick={onSoundToggle}
-                title={soundEnabled ? t("input_soundDisable") : t("input_soundEnable")}
-                data-tooltip={soundEnabled ? t("input_soundDisable") : t("input_soundEnable")}
-                className="instant-tooltip tooltip-up"
-                aria-label={soundEnabled ? t("input_soundDisable") : t("input_soundEnable")}
-                style={{
-                  display: "flex", alignItems: "center", justifyContent: "center", gap: 5,
-                  width: isMobile ? 32 : 32,
-                  height: 32,
-                  padding: 0,
-                  background: "none",
-                  border: "none",
-                  borderRadius: 9,
-                  color: soundEnabled ? "var(--text-muted)" : "var(--text-dim)",
-                  cursor: "pointer",
-                  opacity: soundEnabled ? 1 : 0.55,
-                  transition: "background 0.12s, color 0.12s, opacity 0.12s",
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.background = "var(--bg-hover)";
-                  e.currentTarget.style.color = "var(--text)";
-                  e.currentTarget.style.opacity = "1";
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = "none";
-                  e.currentTarget.style.color = soundEnabled ? "var(--text-muted)" : "var(--text-dim)";
-                  e.currentTarget.style.opacity = soundEnabled ? "1" : "0.55";
-                }}
-              >
-                {soundEnabled ? (
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
-                    <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
-                    <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
-                  </svg>
-                ) : (
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
-                    <line x1="23" y1="9" x2="17" y2="15" />
-                    <line x1="17" y1="9" x2="23" y2="15" />
-                  </svg>
-                )}
-              </button>
-            )}
-            {isMobile && controlsMenuOpen && (
-              <button
-                type="button"
-                data-tooltip={t("input_fold")}
-                className="instant-tooltip tooltip-up"
-                aria-label={t("input_fold")}
-                aria-expanded={true}
-                onClick={() => closeControlsMenu(true)}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  width: 36,
-                  height: 32,
-                  padding: 0,
-                  marginLeft: 0,
-                  background: "var(--bg-hover)",
-                  border: "none",
-                  borderLeft: "1px solid color-mix(in srgb, var(--border) 72%, transparent)",
-                  borderRadius: "0 9px 9px 0",
-                  color: "var(--text)",
-                  cursor: "pointer",
-                  transition: "background 0.12s, color 0.12s",
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.background = "var(--bg-selected)";
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = "var(--bg-hover)";
-                }}
-              >
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                  <line x1="18" y1="6" x2="6" y2="18" />
-                  <line x1="6" y1="6" x2="18" y2="18" />
-                </svg>
-              </button>
-            )}
-            </div>
           </div>
 
         </div>

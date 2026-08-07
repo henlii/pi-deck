@@ -12,6 +12,7 @@ import {
   saveStreamingEnterAction,
   type StreamingEnterAction,
 } from "@/lib/ui-preferences";
+import { readSoundEnabled, writeSoundEnabled } from "@/hooks/useAudio";
 
 interface AgentDefaultsConfigProps {
   cwd: string | null;
@@ -84,6 +85,8 @@ export function AgentDefaultsConfig({ cwd }: AgentDefaultsConfigProps) {
   const [draft, setDraft] = useState<Draft | null>(null);
   /** 桌面流式期 Enter 默认动作（localStorage，与 Pi settings 分离）。 */
   const [streamingEnterDefault, setStreamingEnterDefault] = useState<StreamingEnterAction>("followUp");
+  /** 完成提示音（localStorage pi-sound-enabled）。 */
+  const [soundEnabled, setSoundEnabled] = useState(true);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -95,6 +98,7 @@ export function AgentDefaultsConfig({ cwd }: AgentDefaultsConfigProps) {
     setError(null);
     try {
       setStreamingEnterDefault(loadStreamingEnterAction());
+      setSoundEnabled(readSoundEnabled());
       const params = new URLSearchParams();
       if (cwd) params.set("cwd", cwd);
       const qs = params.toString();
@@ -297,6 +301,30 @@ export function AgentDefaultsConfig({ cwd }: AgentDefaultsConfigProps) {
             <div style={{ marginTop: 6, fontSize: 11, color: "var(--text-dim)", maxWidth: 420, lineHeight: 1.45 }}>
               {t("defaults_streamingEnterHint")}
             </div>
+          </div>
+          <label
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              fontSize: 13,
+              color: "var(--text)",
+              cursor: "pointer",
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={soundEnabled}
+              onChange={(e) => {
+                const next = e.target.checked;
+                setSoundEnabled(next);
+                writeSoundEnabled(next);
+              }}
+            />
+            {t("defaults_completionSound")}
+          </label>
+          <div style={{ marginTop: -4, fontSize: 11, color: "var(--text-dim)", maxWidth: 420, lineHeight: 1.45 }}>
+            {t("defaults_completionSoundHint")}
           </div>
         </div>
       </div>

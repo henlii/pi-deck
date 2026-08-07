@@ -21,15 +21,52 @@ function playTone(ctx: AudioContext) {
   });
 }
 
-export function useAudio() {
-  const [enabled, setEnabled] = useState<boolean>(() => {
-    if (typeof window === "undefined") return true;
-    const stored = localStorage.getItem("pi-sound-enabled");
+export const SOUND_ENABLED_STORAGE_KEY = "pi-sound-enabled";
+export const SOUND_ENABLED_CHANGED_EVENT = "pidance:sound-enabled-changed";
+
+export function readSoundEnabled(): boolean {
+  if (typeof window === "undefined") return true;
+  try {
+    const stored = localStorage.getItem(SOUND_ENABLED_STORAGE_KEY);
     return stored === null ? true : stored === "true";
-  });
+  } catch {
+    return true;
+  }
+}
+
+export function writeSoundEnabled(enabled: boolean): void {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(SOUND_ENABLED_STORAGE_KEY, String(enabled));
+  } catch {
+    // 隐私模式 / 配额
+  }
+  window.dispatchEvent(new CustomEvent(SOUND_ENABLED_CHANGED_EVENT, { detail: { enabled } }));
+}
+
+export function useAudio() {
+  const [enabled, setEnabled] = useState<boolean>(() => readSoundEnabled());
 
   const enabledRef = useRef(enabled);
   useEffect(() => { enabledRef.current = enabled; }, [enabled]);
+
+  // 设置页切换时同步（同页自定义事件 + 跨 tab storage）
+  useEffect(() => {
+    const sync = () => {
+      const next = readSoundEnabled();
+      enabledRef.current = next;
+      setEnabled(next);
+    };
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === SOUND_ENABLED_STORAGE_KEY) sync();
+    };
+    window.addEventListener("storage", onStorage);
+    window.addEventListener(SOUND_ENABLED_CHANGED_EVENT, sync);
+    return () => {
+      window.removeEventListener("storage", onStorage);
+      window.removeEventListener(SOUND_ENABLED_CHANGED_EVENT, sync);
+    };
+  }, []);
 
   // Reuse a single AudioContext so it can be resumed if the browser
   // autoplay policy suspends it (contexts created outside user gestures
@@ -56,7 +93,14 @@ export function useAudio() {
     const next = !enabledRef.current;
     if (next) unlockAudio(true);
     enabledRef.current = next;
-    localStorage.setItem("pi-sound-enabled", String(next));
+    writeSoundEnabled(next);
+    setEnabled(next);
+  }, [unlockAudio]);
+
+  const setSoundEnabled = useCallback((next: boolean) => {
+    if (next) unlockAudio(true);
+    enabledRef.current = next;
+    writeSoundEnabled(next);
     setEnabled(next);
   }, [unlockAudio]);
 
@@ -78,5 +122,12 @@ export function useAudio() {
     play();
   }, [getCtx]);
 
-  return { soundEnabled: enabled, onSoundToggle: toggle, playDoneSound: playDone, unlockAudio, soundEnabledRef: enabledRef };
+  return {
+    soundEnabled: enabled,
+    onSoundToggle: toggle,
+    setSoundEnabled,
+    playDoneSound: playDone,
+    unlockAudio,
+    soundEnabledRef: enabledRef,
+  };
 }
