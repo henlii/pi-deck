@@ -1594,7 +1594,8 @@ span.linenumber {
   outline-offset: -2px;
 }
 .file-row:hover .file-row-actions,
-.file-row:focus-within .file-row-actions {
+.file-row:focus-within .file-row-actions,
+.file-row-actions:has([data-menu-open="true"]) {
   opacity: 1;
   visibility: visible;
 }

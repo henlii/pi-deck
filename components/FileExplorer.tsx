@@ -1,7 +1,18 @@
 "use client";
 
-import { forwardRef, useState, useCallback, useEffect, useImperativeHandle, useMemo, useRef } from "react";
+import {
+  forwardRef,
+  useState,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  type CSSProperties,
+  type ReactNode,
+} from "react";
 import { getFileIcon, FolderIcon } from "./FileIcons";
+import { MoreVerticalIcon, PencilIcon } from "./session-sidebar/display";
 import {
   encodeFilePathForApi,
   getFileDirectory,
@@ -9,6 +20,7 @@ import {
   joinFilePath,
   normalizeFilePathSlashes,
 } from "@/lib/file-paths";
+import { copyText } from "@/lib/clipboard";
 import type { GitFileStatus, GitFileStatusKind, GitStatusResponse } from "@/lib/git-types";
 import { useI18n } from "@/lib/i18n";
 import { loadSidebarPreferences, saveFileExplorerState } from "@/lib/ui-preferences";
@@ -40,6 +52,10 @@ interface Props {
 
 export interface FileExplorerHandle {
   openUploadPicker: () => void;
+  /** 在项目根 cwd 下开始新建文件（内联输入）。 */
+  startCreateFile: () => void;
+  /** 在项目根 cwd 下开始新建文件夹（内联输入）。 */
+  startCreateDir: () => void;
 }
 
 type UploadPhase = "idle" | "checking" | "uploading";
@@ -189,6 +205,275 @@ function DismissButton({ onClick, title }: { onClick: () => void; title: string 
   );
 }
 
+// ---------------------------------------------------------------------------
+// 文件行菜单：postFileOp / NameDraftRow / FileRowMenu
+// ---------------------------------------------------------------------------
+
+/** 文件创建/重命名操作统一入口：POST /api/files/...?type=create-file|create-dir|rename */
+async function postFileOp(
+  filePath: string,
+  type: "create-file" | "create-dir" | "rename",
+  body: { name?: string; newName?: string },
+): Promise<{ path: string; name: string }> {
+  const res = await fetch(`/api/files/${encodeFilePathForApi(filePath)}?type=${type}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({})) as { path?: string; name?: string; error?: string };
+  if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
+  return { path: data.path ?? filePath, name: data.name ?? "" };
+}
+
+/**
+ * 内联命名输入行：Enter 提交、Escape 取消、空值 blur 取消；成功后回调 onDone(true)。
+ * create-file/create-dir 时 targetPath 为目标目录；rename 时 targetPath 为被重命名条目本身。
+ */
+function NameDraftRow({ targetPath, type, defaultName, placeholder, paddingLeft, onDone, t }: {
+  targetPath: string;
+  type: "create-file" | "create-dir" | "rename";
+  defaultName?: string;
+  placeholder: string;
+  /** 缩进：与所在行层级对齐。 */
+  paddingLeft: number;
+  onDone: (success: boolean) => void;
+  t: ReturnType<typeof useI18n>["t"];
+}) {
+  const [value, setValue] = useState(defaultName ?? "");
+  const [busy, setBusy] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const onDoneRef = useRef(onDone);
+  onDoneRef.current = onDone;
+
+  // 挂载后聚焦并全选（重命名场景便于直接覆盖旧名）。
+  useEffect(() => {
+    inputRef.current?.focus();
+    inputRef.current?.select();
+  }, []);
+
+  const submit = useCallback(async () => {
+    const name = value.trim();
+    if (!name || busy) return;
+    setBusy(true);
+    try {
+      if (type === "rename") {
+        await postFileOp(targetPath, "rename", { newName: name });
+      } else {
+        await postFileOp(targetPath, type, { name });
+      }
+      onDoneRef.current(true);
+    } catch (error) {
+      // 失败时保留输入供修正重试，并提示原因。
+      const message = error instanceof Error ? error.message : String(error);
+      window.alert(`${type === "rename" ? t("files_renameFailed") : t("files_createFailed")}: ${message}`);
+      setBusy(false);
+    }
+  }, [busy, t, targetPath, type, value]);
+
+  return (
+    <div
+      style={{ display: "flex", alignItems: "center", gap: 6, paddingLeft, paddingRight: 8, height: 24 }}
+      onClick={(e) => e.stopPropagation()}
+    >
+      <input
+        ref={inputRef}
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            void submit();
+          } else if (e.key === "Escape") {
+            e.stopPropagation();
+            onDoneRef.current(false);
+          }
+        }}
+        onBlur={() => { if (!value.trim() && !busy) onDoneRef.current(false); }}
+        placeholder={placeholder}
+        disabled={busy}
+        aria-label={placeholder}
+        style={{
+          flex: 1,
+          minWidth: 0,
+          height: 20,
+          padding: "0 6px",
+          fontSize: 12,
+          border: "1px solid var(--accent)",
+          borderRadius: 4,
+          outline: "none",
+          background: "var(--bg-panel)",
+          color: "var(--text)",
+          fontFamily: "inherit",
+        }}
+      />
+      {busy && (
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="var(--text-dim)" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+          <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4" />
+        </svg>
+      )}
+    </div>
+  );
+}
+
+/**
+ * 文件行三点菜单（风格对齐 SessionRowMenu）：fixed 定位，视口底部不足时向上翻转。
+ * 下载（文件/目录均 tar.gz 由 ?type=download 统一处理）、重命名、复制路径；
+ * 目录另有新建文件/新建文件夹。触发按钮带 data-menu-open 供 CSS 保持操作区可见。
+ */
+function FileRowMenu({ entryPath, name, isDir, cwd, onRename, onCreate, t }: {
+  entryPath: string;
+  name: string;
+  isDir: boolean;
+  cwd: string;
+  onRename: () => void;
+  onCreate: (kind: "create-file" | "create-dir") => void;
+  t: ReturnType<typeof useI18n>["t"];
+}) {
+  const [open, setOpen] = useState(false);
+  const [position, setPosition] = useState<{ top: number; right: number } | null>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const label = t("files_rowMenuLabel", { name });
+
+  const close = useCallback((focus = false) => {
+    setOpen(false);
+    if (focus) triggerRef.current?.focus();
+  }, []);
+
+  // 点击外部/视口变化时关闭；打开后焦点移入首个菜单项。
+  useEffect(() => {
+    if (!open) return;
+    const outside = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (!menuRef.current?.contains(target) && !triggerRef.current?.contains(target)) close();
+    };
+    const viewport = () => close();
+    document.addEventListener("mousedown", outside);
+    window.addEventListener("resize", viewport);
+    window.addEventListener("scroll", viewport, true);
+    const frame = requestAnimationFrame(() => menuRef.current?.querySelector<HTMLElement>("[role='menuitem']")?.focus());
+    return () => {
+      cancelAnimationFrame(frame);
+      document.removeEventListener("mousedown", outside);
+      window.removeEventListener("resize", viewport);
+      window.removeEventListener("scroll", viewport, true);
+    };
+  }, [close, open]);
+
+  const openMenu = () => {
+    if (open) { close(); return; }
+    const rect = triggerRef.current?.getBoundingClientRect();
+    if (rect) {
+      // 菜单靠近视口底部时向上翻转，避免最后几项被裁切。
+      const estimatedMenuHeight = isDir ? 244 : 176;
+      const top = rect.bottom + 4 + estimatedMenuHeight <= window.innerHeight
+        ? rect.bottom + 4
+        : Math.max(8, rect.top - estimatedMenuHeight - 4);
+      setPosition({ top, right: Math.max(8, window.innerWidth - rect.right) });
+    }
+    setOpen(true);
+  };
+
+  const itemStyle: CSSProperties = { display: "flex", alignItems: "center", gap: 8, width: "100%", minHeight: 32, padding: "6px 11px", boxSizing: "border-box", background: "var(--bg-elevated)", border: "none", color: "var(--text-muted)", cursor: "pointer", textAlign: "left", textDecoration: "none", fontSize: 12, whiteSpace: "nowrap" };
+  const hover = {
+    onMouseEnter: (event: React.MouseEvent<HTMLElement>) => { event.currentTarget.style.background = "var(--bg-hover)"; event.currentTarget.style.color = "var(--text)"; },
+    onMouseLeave: (event: React.MouseEvent<HTMLElement>) => { event.currentTarget.style.background = "var(--bg-elevated)"; event.currentTarget.style.color = "var(--text-muted)"; },
+  };
+  const menuIcon = (child: ReactNode) => <span aria-hidden="true" style={{ display: "flex", color: "var(--text-dim)" }}>{child}</span>;
+
+  return (
+    <div
+      style={{ display: "flex", flexShrink: 0 }}
+      onClick={(e) => e.stopPropagation()}
+      onKeyDown={(e) => {
+        if (e.key === "Escape" && open) {
+          e.preventDefault();
+          e.stopPropagation();
+          close(true);
+        }
+      }}
+    >
+      <button
+        ref={triggerRef}
+        type="button"
+        className="file-row-action-btn"
+        data-menu-open={open ? "true" : undefined}
+        onClick={(e) => { e.stopPropagation(); openMenu(); }}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label={label}
+        title={label}
+      >
+        <MoreVerticalIcon size={12} />
+      </button>
+      {open && position && (
+        <div
+          ref={menuRef}
+          role="menu"
+          aria-label={label}
+          style={{ position: "fixed", top: position.top, right: position.right, zIndex: 600, minWidth: 190, padding: 4, background: "var(--bg-elevated)", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", boxShadow: "var(--shadow-float)" }}
+        >
+          <a
+            role="menuitem"
+            href={`/api/files/${encodeFilePathForApi(entryPath)}?type=download`}
+            download
+            style={itemStyle}
+            {...hover}
+            onClick={() => close()}
+          >
+            {menuIcon(
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                <polyline points="7 10 12 15 17 10" />
+                <line x1="12" y1="15" x2="12" y2="3" />
+              </svg>
+            )}
+            {t(isDir ? "files_downloadFolder" : "viewer_download", isDir ? { name } : undefined)}
+          </a>
+          {isDir && (
+            <>
+              <button type="button" role="menuitem" style={itemStyle} {...hover} onClick={() => { close(); onCreate("create-file"); }}>
+                {menuIcon(
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" />
+                    <path d="M14 2v6h6" />
+                    <path d="M12 18v-6" />
+                    <path d="M9 15h6" />
+                  </svg>
+                )}
+                {t("files_newFile")}
+              </button>
+              <button type="button" role="menuitem" style={itemStyle} {...hover} onClick={() => { close(); onCreate("create-dir"); }}>
+                {menuIcon(
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.7-.9l-.8-1.2A2 2 0 0 0 8 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
+                    <path d="M12 11v6" />
+                    <path d="M9 14h6" />
+                  </svg>
+                )}
+                {t("files_newFolder")}
+              </button>
+            </>
+          )}
+          <button type="button" role="menuitem" style={itemStyle} {...hover} onClick={() => { close(); void copyText(getRelativeFilePath(entryPath, cwd)).catch(() => window.alert(t("files_copyPathFailed"))); }}>
+            {menuIcon(
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <rect x="9" y="9" width="13" height="13" rx="2" />
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+              </svg>
+            )}
+            {t("files_copyPath")}
+          </button>
+          <button type="button" role="menuitem" style={itemStyle} {...hover} onClick={() => { close(); onRename(); }}>
+            {menuIcon(<PencilIcon size={13} />)}
+            {t("files_rename")}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function TreeNode({
   node,
   depth,
@@ -201,6 +486,7 @@ function TreeNode({
   highlightedPaths,
   gitStatusByPath,
   changedDirectoryPaths,
+  onMutated,
   t,
 }: {
   node: FileNode;
@@ -214,6 +500,8 @@ function TreeNode({
   highlightedPaths: Set<string>;
   gitStatusByPath: Map<string, GitFileStatus>;
   changedDirectoryPaths: Set<string>;
+  /** 文件创建/重命名成功后回调，用于刷新树。 */
+  onMutated: () => void;
   t: ReturnType<typeof useI18n>["t"];
 }) {
   const open = expandedPaths.has(node.fullPath);
@@ -226,6 +514,8 @@ function TreeNode({
   const [children, setChildren] = useState<FileNode[]>(node.children ?? []);
   const [loaded, setLoaded] = useState(node.loaded ?? false);
   const [loading, setLoading] = useState(false);
+  /** 内联命名草稿：rename 替换当前行；create-file/create-dir 在目录行下方新建。 */
+  const [draft, setDraft] = useState<{ kind: "create-file" | "create-dir" | "rename" } | null>(null);
 
   const loadChildren = useCallback(async (force = false) => {
     if (loaded && !force) return;
@@ -274,6 +564,17 @@ function TreeNode({
 
   return (
     <div role="none">
+      {draft?.kind === "rename" ? (
+        <NameDraftRow
+          targetPath={node.fullPath}
+          type="rename"
+          defaultName={node.name}
+          placeholder={t("files_namePlaceholder")}
+          paddingLeft={8 + depth * 14}
+          onDone={(ok) => { setDraft(null); if (ok) onMutated(); }}
+          t={t}
+        />
+      ) : (
       <div
         className="file-row"
         role="treeitem"
@@ -364,43 +665,46 @@ function TreeNode({
             <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4" />
           </svg>
         )}
-        {/* mention/download 恒渲染，由 CSS 渐进显露；粗指针恒显（触屏首点可达） */}
-        {(onAtMention || !node.isDir) && (
-          <div className="file-row-actions">
-            {onAtMention && (
-            <button
-              type="button"
-              className="file-row-action-btn"
-              onClick={(e) => {
-                e.stopPropagation();
-                onAtMention(getRelativeFilePath(node.fullPath, cwd), node.isDir);
-              }}
-              title={t("files_insertIntoChat", { name: node.name })}
-              aria-label={t("files_insertIntoChat", { name: node.name })}
-              style={{ color: "var(--accent)" }}
-            >
-              <MentionIcon />
-            </button>
-            )}
-            {!node.isDir && (
-            <a
-              className="file-row-action-btn"
-              href={`/api/files/${encodeFilePathForApi(node.fullPath)}?type=download`}
-              download
-              onClick={(e) => e.stopPropagation()}
-              title={t("viewer_download")}
-              aria-label={t("files_downloadFile", { name: node.name })}
-            >
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                <polyline points="7 10 12 15 17 10" />
-                <line x1="12" y1="15" x2="12" y2="3" />
-              </svg>
-            </a>
-            )}
-          </div>
-        )}
+        {/* 行内操作恒渲染，由 CSS 渐进显露；粗指针恒显（触屏首点可达）。 */}
+        <div className="file-row-actions">
+          {onAtMention && (
+          <button
+            type="button"
+            className="file-row-action-btn"
+            onClick={(e) => {
+              e.stopPropagation();
+              onAtMention(getRelativeFilePath(node.fullPath, cwd), node.isDir);
+            }}
+            title={t("files_insertIntoChat", { name: node.name })}
+            aria-label={t("files_insertIntoChat", { name: node.name })}
+            style={{ color: "var(--accent)" }}
+          >
+            <MentionIcon />
+          </button>
+          )}
+          <FileRowMenu
+            entryPath={node.fullPath}
+            name={node.name}
+            isDir={node.isDir}
+            cwd={cwd}
+            onRename={() => setDraft({ kind: "rename" })}
+            onCreate={(kind) => setDraft({ kind })}
+            t={t}
+          />
+        </div>
       </div>
+      )}
+      {/* 目录内新建草稿行：位于目录行之下、子项之前（不依赖展开态，保证输入可见）。 */}
+      {draft && draft.kind !== "rename" && (
+        <NameDraftRow
+          targetPath={node.fullPath}
+          type={draft.kind}
+          placeholder={t("files_namePlaceholder")}
+          paddingLeft={8 + (depth + 1) * 14}
+          onDone={(ok) => { setDraft(null); if (ok) onMutated(); }}
+          t={t}
+        />
+      )}
       {node.isDir && open && (
         <div role="group">
           {children.map((child) => (
@@ -417,6 +721,7 @@ function TreeNode({
               highlightedPaths={highlightedPaths}
               gitStatusByPath={gitStatusByPath}
               changedDirectoryPaths={changedDirectoryPaths}
+              onMutated={onMutated}
               t={t}
             />
           ))}
@@ -455,6 +760,8 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
   /** cwd 切换后待恢复的滚动位置；roots 渲染完成后应用。 */
   const pendingScrollTopRef = useRef<number | null>(null);
   const [treeRefreshKey, setTreeRefreshKey] = useState(0);
+  /** 项目根 cwd 下的内联新建草稿（工具栏触发）。 */
+  const [rootCreateKind, setRootCreateKind] = useState<"create-file" | "create-dir" | null>(null);
   const [highlightedPaths, setHighlightedPaths] = useState<Set<string>>(new Set());
   const [gitFiles, setGitFiles] = useState<GitFileStatus[]>([]);
   const [uploadPhase, setUploadPhase] = useState<UploadPhase>("idle");
@@ -505,6 +812,11 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
     setExpandedPaths(next);
     persistExplorerState(next, scrollRef.current?.scrollTop ?? 0);
   }, [expandedPaths, persistExplorerState]);
+
+  /** 文件创建/重命名成功后刷新整棵树（递增 treeRefreshKey 触发 roots 与已展开目录重取）。 */
+  const handleMutated = useCallback(() => {
+    setTreeRefreshKey((key) => key + 1);
+  }, []);
 
   /** 滚动位置防抖写回（200ms），避免高频滚动刷 localStorage。 */
   const handleScroll = useCallback(() => {
@@ -615,6 +927,14 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
     openUploadPicker() {
       if (!uploadBusy) uploadInputRef.current?.click();
     },
+    /** 在项目根 cwd 下开始新建文件（内联输入）。 */
+    startCreateFile() {
+      setRootCreateKind("create-file");
+    },
+    /** 在项目根 cwd 下开始新建文件夹（内联输入）。 */
+    startCreateDir() {
+      setRootCreateKind("create-dir");
+    },
   }), [uploadBusy]);
 
   useEffect(() => {
@@ -644,6 +964,8 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
       setUploadSummary(null);
       setPendingConflict(null);
       setUploadError(null);
+      // 新建草稿属于瞬时输入态，cwd 切换时一并清空。
+      setRootCreateKind(null);
     }
 
     setLoading(cwdChanged);
@@ -816,25 +1138,38 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
         ) : error ? (
           <div style={{ padding: "8px 12px", fontSize: 11, color: "var(--status-danger)" }}>{error}</div>
         ) : (
-          <div role="tree">
-            {roots.map((node) => (
-              <TreeNode
-                key={node.fullPath}
-                node={node}
-                depth={0}
-                cwd={cwd}
-                onOpenFile={onOpenFile}
-                onAtMention={onAtMention}
-                expandedPaths={expandedPaths}
-                onToggleExpanded={handleToggleExpanded}
-                refreshToken={refreshToken}
-                highlightedPaths={highlightedPaths}
-                gitStatusByPath={gitStatusByPath}
-                changedDirectoryPaths={changedDirectoryPaths}
+          <>
+            {rootCreateKind && (
+              <NameDraftRow
+                targetPath={cwd}
+                type={rootCreateKind}
+                placeholder={t("files_namePlaceholder")}
+                paddingLeft={12}
+                onDone={(ok) => { setRootCreateKind(null); if (ok) handleMutated(); }}
                 t={t}
               />
-            ))}
-          </div>
+            )}
+            <div role="tree">
+              {roots.map((node) => (
+                <TreeNode
+                  key={node.fullPath}
+                  node={node}
+                  depth={0}
+                  cwd={cwd}
+                  onOpenFile={onOpenFile}
+                  onAtMention={onAtMention}
+                  expandedPaths={expandedPaths}
+                  onToggleExpanded={handleToggleExpanded}
+                  refreshToken={refreshToken}
+                  highlightedPaths={highlightedPaths}
+                  gitStatusByPath={gitStatusByPath}
+                  changedDirectoryPaths={changedDirectoryPaths}
+                  onMutated={handleMutated}
+                  t={t}
+                />
+              ))}
+            </div>
+          </>
         )}
         {!loading && !error && roots.length === 0 && (
           <div style={{ padding: "8px 12px", fontSize: 11, color: "var(--text-dim)" }}>

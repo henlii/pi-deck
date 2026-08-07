@@ -26,6 +26,14 @@ import {
 } from "@/lib/file-read";
 import { handleSaveRequest } from "@/lib/file-save-route";
 import {
+  createDirectory,
+  createDirectoryTarGzStream,
+  createEmptyFile,
+  FileOpsError,
+  fileOpsStatus,
+  renameEntry,
+} from "@/lib/file-ops";
+import {
   inspectUploadTargets,
   parseUploadConflictStrategy,
   validateUploadFileNames,
@@ -121,6 +129,22 @@ function parseUploadFileNames(value: unknown): string[] | null {
   return value;
 }
 
+function parseOpsName(body: unknown, field: string): string | null {
+  if (!body || typeof body !== "object") return null;
+  const value = (body as Record<string, unknown>)[field];
+  return typeof value === "string" ? value : null;
+}
+
+function fileOpsErrorResponse(error: unknown): NextResponse {
+  if (error instanceof FileOpsError) {
+    return NextResponse.json({ error: error.message }, { status: fileOpsStatus(error.code) });
+  }
+  return NextResponse.json(
+    { error: error instanceof Error ? error.message : String(error) },
+    { status: 500 },
+  );
+}
+
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ path: string[] }> }
@@ -132,6 +156,35 @@ export async function POST(
       const target = filePathFromSegments(segments);
       return handleSaveRequest(request, target);
     }
+
+    // 创建/重命名：独立于 upload，避免误走 multipart 解析。
+    if (type === "create-file" || type === "create-dir" || type === "rename") {
+      const allowedRoots = await getAllowedFileRoots();
+      const body = await request.json().catch(() => null);
+      try {
+        if (type === "rename") {
+          const target = filePathFromSegments(segments);
+          const newName = parseOpsName(body, "newName");
+          if (!newName) {
+            return NextResponse.json({ error: "newName is required" }, { status: 400 });
+          }
+          const result = renameEntry(target, newName, allowedRoots);
+          return NextResponse.json({ path: result.path, name: result.name });
+        }
+        const directory = filePathFromSegments(segments);
+        const name = parseOpsName(body, "name");
+        if (!name) {
+          return NextResponse.json({ error: "name is required" }, { status: 400 });
+        }
+        const result = type === "create-file"
+          ? createEmptyFile(directory, name, allowedRoots)
+          : createDirectory(directory, name, allowedRoots);
+        return NextResponse.json({ path: result.path, name: result.name }, { status: 201 });
+      } catch (error) {
+        return fileOpsErrorResponse(error);
+      }
+    }
+
     const uploadDirectory = await getUploadDirectory(segments);
     if ("response" in uploadDirectory) return uploadDirectory.response;
     const { directory } = uploadDirectory;
@@ -491,6 +544,22 @@ export async function GET(
     }
 
     if (type === "download") {
+      if (stat.isDirectory()) {
+        // 目录下载：gzip tar 流；文件名使用 basename.tar.gz
+        try {
+          const stream = createDirectoryTarGzStream(realPath);
+          const archiveName = `${path.basename(realPath) || "folder"}.tar.gz`;
+          return new Response(stream, {
+            headers: {
+              "Content-Type": "application/gzip",
+              "Content-Disposition": getContentDisposition(archiveName, true),
+              "Cache-Control": "no-cache",
+            },
+          });
+        } catch (error) {
+          return fileOpsErrorResponse(error);
+        }
+      }
       if (!stat.isFile()) {
         return NextResponse.json({ error: "Not a file" }, { status: 400 });
       }
