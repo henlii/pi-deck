@@ -18,6 +18,8 @@ import { parseAnsiLine } from "@/lib/ansi";
 import type { ToolExecutionSnapshot, ToolExecutionStatus } from "@/lib/tool-execution-buffer";
 import { parseUnifiedPatch, type SplitDiffCell } from "@/lib/patch";
 import { useI18n } from "@/lib/i18n";
+import { encodeFilePathForApi } from "@/lib/file-paths";
+import { extractMediaPathsFromText } from "@/lib/file-types";
 import type {
   AgentMessage,
   UserMessage,
@@ -31,6 +33,85 @@ import type {
   ToolCallContent,
   ThinkingContent,
 } from "@/lib/types";
+
+function fileApiReadUrl(filePath: string): string {
+  return `/api/files/${encodeFilePathForApi(filePath)}?type=read`;
+}
+
+/** 消息内嵌媒体预览：路径附件 / 多模态图片。 */
+function MessageMediaGallery({
+  imageBlocks,
+  pathImages,
+  pathAudio,
+  pathVideo,
+}: {
+  imageBlocks?: ImageContent[];
+  pathImages?: string[];
+  pathAudio?: string[];
+  pathVideo?: string[];
+}) {
+  const blocks = imageBlocks ?? [];
+  const images = pathImages ?? [];
+  const audio = pathAudio ?? [];
+  const video = pathVideo ?? [];
+  if (blocks.length === 0 && images.length === 0 && audio.length === 0 && video.length === 0) {
+    return null;
+  }
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 8 }}>
+      {(blocks.length > 0 || images.length > 0) && (
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          {blocks.map((img, i) => {
+            const flat = img as unknown as { data?: string; mimeType?: string };
+            const src = img.source
+              ? img.source.type === "base64"
+                ? `data:${img.source.media_type};base64,${img.source.data}`
+                : img.source.url ?? ""
+              : flat.data
+                ? `data:${flat.mimeType};base64,${flat.data}`
+                : "";
+            if (!src) return null;
+            return (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                key={`b-${i}`}
+                src={src}
+                alt=""
+                style={{ maxWidth: 280, maxHeight: 280, borderRadius: 6, objectFit: "contain", display: "block", border: "1px solid var(--border)" }}
+              />
+            );
+          })}
+          {images.map((path) => (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              key={path}
+              src={fileApiReadUrl(path)}
+              alt={path}
+              title={path}
+              style={{ maxWidth: 280, maxHeight: 280, borderRadius: 6, objectFit: "contain", display: "block", border: "1px solid var(--border)" }}
+            />
+          ))}
+        </div>
+      )}
+      {audio.map((path) => (
+        <div key={path} style={{ minWidth: 200, maxWidth: 420 }}>
+          <div style={{ fontSize: 11, color: "var(--text-dim)", marginBottom: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={path}>
+            {path.split(/[\\/]/).pop()}
+          </div>
+          <audio controls preload="metadata" src={fileApiReadUrl(path)} style={{ width: "100%" }} />
+        </div>
+      ))}
+      {video.map((path) => (
+        <div key={path} style={{ minWidth: 200, maxWidth: 480 }}>
+          <div style={{ fontSize: 11, color: "var(--text-dim)", marginBottom: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={path}>
+            {path.split(/[\\/]/).pop()}
+          </div>
+          <video controls preload="metadata" src={fileApiReadUrl(path)} style={{ width: "100%", maxHeight: 320, borderRadius: 6, background: "var(--bg)", border: "1px solid var(--border)" }} />
+        </div>
+      ))}
+    </div>
+  );
+}
 
 const MAX_THINKING_CACHE_ENTRIES = 100;
 const thinkingContentCache = new Map<string, Promise<string>>();
@@ -189,6 +270,7 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onBranchHere, onNe
     typeof message.content === "string"
       ? []
       : message.content.filter((b): b is ImageContent => b.type === "image");
+  const pathMedia = useMemo(() => extractMediaPathsFromText(content), [content]);
 
   const time = formatTime(message.timestamp);
   const canBranchHere = !!entryId && !!onBranchHere;
@@ -222,31 +304,12 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onBranchHere, onNe
             wordBreak: "break-word",
           }}
         >
-          {imageBlocks.length > 0 && (
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: content ? 8 : 0 }}>
-              {imageBlocks.map((img, i) => {
-                // lib/types.ts ImageContent uses {source:{type,data,media_type,url}}
-                // pi-ai on-disk format uses flat {data, mimeType} — handle both
-                const flat = img as unknown as { data?: string; mimeType?: string };
-                const src = img.source
-                  ? img.source.type === "base64"
-                    ? `data:${img.source.media_type};base64,${img.source.data}`
-                    : img.source.url ?? ""
-                  : flat.data
-                    ? `data:${flat.mimeType};base64,${flat.data}`
-                    : "";
-                return (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    key={i}
-                    src={src}
-                    alt=""
-                    style={{ maxWidth: 240, maxHeight: 240, borderRadius: 6, objectFit: "contain", display: "block", border: "1px solid var(--border)" }}
-                  />
-                );
-              })}
-            </div>
-          )}
+          <MessageMediaGallery
+            imageBlocks={imageBlocks}
+            pathImages={pathMedia.images}
+            pathAudio={pathMedia.audio}
+            pathVideo={pathMedia.video}
+          />
           {content && <MarkdownBody className="markdown-user-message" cwd={cwd} onOpenFile={onOpenFile}>{content}</MarkdownBody>}
         </div>
 

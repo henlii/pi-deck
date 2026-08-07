@@ -17,8 +17,52 @@ import {
   loadStreamingEnterAction,
   type StreamingEnterAction,
 } from "@/lib/ui-preferences";
+import { encodeFilePathForApi, joinFilePath } from "@/lib/file-paths";
+import { isAudioPath, isImagePath, isVideoPath } from "@/lib/file-types";
 
 export type { AttachedImage, ChatInputHandle } from "@/lib/types";
+
+/** 非图片附件：已上传到项目 cwd，发送时把绝对路径注入 prompt。 */
+type AttachedUpload = {
+  id: string;
+  name: string;
+  mimeType: string;
+  size: number;
+  path?: string;
+  status: "uploading" | "ready" | "error";
+  error?: string;
+};
+
+function isRasterImageFile(file: File): boolean {
+  return file.type.startsWith("image/") && file.type !== "image/svg+xml";
+}
+
+function makeUploadId(): string {
+  return `up-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/** 上传到会话 cwd；冲突时 overwrite（聊天附件语义：用户主动再传同名文件）。 */
+async function uploadFileToCwd(cwd: string, file: File): Promise<{ path: string }> {
+  const formData = new FormData();
+  formData.append("files", file, file.name);
+  const res = await fetch(
+    `/api/files/${encodeFilePathForApi(cwd)}?type=upload&conflict=overwrite`,
+    { method: "POST", body: formData },
+  );
+  const data = (await res.json().catch(() => ({}))) as {
+    uploaded?: string[];
+    errors?: Array<{ name: string; error: string }>;
+    error?: string;
+  };
+  if (!res.ok && res.status !== 207) {
+    throw new Error(data.error ?? `HTTP ${res.status}`);
+  }
+  const err = data.errors?.find((e) => e.name === file.name);
+  if (err) throw new Error(err.error);
+  const uploadedName = data.uploaded?.find((n) => n === file.name) ?? data.uploaded?.[0];
+  if (!uploadedName) throw new Error(data.error ?? "upload failed");
+  return { path: joinFilePath(cwd, uploadedName) };
+}
 
 interface ModelOption {
   provider: string;
@@ -369,30 +413,13 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     },
   }));
 
-  /** 文本类附件：插入消息正文（Pi 多模态仅支持图片；文本以围栏块注入，对齐 openchamber 附件语义的可落地子集）。 */
-  const TEXT_ATTACHMENT_EXT = /\.(txt|md|markdown|json|jsonc|ya?ml|toml|xml|html?|css|scss|less|js|jsx|ts|tsx|mjs|cjs|py|rb|go|rs|java|kt|c|cc|cpp|h|hpp|cs|php|sh|bash|zsh|fish|ps1|sql|graphql|gql|ini|cfg|conf|env|log|csv|tsv|diff|patch|svg|vue|svelte|astro)$/i;
-  const TEXT_ATTACHMENT_MAX_BYTES = 256 * 1024;
-
-  const isTextAttachment = useCallback((file: File): boolean => {
-    if (file.type.startsWith("text/")) return true;
-    if (
-      file.type === "application/json" ||
-      file.type === "application/xml" ||
-      file.type === "application/javascript" ||
-      file.type === "application/typescript" ||
-      file.type === "application/x-yaml" ||
-      file.type === "application/toml" ||
-      file.type === "application/sql" ||
-      file.type === "image/svg+xml"
-    ) {
-      return true;
-    }
-    return TEXT_ATTACHMENT_EXT.test(file.name);
-  }, []);
+  const [attachedUploads, setAttachedUploads] = useState<AttachedUpload[]>([]);
+  const attachedUploadsRef = useRef(attachedUploads);
+  attachedUploadsRef.current = attachedUploads;
 
   const processImageFiles = useCallback(async (files: File[]) => {
     if (isStreaming) return;
-    const imageFiles = files.filter((f) => f.type.startsWith("image/") && f.type !== "image/svg+xml");
+    const imageFiles = files.filter(isRasterImageFile);
     if (!imageFiles.length) return;
     const newImages = await Promise.all(
       imageFiles.map(
@@ -413,48 +440,50 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     setAttachedImages((prev) => [...prev, ...newImages]);
   }, [isStreaming]);
 
+  /**
+   * 附件策略：
+   * - 位图图片 → 多模态 AttachedImage
+   * - 其余（文本/二进制/音视频）→ 上传到会话 cwd，发送时把绝对路径注入 prompt，由 agent 自行 read
+   */
   const processAttachmentFiles = useCallback(async (files: File[]) => {
     if (isStreaming || files.length === 0) return;
-    const imageFiles = files.filter((f) => f.type.startsWith("image/") && f.type !== "image/svg+xml");
-    const textFiles = files.filter((f) => !imageFiles.includes(f) && isTextAttachment(f));
-    const skipped = files.filter((f) => !imageFiles.includes(f) && !textFiles.includes(f));
+    const imageFiles = files.filter(isRasterImageFile);
+    const otherFiles = files.filter((f) => !isRasterImageFile(f));
 
     if (imageFiles.length) await processImageFiles(imageFiles);
 
-    if (textFiles.length) {
-      const blocks: string[] = [];
-      for (const file of textFiles) {
-        if (file.size > TEXT_ATTACHMENT_MAX_BYTES) {
-          blocks.push(`<!-- ${file.name}: ${t("input_attachTooLarge")} -->`);
-          continue;
-        }
-        try {
-          const text = await file.text();
-          const fence = "```";
-          blocks.push(`${fence}${file.name}\n${text.replace(/\r\n/g, "\n")}\n${fence}`);
-        } catch {
-          blocks.push(`<!-- ${file.name}: ${t("input_attachReadFailed")} -->`);
-        }
-      }
-      if (blocks.length) {
-        setValue((prev) => {
-          const joined = blocks.join("\n\n");
-          return prev.trim() ? `${prev.replace(/\s+$/, "")}\n\n${joined}` : joined;
-        });
-        requestAnimationFrame(() => {
-          const ta = textareaRef.current;
-          if (!ta) return;
-          ta.style.height = "auto";
-          ta.style.height = `${Math.min(ta.scrollHeight, 200)}px`;
-        });
-      }
+    if (otherFiles.length === 0) return;
+    if (!cwd) {
+      window.alert(t("input_attachNeedCwd"));
+      return;
     }
 
-    if (skipped.length > 0 && imageFiles.length === 0 && textFiles.length === 0) {
-      // 全部被跳过时给可读反馈；部分成功时不打断
-      window.alert(t("input_attachUnsupported"));
-    }
-  }, [isStreaming, isTextAttachment, processImageFiles, t]);
+    const pending: AttachedUpload[] = otherFiles.map((file) => ({
+      id: makeUploadId(),
+      name: file.name,
+      mimeType: file.type || "application/octet-stream",
+      size: file.size,
+      status: "uploading" as const,
+    }));
+    setAttachedUploads((prev) => [...prev, ...pending]);
+
+    await Promise.all(
+      otherFiles.map(async (file, index) => {
+        const id = pending[index]!.id;
+        try {
+          const { path } = await uploadFileToCwd(cwd, file);
+          setAttachedUploads((prev) =>
+            prev.map((item) => (item.id === id ? { ...item, path, status: "ready" } : item))
+          );
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          setAttachedUploads((prev) =>
+            prev.map((item) => (item.id === id ? { ...item, status: "error", error: message } : item))
+          );
+        }
+      })
+    );
+  }, [cwd, isStreaming, processImageFiles, t]);
 
   const removeImage = useCallback((index: number) => {
     setAttachedImages((prev) => {
@@ -465,11 +494,19 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     });
   }, []);
 
+  const removeUpload = useCallback((id: string) => {
+    setAttachedUploads((prev) => prev.filter((item) => item.id !== id));
+  }, []);
+
   const clearImages = useCallback(() => {
     setAttachedImages((prev) => {
       prev.forEach(revokeImagePreview);
       return [];
     });
+  }, []);
+
+  const clearUploads = useCallback(() => {
+    setAttachedUploads([]);
   }, []);
 
   const clearInput = useCallback(() => {
@@ -478,10 +515,20 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     if (draftKey) clearDraft(draftKey);
     if (draftKeyRef.current && draftKeyRef.current !== draftKey) clearDraft(draftKeyRef.current);
     clearImages();
+    clearUploads();
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
     }
-  }, [clearImages, draftKey]);
+  }, [clearImages, clearUploads, draftKey]);
+
+  /** 把已就绪上传路径拼进消息正文，供 agent 用工具读取。 */
+  const composeMessageWithUploads = useCallback((base: string): string => {
+    const ready = attachedUploadsRef.current.filter((u) => u.status === "ready" && u.path);
+    if (ready.length === 0) return base;
+    const list = ready.map((u) => `- \`${u.path}\``).join("\n");
+    const block = `${t("input_attachedFilesPrompt")}\n${list}`;
+    return base.trim() ? `${base.trim()}\n\n${block}` : block;
+  }, [t]);
 
   useEffect(() => {
     if (!draftKey || draftKeyRef.current !== draftKey) return;
@@ -525,23 +572,29 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     };
   }, []);
 
+  const hasReadyUploads = attachedUploads.some((u) => u.status === "ready" && u.path);
+  const hasUploading = attachedUploads.some((u) => u.status === "uploading");
+  const hasAttachments = attachedImages.length > 0 || hasReadyUploads;
+
   const handleSend = useCallback(async () => {
-    const msg = value.trim();
-    if (!msg && !attachedImages.length) return;
+    const base = value.trim();
+    if (!base && !attachedImages.length && !hasReadyUploads) return;
     if (isStreaming) return;
+    if (hasUploading) return; // 等上传完成
     onAudioUnlock?.();
-    if (!attachedImages.length && msg.startsWith("/") && onBuiltinCommand) {
-      const result = await onBuiltinCommand(msg);
+    if (!attachedImages.length && !hasReadyUploads && base.startsWith("/") && onBuiltinCommand) {
+      const result = await onBuiltinCommand(base);
       if (result.handled) {
         if (!result.error) clearInput();
         return;
       }
     }
+    const msg = composeMessageWithUploads(base);
     // P0-1：仅在发送确认（消息已提交 / 未抛错）后清空 draft；
     // 发送失败时 draft 由 useAgentSession 经 insertIfEmpty 恢复，此处保留不清。
     const submitted = await onSend(msg, attachedImages.length ? attachedImages : undefined);
     if (submitted !== false) clearInput();
-  }, [value, attachedImages, isStreaming, onBuiltinCommand, onSend, clearInput, onAudioUnlock]);
+  }, [value, attachedImages, hasReadyUploads, hasUploading, isStreaming, onBuiltinCommand, onSend, clearInput, onAudioUnlock, composeMessageWithUploads]);
 
   const slashQuery = value.startsWith("/") && !/\s/.test(value.slice(1))
     ? value.slice(1).toLowerCase()
@@ -580,8 +633,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const slashCommandCountLabel = filteredSlashCommands.length === 1
     ? t(slashQuery ? "input_matchCountOne" : "input_commandCountOne")
     : t(slashQuery ? "input_matchCount" : "input_commandCount", { count: filteredSlashCommands.length });
-  const hasInputText = Boolean(value.trim());
-  const canQueueStreamingMessage = hasInputText && attachedImages.length === 0;
+  const hasInputText = Boolean(value.trim()) || hasReadyUploads;
+  const canQueueStreamingMessage = hasInputText && attachedImages.length === 0 && !hasUploading;
 
   // ── @ file autocomplete ──────────────────────────────────────────────────
   // Recomputed from the text before the caret on every change/caret move.
@@ -736,28 +789,30 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   }, []);
 
   const sendQueued = useCallback((mode: "steer" | "followup") => {
-    const msg = value.trim();
-    if (!msg && !attachedImages.length) return;
+    const base = value.trim();
+    // 流式期：图片仍不可排队；路径附件是文本可排队
+    if (!base && !hasReadyUploads) return;
     if (attachedImages.length) return;
+    if (hasUploading) return;
     onAudioUnlock?.();
+    const msg = composeMessageWithUploads(base);
     const streamingBehavior = mode === "steer" ? "steer" : "followUp";
     if (msg.startsWith("/") && onPromptWithStreamingBehavior) {
-      onPromptWithStreamingBehavior(msg, streamingBehavior, attachedImages.length ? attachedImages : undefined);
+      onPromptWithStreamingBehavior(msg, streamingBehavior, undefined);
       clearInput();
       return;
     }
     if (mode === "steer" && onSteer) {
-      onSteer(msg, attachedImages.length ? attachedImages : undefined);
+      onSteer(msg, undefined);
     } else if (mode === "followup" && onFollowUp) {
-      onFollowUp(msg, attachedImages.length ? attachedImages : undefined);
+      onFollowUp(msg, undefined);
     } else if (mode === "steer" && onFollowUp) {
-      // 无 steer 回调时降级为队列
-      onFollowUp(msg, attachedImages.length ? attachedImages : undefined);
+      onFollowUp(msg, undefined);
     } else if (mode === "followup" && onSteer) {
-      onSteer(msg, attachedImages.length ? attachedImages : undefined);
+      onSteer(msg, undefined);
     }
     clearInput();
-  }, [value, attachedImages, onPromptWithStreamingBehavior, onSteer, onFollowUp, clearInput, onAudioUnlock]);
+  }, [value, attachedImages.length, hasReadyUploads, hasUploading, onPromptWithStreamingBehavior, onSteer, onFollowUp, clearInput, onAudioUnlock, composeMessageWithUploads]);
 
   const getNextSlashIndex = useCallback((direction: "up" | "down" | "left" | "right") => {
     const lastIndex = filteredSlashCommands.length - 1;
@@ -1297,11 +1352,11 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
             {compactResultText}
           </div>
         )}
-        {/* Image previews */}
-        {attachedImages.length > 0 && (
-          <div style={{ display: "flex", gap: 6, marginBottom: 6, flexWrap: "wrap" }}>
+        {/* 图片缩略图 + 已上传文件芯片 */}
+        {(attachedImages.length > 0 || attachedUploads.length > 0) && (
+          <div style={{ display: "flex", gap: 6, marginBottom: 6, flexWrap: "wrap", alignItems: "center" }}>
             {attachedImages.map((img, i) => (
-              <div key={i} style={{ position: "relative", flexShrink: 0 }}>
+              <div key={`img-${i}`} style={{ position: "relative", flexShrink: 0 }}>
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
                   src={img.previewUrl}
@@ -1309,7 +1364,9 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   style={{ width: 56, height: 56, objectFit: "cover", borderRadius: 6, border: "1px solid var(--border)", display: "block" }}
                 />
                 <button
+                  type="button"
                   onClick={() => removeImage(i)}
+                  aria-label={t("input_removeAttachment")}
                   style={{
                     position: "absolute", top: -4, right: -4,
                     width: 16, height: 16, borderRadius: "50%",
@@ -1324,6 +1381,55 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 </button>
               </div>
             ))}
+            {attachedUploads.map((item) => {
+              const kind = isVideoPath(item.name) ? "video" : isAudioPath(item.name) ? "audio" : isImagePath(item.name) ? "image" : "file";
+              const statusColor =
+                item.status === "error" ? "var(--status-danger)"
+                  : item.status === "uploading" ? "var(--text-dim)"
+                    : "var(--text-muted)";
+              return (
+                <div
+                  key={item.id}
+                  title={item.error || item.path || item.name}
+                  style={{
+                    position: "relative",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                    maxWidth: 220,
+                    padding: "6px 10px",
+                    borderRadius: 8,
+                    border: `1px solid ${item.status === "error" ? "color-mix(in srgb, var(--status-danger) 40%, var(--border))" : "var(--border)"}`,
+                    background: "var(--bg-panel)",
+                    fontSize: 12,
+                    color: statusColor,
+                  }}
+                >
+                  <span style={{ flexShrink: 0, fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4, color: "var(--text-dim)" }}>
+                    {kind}
+                  </span>
+                  <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {item.status === "uploading" ? t("input_uploadingAttachment") : item.name}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => removeUpload(item.id)}
+                    aria-label={t("input_removeAttachment")}
+                    style={{
+                      flexShrink: 0,
+                      width: 16, height: 16, borderRadius: "50%",
+                      background: "var(--bg)", border: "1px solid var(--border)",
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      cursor: "pointer", padding: 0, color: "var(--text-muted)",
+                    }}
+                  >
+                    <svg width="8" height="8" viewBox="0 0 8 8" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+                      <line x1="1" y1="1" x2="7" y2="7" /><line x1="7" y1="1" x2="1" y2="7" />
+                    </svg>
+                  </button>
+                </div>
+              );
+            })}
           </div>
         )}
 
@@ -1599,7 +1705,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
               background: "none",
               border: "none",
               borderRadius: 9,
-              color: attachedImages.length ? "var(--accent)" : "var(--text-muted)",
+              color: hasAttachments ? "var(--accent)" : "var(--text-muted)",
               cursor: isStreaming ? "not-allowed" : "pointer",
               opacity: isStreaming ? 0.5 : 1,
               transition: "background 0.12s, color 0.12s",
@@ -1608,11 +1714,11 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
             onMouseEnter={(e) => {
               if (isStreaming) return;
               e.currentTarget.style.background = "var(--bg-hover)";
-              e.currentTarget.style.color = attachedImages.length ? "var(--accent)" : "var(--text)";
+              e.currentTarget.style.color = hasAttachments ? "var(--accent)" : "var(--text)";
             }}
             onMouseLeave={(e) => {
               e.currentTarget.style.background = "none";
-              e.currentTarget.style.color = attachedImages.length ? "var(--accent)" : "var(--text-muted)";
+              e.currentTarget.style.color = hasAttachments ? "var(--accent)" : "var(--text-muted)";
             }}
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -1675,7 +1781,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
             const streamingSend = isStreaming && (onSteer || onFollowUp);
             const canSend = streamingSend
               ? canQueueStreamingMessage
-              : Boolean(value.trim() || attachedImages.length);
+              : Boolean((value.trim() || attachedImages.length || hasReadyUploads) && !hasUploading);
             const sendTooltip = streamingSend
               ? (attachedImages.length
                 ? t("input_imageQueueDisabled")
