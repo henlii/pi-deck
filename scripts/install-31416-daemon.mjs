@@ -169,14 +169,17 @@ function buildUnitContent(nodeBin, nextCli, passwordSource) {
 		`WorkingDirectory=${repository}`,
 		// 绝对稳定路径：仓库内 Next CLI；生产模式（next start）避免 dev 按需
 		// 编译抖动与 V8 堆膨胀；PIDANCE_DIST_DIR 隔离产物，不污染 dev 的 .next
-		`ExecStartPre=-${nodeBin} ${nextCli} build --webpack`,
+		//
+		// 故意不在 ExecStartPre 里 next build：
+		// - 代码更新由 local-deploy.mjs 先 build 一次再 systemctl restart（单次构建）
+		// - 崩溃/开机自启直接复用已有 .next-public，秒级起来；避免与 local-deploy 叠成双 build（~10min）
 		`ExecStart=${nodeBin} ${nextCli} start -H ${host} -p ${String(port)}`,
-		// ExecStartPre 构建失败不阻塞启动（用旧产物），崩溃自动拉起；systemctl stop 正常停止不触发重启
+		// 崩溃自动拉起；systemctl stop 正常停止不触发重启
 		"Restart=always",
 		"RestartSec=3",
 		"KillMode=control-group",
-		// 首次/增量 build 需要数分钟，放宽启动超时（ExecStartPre 构建）
-		"TimeoutStartSec=600",
+		// 无 ExecStartPre build，启动只需 next start（秒级）
+		"TimeoutStartSec=60",
 		"TimeoutStopSec=30",
 		"LimitNOFILE=65536",
 		`MemoryHigh=${memoryHigh}`,
