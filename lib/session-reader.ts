@@ -728,6 +728,48 @@ function omitToolResultBase64Images(message: AgentMessage): AgentMessage {
   return { ...message, content };
 }
 
+/**
+ * 初始历史载荷剥离 toolResult.details 中的大字段（edit/write 的 diff/patch 等）。
+ * 与 deferThinking 同理：首屏只带轻量摘要，展开工具卡时再按需拉取完整 details。
+ *
+ * 只剥离白名单大字段，保留 tasks（todo）、results（subagent）等 UI 依赖字段。
+ */
+const HEAVY_TOOL_RESULT_DETAIL_KEYS = new Set([
+  "diff",
+  "patch",
+  "diffData",
+  // readSeek_* 工具把 seek 状态塞进 details，体积常达数 KB～数十 KB
+  "readSeekValue",
+]);
+
+/** details 上标记「有重字段被延迟」；客户端据此按 toolCallId 懒加载。 */
+export const TOOL_RESULT_DETAILS_DEFERRED_FLAG = "deferredHeavy" as const;
+
+export function isToolResultDetailsDeferred(details: unknown): boolean {
+  return isRecord(details) && details[TOOL_RESULT_DETAILS_DEFERRED_FLAG] === true;
+}
+
+function omitHeavyToolResultDetails(message: AgentMessage): AgentMessage {
+  if (message.role !== "toolResult") return message;
+  if (!isRecord(message.details)) return message;
+
+  let changed = false;
+  const next: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(message.details)) {
+    if (key === TOOL_RESULT_DETAILS_DEFERRED_FLAG) continue;
+    if (HEAVY_TOOL_RESULT_DETAIL_KEYS.has(key)) {
+      changed = true;
+      continue;
+    }
+    next[key] = value;
+  }
+  if (!changed) return message;
+  return {
+    ...message,
+    details: { ...next, [TOOL_RESULT_DETAILS_DEFERRED_FLAG]: true },
+  };
+}
+
 // Convert a session entry on the active branch into a UI message.
 // Returns null for entries that do not map to chat history (metadata, non-message types).
 function entryToUiMessage(
@@ -741,9 +783,12 @@ function entryToUiMessage(
   // normalizeToolCalls is a secondary guard (returns non-assistant messages as-is).
   switch (entry.type) {
     case "message": {
-      const message = options.deferToolResultImages
-        ? omitToolResultBase64Images(normalizeToolCalls(entry.message))
-        : normalizeToolCalls(entry.message);
+      let message = normalizeToolCalls(entry.message);
+      // deferMedia：剥离 toolResult 内嵌 base64 图 + 重 details（diff/patch 等）
+      if (options.deferToolResultImages) {
+        message = omitToolResultBase64Images(message);
+        message = omitHeavyToolResultDetails(message);
+      }
       if (!options.deferThinking || message.role !== "assistant") return message;
       return {
         ...message,

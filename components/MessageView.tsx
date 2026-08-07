@@ -145,6 +145,42 @@ function loadThinkingContent(sessionId: string, entryId: string, blockIndex: num
   return request;
 }
 
+const MAX_TOOL_DETAILS_CACHE_ENTRIES = 50;
+const toolDetailsCache = new Map<string, Promise<unknown>>();
+
+function isDeferredHeavyToolDetails(details: unknown): boolean {
+  return typeof details === "object" && details !== null && !Array.isArray(details)
+    && (details as { deferredHeavy?: unknown }).deferredHeavy === true;
+}
+
+function loadToolResultDetails(sessionId: string, toolCallId: string): Promise<unknown> {
+  const key = `${sessionId}:${toolCallId}`;
+  const cached = toolDetailsCache.get(key);
+  if (cached) {
+    toolDetailsCache.delete(key);
+    toolDetailsCache.set(key, cached);
+    return cached;
+  }
+
+  const request = fetch(
+    `/api/sessions/${encodeURIComponent(sessionId)}/tool-results/${encodeURIComponent(toolCallId)}`,
+  ).then(async (response) => {
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json() as { details?: unknown };
+    return data.details ?? null;
+  }).catch((error) => {
+    toolDetailsCache.delete(key);
+    throw error;
+  });
+
+  toolDetailsCache.set(key, request);
+  if (toolDetailsCache.size > MAX_TOOL_DETAILS_CACHE_ENTRIES) {
+    const oldestKey = toolDetailsCache.keys().next().value;
+    if (oldestKey) toolDetailsCache.delete(oldestKey);
+  }
+  return request;
+}
+
 interface Props {
   message: AgentMessage;
   isStreaming?: boolean;
@@ -707,7 +743,15 @@ function BlockView({ block, toolResults, toolExecutionMap, isStreaming, streamin
     const tc = block as ToolCallContent;
     const result = toolResults?.get(tc.toolCallId);
     const duration = toolCallDurations?.get(tc.toolCallId);
-    return <ToolCallBlock block={tc} result={result} snapshot={toolExecutionMap?.get(tc.toolCallId)} duration={duration} />;
+    return (
+      <ToolCallBlock
+        block={tc}
+        result={result}
+        snapshot={toolExecutionMap?.get(tc.toolCallId)}
+        duration={duration}
+        sessionId={sessionId}
+      />
+    );
   }
   return null;
 }
@@ -799,29 +843,41 @@ function ThinkingBlock({ block, duration, sessionId, entryId, blockIndex }: {
 }
 
 
-function ToolCallBlock({ block, result, snapshot, duration }: { block: ToolCallContent; result?: ToolResultMessage; snapshot?: ToolExecutionSnapshot; duration?: number }) {
+function ToolCallBlock({ block, result, snapshot, duration, sessionId }: {
+  block: ToolCallContent;
+  result?: ToolResultMessage;
+  snapshot?: ToolExecutionSnapshot;
+  duration?: number;
+  sessionId?: string;
+}) {
   const { t } = useI18n();
   const [expandedOverride, setExpandedOverride] = useState<boolean | null>(null);
   const [now, setNow] = useState(() => Date.now());
+  const [resolvedDetails, setResolvedDetails] = useState<unknown>(undefined);
+  const [detailsLoading, setDetailsLoading] = useState(false);
   const outputRef = useRef<HTMLPreElement>(null);
   const followOutputRef = useRef(true);
   const isRunning = snapshot?.status === "running";
   const expanded = expandedOverride ?? isRunning;
   const isEditTool = isEditToolName(block.toolName);
-  const resultDiff = result && !result.isError ? getResultDiff(result) : null;
+  // 首屏可能 deferredHeavy：展开后懒加载完整 details 再算 diff
+  const effectiveResult = result && resolvedDetails !== undefined
+    ? { ...result, details: resolvedDetails }
+    : result;
+  const resultDiff = effectiveResult && !effectiveResult.isError ? getResultDiff(effectiveResult) : null;
 
   // Result display
-  const resultText = result
-    ? result.content.filter((b): b is { type: "text"; text: string } => b.type === "text").map((b) => b.text).join("\n")
+  const resultText = effectiveResult
+    ? effectiveResult.content.filter((b): b is { type: "text"; text: string } => b.type === "text").map((b) => b.text).join("\n")
     : null;
   const resultIsEmpty = resultText === null ? false : (resultText.trim() === "(no output)" || resultText.trim() === "");
-  const isError = result?.isError ?? false;
+  const isError = effectiveResult?.isError ?? false;
   const status = snapshot?.status;
   const statusColor = getToolStatusColor(status, isError);
   const command = getToolCommand(block, snapshot);
   const renderedCallLines = getRenderableAnsiLines(snapshot?.renderedCallLines ?? block.renderedCallLines);
   const renderedLiveLines = getRenderableAnsiLines(snapshot?.renderedLines);
-  const renderedResultLines = getRenderableAnsiLines(snapshot?.renderedResultLines ?? result?.renderedResultLines);
+  const renderedResultLines = getRenderableAnsiLines(snapshot?.renderedResultLines ?? effectiveResult?.renderedResultLines);
   const elapsedMs = snapshot
     ? Math.max(0, (snapshot.status === "running" ? now : (snapshot.endedAt ?? snapshot.startedAt)) - snapshot.startedAt)
     : duration === undefined ? undefined : duration * 1000;
@@ -837,6 +893,27 @@ function ToolCallBlock({ block, result, snapshot, duration }: { block: ToolCallC
     if (!expanded || !output || !followOutputRef.current) return;
     output.scrollTop = output.scrollHeight;
   }, [expanded, snapshot?.output, snapshot?.renderedLines]);
+
+  // 展开工具卡且 details 被首屏剥离时，按 toolCallId 补全 diff/patch
+  useEffect(() => {
+    if (!expanded || !result || !sessionId) return;
+    if (!isDeferredHeavyToolDetails(result.details)) return;
+    if (resolvedDetails !== undefined || detailsLoading) return;
+    let cancelled = false;
+    setDetailsLoading(true);
+    void loadToolResultDetails(sessionId, block.toolCallId)
+      .then((details) => {
+        if (!cancelled) setResolvedDetails(details);
+      })
+      .catch(() => {
+        // 失败时保留轻量 details + 文本结果，不阻塞展开
+        if (!cancelled) setResolvedDetails(result.details);
+      })
+      .finally(() => {
+        if (!cancelled) setDetailsLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [expanded, result, sessionId, block.toolCallId, resolvedDetails, detailsLoading]);
 
   return (
     <div
@@ -949,9 +1026,13 @@ function ToolCallBlock({ block, result, snapshot, duration }: { block: ToolCallC
       )}
 
       {/* ── Paired result — only shown when expanded ── */}
-      {expanded && result && (
+      {expanded && effectiveResult && (
         renderedResultLines ? (
           <AnsiToolLines lines={renderedResultLines} statusColor={statusColor} />
+        ) : detailsLoading && isDeferredHeavyToolDetails(result?.details) && !resultDiff ? (
+          <div style={{ padding: "8px 10px", borderTop: "1px solid var(--border)", color: "var(--text-dim)", fontSize: 11 }}>
+            {t("message_thinkingLoading")}
+          </div>
         ) : resultDiff ? (
           <PairedDiffResult
             diff={resultDiff}
