@@ -1229,7 +1229,9 @@ span.linenumber {
   flex-shrink: 0;
 }
 .guide-select {
-  max-width: min(260px, 34vw);
+  /* 项目/分支选择固定宽度（不再随内容伸缩）；溢出省略。 */
+  width: 200px;
+  max-width: 200px;
   border: none;
   background: transparent;
   color: var(--text);

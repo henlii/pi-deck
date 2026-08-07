@@ -57,10 +57,17 @@ function writePersistedWorktrees(entries: Map<string, PersistedWorktreeEntry>): 
 
 type Props = {
   /** 当前新会话目标目录（项目根或工作树路径）；null = 未选择 */
-  targetCwd: string | null;
-  /** 选择目标（OpenChamber setNewSessionDraftTarget：仅记录，不创建/不跳转） */
-  onTargetChange: (cwd: string | null) => void;
-};
+   targetCwd: string | null;
+   /** 选择目标（OpenChamber setNewSessionDraftTarget：仅记录，不创建/不跳转） */
+   onTargetChange: (cwd: string | null) => void;
+ };
+
+/** 项目下拉显示名：取路径末段（项目名）；全路径放 tooltip。 */
+function projectDisplayName(cwd: string): string {
+  const trimmed = cwd.replace(/[\\/]+$/, "");
+  const seg = trimmed.split(/[\\/]/).filter(Boolean).pop();
+  return seg || cwd;
+}
 
 export function NewSessionGuide({ targetCwd, onTargetChange }: Props) {
   const { t } = useI18n();
@@ -258,8 +265,8 @@ export function NewSessionGuide({ targetCwd, onTargetChange }: Props) {
                 : t("guide_projectPlaceholder")}
           </option>
           {projects.map((project) => (
-            <option key={project.cwd} value={project.cwd}>
-              {project.cwd}
+            <option key={project.cwd} value={project.cwd} title={`${project.cwd} · ${t("guide_sessionCount", { count: project.count })}`}>
+              {projectDisplayName(project.cwd)}
             </option>
           ))}
         </select>
