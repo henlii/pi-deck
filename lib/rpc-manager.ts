@@ -1636,6 +1636,14 @@ export async function startRpcSession(
     // can never disagree about which project they describe.
     const projectTrusted = resolveProjectTrustedForSession(cwd, agentDir);
     const settingsManager = SettingsManager.create(cwd, agentDir, { projectTrusted });
+    // 产品固化：消息队列投递一律 all（去掉 one-at-a-time 配置面）。
+    // 仅内存生效即可覆盖本会话；磁盘若仍是旧值，下次保存 defaults 时也会写回 all。
+    try {
+      if (settingsManager.getSteeringMode() !== "all") settingsManager.setSteeringMode("all");
+      if (settingsManager.getFollowUpMode() !== "all") settingsManager.setFollowUpMode("all");
+    } catch {
+      // SettingsManager 缺 setter 时不阻断会话启动
+    }
 
     // Build services first so extension-registered providers are available
     // before the SDK restores the saved model from the session file.

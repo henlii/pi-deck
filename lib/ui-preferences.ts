@@ -358,3 +358,54 @@ export function saveFileExplorerState(cwd: string, state: { expanded: string[]; 
   if (typeof window === "undefined") return;
   saveFileExplorerStateToStorage(window.localStorage, cwd, state);
 }
+
+// ── 流式期回车默认动作（桌面；手机端回车仅换行）──────────────────────────────
+
+/**
+ * Agent 运行中桌面 Enter 的默认动作：
+ * - followUp（默认）：排队跟进；Ctrl/Cmd+Enter → 引导（steer）
+ * - steer：立即引导；Ctrl/Cmd+Enter → 排队
+ * 发送按钮始终走 followUp（队列）。
+ */
+export type StreamingEnterAction = "followUp" | "steer";
+
+export const STREAMING_ENTER_STORAGE_KEY = "pidance.streamingEnterDefault";
+export const DEFAULT_STREAMING_ENTER_ACTION: StreamingEnterAction = "followUp";
+
+export function parseStreamingEnterAction(value: unknown): StreamingEnterAction {
+  return value === "steer" ? "steer" : "followUp";
+}
+
+export function loadStreamingEnterActionFromStorage(storage: StorageLike): StreamingEnterAction {
+  try {
+    const raw = storage.getItem(STREAMING_ENTER_STORAGE_KEY);
+    if (raw === null) return DEFAULT_STREAMING_ENTER_ACTION;
+    try {
+      return parseStreamingEnterAction(JSON.parse(raw) as unknown);
+    } catch {
+      // 兼容直接存字符串
+      return parseStreamingEnterAction(raw);
+    }
+  } catch {
+    return DEFAULT_STREAMING_ENTER_ACTION;
+  }
+}
+
+export function loadStreamingEnterAction(): StreamingEnterAction {
+  if (typeof window === "undefined") return DEFAULT_STREAMING_ENTER_ACTION;
+  return loadStreamingEnterActionFromStorage(window.localStorage);
+}
+
+export function saveStreamingEnterActionToStorage(storage: StorageLike, action: StreamingEnterAction): void {
+  try {
+    storage.setItem(STREAMING_ENTER_STORAGE_KEY, JSON.stringify(parseStreamingEnterAction(action)));
+  } catch {
+    // 忽略存储配额 / 隐私模式错误
+  }
+}
+
+export function saveStreamingEnterAction(action: StreamingEnterAction): void {
+  if (typeof window === "undefined") return;
+  saveStreamingEnterActionToStorage(window.localStorage, action);
+}
+

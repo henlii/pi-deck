@@ -13,6 +13,10 @@ import { useIsMobile } from "@/hooks/useIsMobile";
 import { useAnchoredOverlay } from "@/hooks/useAnchoredOverlay";
 import { useI18n } from "@/lib/i18n";
 import type { AttachedImage, ChatInputHandle } from "@/lib/types";
+import {
+  loadStreamingEnterAction,
+  type StreamingEnterAction,
+} from "@/lib/ui-preferences";
 
 export type { AttachedImage, ChatInputHandle } from "@/lib/types";
 
@@ -225,6 +229,23 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
 }: Props, ref) {
   const { t } = useI18n();
   const isMobile = useIsMobile();
+  /** 桌面流式期 Enter 默认动作（followUp/steer）；手机端回车仅换行。 */
+  const [streamingEnterDefault, setStreamingEnterDefault] = useState<StreamingEnterAction>("followUp");
+  useEffect(() => {
+    setStreamingEnterDefault(loadStreamingEnterAction());
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === "pidance.streamingEnterDefault") {
+        setStreamingEnterDefault(loadStreamingEnterAction());
+      }
+    };
+    const onLocal = () => setStreamingEnterDefault(loadStreamingEnterAction());
+    window.addEventListener("storage", onStorage);
+    window.addEventListener("pidance:streaming-enter-changed", onLocal);
+    return () => {
+      window.removeEventListener("storage", onStorage);
+      window.removeEventListener("pidance:streaming-enter-changed", onLocal);
+    };
+  }, []);
   const [value, setValue] = useState(() => (draftKey ? getDraft(draftKey)?.value ?? "" : ""));
   const [modelDropdownOpen, setModelDropdownOpen] = useState(false);
   const [toolDropdownOpen, setToolDropdownOpen] = useState(false);
@@ -729,6 +750,11 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
       onSteer(msg, attachedImages.length ? attachedImages : undefined);
     } else if (mode === "followup" && onFollowUp) {
       onFollowUp(msg, attachedImages.length ? attachedImages : undefined);
+    } else if (mode === "steer" && onFollowUp) {
+      // 无 steer 回调时降级为队列
+      onFollowUp(msg, attachedImages.length ? attachedImages : undefined);
+    } else if (mode === "followup" && onSteer) {
+      onSteer(msg, attachedImages.length ? attachedImages : undefined);
     }
     clearInput();
   }, [value, attachedImages, onPromptWithStreamingBehavior, onSteer, onFollowUp, clearInput, onAudioUnlock]);
@@ -855,17 +881,26 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
         return;
       }
 
+      // 手机端：Enter 仅换行，通过发送按钮提交。
+      // 桌面：Enter = 配置的默认动作；Ctrl/Cmd+Enter = 相反动作（流式期）。
+      // 非流式：Enter / Ctrl+Enter 均发送。
       if (e.key === "Enter" && !e.shiftKey) {
+        if (isMobile) return;
         e.preventDefault();
         if (isStreaming && (onSteer || onFollowUp)) {
-          // Default Enter sends as steer if available, else followup
-          sendQueued(onSteer ? "steer" : "followup");
+          const modifier = e.ctrlKey || e.metaKey;
+          const defaultIsQueue = streamingEnterDefault !== "steer";
+          // 默认队列：Enter=followup，Ctrl+Enter=steer；默认引导则相反。
+          const mode: "steer" | "followup" = modifier
+            ? (defaultIsQueue ? "steer" : "followup")
+            : (defaultIsQueue ? "followup" : "steer");
+          sendQueued(mode);
         } else {
-          handleSend();
+          void handleSend();
         }
       }
     },
-    [isStreaming, onSteer, onFollowUp, onAbort, slashMenuOpen, slashQuery, filteredSlashCommands, slashActiveIndex, applySlashCommand, sendQueued, handleSend, getNextSlashIndex, atMenuOpen, atQuery, atMatches, atActiveIndex, applyAtCompletion]
+    [isStreaming, isMobile, streamingEnterDefault, onSteer, onFollowUp, onAbort, slashMenuOpen, slashQuery, filteredSlashCommands, slashActiveIndex, applySlashCommand, sendQueued, handleSend, getNextSlashIndex, atMenuOpen, atQuery, atMatches, atActiveIndex, applyAtCompletion]
   );
 
   const handleInput = useCallback(() => {
@@ -1635,88 +1670,53 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
             }}
           />
 
-          {isStreaming ? (
-            <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0, alignSelf: "flex-end" }}>
-              {onSteer && (
-                <button
-                  onClick={() => sendQueued("steer")}
-                  disabled={!canQueueStreamingMessage}
-                  title={attachedImages.length ? t("input_imageQueueDisabled") : t("input_steerTooltip")}
-                  data-tooltip={attachedImages.length ? t("input_imageQueueDisabled") : t("input_steerTooltip")}
-                  className="instant-tooltip tooltip-up"
-                  style={{
-                    display: "flex", alignItems: "center", gap: 5,
-                    padding: "7px 12px",
-                    background: canQueueStreamingMessage ? "color-mix(in srgb, var(--status-warning) 12%, transparent)" : "none",
-                    border: "1px solid color-mix(in srgb, var(--status-warning) 35%, transparent)",
-                    borderRadius: 8,
-                    color: canQueueStreamingMessage ? "var(--status-warning)" : "var(--text-dim)",
-                    cursor: canQueueStreamingMessage ? "pointer" : "not-allowed",
-                    fontSize: 13, fontWeight: 600, letterSpacing: "-0.01em",
-                    transition: "background 0.12s",
-                  }}
-                >
-                  <svg width="12" height="12" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M5 1 L9 5 L5 9" /><line x1="1" y1="5" x2="9" y2="5" />
-                  </svg>
-                  {t("input_steer")}
-                </button>
-              )}
-              {onFollowUp && (
-                <button
-                  onClick={() => sendQueued("followup")}
-                  disabled={!canQueueStreamingMessage}
-                  title={attachedImages.length ? t("input_imageQueueDisabled") : t("input_followUpTooltip")}
-                  data-tooltip={attachedImages.length ? t("input_imageQueueDisabled") : t("input_followUpTooltip")}
-                  className="instant-tooltip tooltip-up"
-                  style={{
-                    display: "flex", alignItems: "center", gap: 5,
-                    padding: "7px 12px",
-                    background: canQueueStreamingMessage ? "color-mix(in srgb, var(--status-unread) 12%, transparent)" : "none",
-                    border: "1px solid color-mix(in srgb, var(--status-unread) 35%, transparent)",
-                    borderRadius: 8,
-                    color: canQueueStreamingMessage ? "var(--status-unread)" : "var(--text-dim)",
-                    cursor: canQueueStreamingMessage ? "pointer" : "not-allowed",
-                    fontSize: 13, fontWeight: 600, letterSpacing: "-0.01em",
-                    transition: "background 0.12s",
-                  }}
-                >
-                  <svg width="12" height="12" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                    <line x1="5" y1="1" x2="5" y2="6" /><polyline points="2.5 3.5 5 1 7.5 3.5" />
-                    <line x1="2" y1="9" x2="8" y2="9" />
-                  </svg>
-                  {t("input_followUp")}
-                </button>
-              )}
-            </div>
-          ) : (
-            <button
-              onClick={handleSend}
-              disabled={!value.trim() && !attachedImages.length}
-              style={{
-                flexShrink: 0,
-                alignSelf: "flex-end",
-                display: "flex", alignItems: "center", gap: 6,
-                padding: "7px 14px",
-                background: (value.trim() || attachedImages.length) ? "var(--accent)" : "var(--bg-panel)",
-                border: "none",
-                borderRadius: 8,
-                color: (value.trim() || attachedImages.length) ? "var(--accent-foreground)" : "var(--text-dim)",
-                cursor: (value.trim() || attachedImages.length) ? "pointer" : "not-allowed",
-                fontSize: 13,
-                fontWeight: 600,
-                letterSpacing: "-0.01em",
-                boxShadow: (value.trim() || attachedImages.length) ? "0 1px 3px color-mix(in srgb, var(--accent) 30%, transparent)" : "none",
-                transition: "background 0.15s, box-shadow 0.15s",
-              }}
-            >
-              <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <line x1="2" y1="7" x2="11" y2="7" />
-                <polyline points="7.5 3 12 7 7.5 11" />
-              </svg>
-              {t("input_send")}
-            </button>
-          )}
+          {(() => {
+            // 流式期：发送按钮默认队列（follow-up）；引导仅通过桌面 Ctrl/Cmd+Enter（若配置默认引导则 Enter 引导）。
+            const streamingSend = isStreaming && (onSteer || onFollowUp);
+            const canSend = streamingSend
+              ? canQueueStreamingMessage
+              : Boolean(value.trim() || attachedImages.length);
+            const sendTooltip = streamingSend
+              ? (attachedImages.length
+                ? t("input_imageQueueDisabled")
+                : t("input_sendQueueTooltip"))
+              : undefined;
+            return (
+              <button
+                type="button"
+                onClick={() => {
+                  if (streamingSend) sendQueued("followup");
+                  else void handleSend();
+                }}
+                disabled={!canSend}
+                title={sendTooltip}
+                data-tooltip={sendTooltip}
+                className={sendTooltip ? "instant-tooltip tooltip-up" : undefined}
+                style={{
+                  flexShrink: 0,
+                  alignSelf: "flex-end",
+                  display: "flex", alignItems: "center", gap: 6,
+                  padding: "7px 14px",
+                  background: canSend ? "var(--accent)" : "var(--bg-panel)",
+                  border: "none",
+                  borderRadius: 8,
+                  color: canSend ? "var(--accent-foreground)" : "var(--text-dim)",
+                  cursor: canSend ? "pointer" : "not-allowed",
+                  fontSize: 13,
+                  fontWeight: 600,
+                  letterSpacing: "-0.01em",
+                  boxShadow: canSend ? "0 1px 3px color-mix(in srgb, var(--accent) 30%, transparent)" : "none",
+                  transition: "background 0.15s, box-shadow 0.15s",
+                }}
+              >
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="2" y1="7" x2="11" y2="7" />
+                  <polyline points="7.5 3 12 7 7.5 11" />
+                </svg>
+                {t("input_send")}
+              </button>
+            );
+          })()}
           </div>
         </div>
 

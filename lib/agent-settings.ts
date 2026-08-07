@@ -164,20 +164,12 @@ export function parseAgentSettingsPatch(
     }
   }
 
+  // steeringMode / followUpMode 已产品固化为 "all"，不再接受客户端改写。
   if ("steeringMode" in body) {
-    if (isQueueMode(body.steeringMode)) {
-      patch.steeringMode = body.steeringMode;
-    } else {
-      errors.push({ field: "steeringMode", message: 'steeringMode 须为 "all" | "one-at-a-time"' });
-    }
+    errors.push({ field: "steeringMode", message: "steeringMode 已固定为 all，不可配置" });
   }
-
   if ("followUpMode" in body) {
-    if (isQueueMode(body.followUpMode)) {
-      patch.followUpMode = body.followUpMode;
-    } else {
-      errors.push({ field: "followUpMode", message: 'followUpMode 须为 "all" | "one-at-a-time"' });
-    }
+    errors.push({ field: "followUpMode", message: "followUpMode 已固定为 all，不可配置" });
   }
 
   if ("compactionEnabled" in body) {
@@ -271,12 +263,9 @@ export async function applyAgentSettingsPatch(
   if (patch.defaultThinkingLevel !== undefined) {
     manager.setDefaultThinkingLevel(patch.defaultThinkingLevel ?? "off");
   }
-  if (patch.steeringMode !== undefined) {
-    manager.setSteeringMode(patch.steeringMode);
-  }
-  if (patch.followUpMode !== undefined) {
-    manager.setFollowUpMode(patch.followUpMode);
-  }
+  // 队列投递策略固定为 all（一次可排队多条，不再暴露 one-at-a-time）。
+  manager.setSteeringMode("all");
+  manager.setFollowUpMode("all");
   if (patch.compactionEnabled !== undefined) {
     manager.setCompactionEnabled(patch.compactionEnabled);
   }
@@ -287,4 +276,4 @@ export async function applyAgentSettingsPatch(
   await manager.flush();
   return projectAgentSettingsView(manager);
 }
-
+

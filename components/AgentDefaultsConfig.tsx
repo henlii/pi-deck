@@ -6,8 +6,12 @@ import {
   THINKING_LEVELS,
   type AgentSettingsView,
   type AgentThinkingLevel,
-  type QueueMode,
 } from "@/lib/agent-settings";
+import {
+  loadStreamingEnterAction,
+  saveStreamingEnterAction,
+  type StreamingEnterAction,
+} from "@/lib/ui-preferences";
 
 interface AgentDefaultsConfigProps {
   cwd: string | null;
@@ -45,14 +49,10 @@ const selectStyle: React.CSSProperties = {
   cursor: "pointer",
 };
 
-const QUEUE_OPTIONS: QueueMode[] = ["one-at-a-time", "all"];
-
 type Draft = {
   defaultProvider: string;
   defaultModel: string;
   defaultThinkingLevel: AgentThinkingLevel | "";
-  steeringMode: QueueMode;
-  followUpMode: QueueMode;
   compactionEnabled: boolean;
   retryEnabled: boolean;
 };
@@ -62,8 +62,6 @@ function viewToDraft(view: AgentSettingsView): Draft {
     defaultProvider: view.defaultProvider ?? "",
     defaultModel: view.defaultModel ?? "",
     defaultThinkingLevel: view.defaultThinkingLevel ?? "",
-    steeringMode: view.steeringMode,
-    followUpMode: view.followUpMode,
     compactionEnabled: view.compaction.enabled,
     retryEnabled: view.retry.enabled,
   };
@@ -75,8 +73,6 @@ function draftDirty(draft: Draft, view: AgentSettingsView): boolean {
     draft.defaultProvider !== base.defaultProvider ||
     draft.defaultModel !== base.defaultModel ||
     draft.defaultThinkingLevel !== base.defaultThinkingLevel ||
-    draft.steeringMode !== base.steeringMode ||
-    draft.followUpMode !== base.followUpMode ||
     draft.compactionEnabled !== base.compactionEnabled ||
     draft.retryEnabled !== base.retryEnabled
   );
@@ -86,6 +82,8 @@ export function AgentDefaultsConfig({ cwd }: AgentDefaultsConfigProps) {
   const { t } = useI18n();
   const [data, setData] = useState<AgentSettingsView | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
+  /** 桌面流式期 Enter 默认动作（localStorage，与 Pi settings 分离）。 */
+  const [streamingEnterDefault, setStreamingEnterDefault] = useState<StreamingEnterAction>("followUp");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -96,6 +94,7 @@ export function AgentDefaultsConfig({ cwd }: AgentDefaultsConfigProps) {
     setLoading(true);
     setError(null);
     try {
+      setStreamingEnterDefault(loadStreamingEnterAction());
       const params = new URLSearchParams();
       if (cwd) params.set("cwd", cwd);
       const qs = params.toString();
@@ -141,12 +140,6 @@ export function AgentDefaultsConfig({ cwd }: AgentDefaultsConfigProps) {
       }
       if (draft.defaultThinkingLevel !== base.defaultThinkingLevel) {
         payload.defaultThinkingLevel = draft.defaultThinkingLevel || null;
-      }
-      if (draft.steeringMode !== base.steeringMode) {
-        payload.steeringMode = draft.steeringMode;
-      }
-      if (draft.followUpMode !== base.followUpMode) {
-        payload.followUpMode = draft.followUpMode;
       }
       if (draft.compactionEnabled !== base.compactionEnabled) {
         payload.compactionEnabled = draft.compactionEnabled;
@@ -284,35 +277,26 @@ export function AgentDefaultsConfig({ cwd }: AgentDefaultsConfigProps) {
       </div>
 
       <div style={{ marginBottom: 22 }}>
-        <div style={sectionTitleStyle}>{t("defaults_queueSection")}</div>
+        <div style={sectionTitleStyle}>{t("defaults_inputSection")}</div>
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           <div>
-            <div style={labelStyle}>{t("defaults_steeringMode")}</div>
+            <div style={labelStyle}>{t("defaults_streamingEnter")}</div>
             <select
-              value={draft.steeringMode}
-              onChange={(e) => setDraft({ ...draft, steeringMode: e.target.value as QueueMode })}
+              value={streamingEnterDefault}
+              onChange={(e) => {
+                const next = e.target.value === "steer" ? "steer" : "followUp";
+                setStreamingEnterDefault(next);
+                saveStreamingEnterAction(next);
+                window.dispatchEvent(new Event("pidance:streaming-enter-changed"));
+              }}
               style={selectStyle}
             >
-              {QUEUE_OPTIONS.map((mode) => (
-                <option key={mode} value={mode}>
-                  {mode}
-                </option>
-              ))}
+              <option value="followUp">{t("defaults_streamingEnterQueue")}</option>
+              <option value="steer">{t("defaults_streamingEnterSteer")}</option>
             </select>
-          </div>
-          <div>
-            <div style={labelStyle}>{t("defaults_followUpMode")}</div>
-            <select
-              value={draft.followUpMode}
-              onChange={(e) => setDraft({ ...draft, followUpMode: e.target.value as QueueMode })}
-              style={selectStyle}
-            >
-              {QUEUE_OPTIONS.map((mode) => (
-                <option key={mode} value={mode}>
-                  {mode}
-                </option>
-              ))}
-            </select>
+            <div style={{ marginTop: 6, fontSize: 11, color: "var(--text-dim)", maxWidth: 420, lineHeight: 1.45 }}>
+              {t("defaults_streamingEnterHint")}
+            </div>
           </div>
         </div>
       </div>
