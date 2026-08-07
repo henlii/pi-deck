@@ -17,12 +17,11 @@ import {
   loadStreamingEnterAction,
   type StreamingEnterAction,
 } from "@/lib/ui-preferences";
-import { encodeFilePathForApi, joinFilePath } from "@/lib/file-paths";
 import { isAudioPath, isImagePath, isVideoPath } from "@/lib/file-types";
 
 export type { AttachedImage, ChatInputHandle } from "@/lib/types";
 
-/** 非图片附件：已上传到项目 cwd，发送时把绝对路径注入 prompt。 */
+/** 非图片附件：落到 ~/.pi/agent/pidance-attachments/，发送时把绝对路径注入 prompt。 */
 type AttachedUpload = {
   id: string;
   name: string;
@@ -41,27 +40,26 @@ function makeUploadId(): string {
   return `up-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-/** 上传到会话 cwd；冲突时 overwrite（聊天附件语义：用户主动再传同名文件）。 */
-async function uploadFileToCwd(cwd: string, file: File): Promise<{ path: string }> {
+/** 上传到 Pidance 附件目录（不依赖项目 cwd）。 */
+async function uploadChatAttachment(file: File): Promise<{ path: string; name: string }> {
   const formData = new FormData();
   formData.append("files", file, file.name);
-  const res = await fetch(
-    `/api/files/${encodeFilePathForApi(cwd)}?type=upload&conflict=overwrite`,
-    { method: "POST", body: formData },
-  );
+  const res = await fetch("/api/attachments", { method: "POST", body: formData });
   const data = (await res.json().catch(() => ({}))) as {
-    uploaded?: string[];
+    uploaded?: Array<{ path: string; name: string }>;
     errors?: Array<{ name: string; error: string }>;
     error?: string;
   };
   if (!res.ok && res.status !== 207) {
     throw new Error(data.error ?? `HTTP ${res.status}`);
   }
-  const err = data.errors?.find((e) => e.name === file.name);
-  if (err) throw new Error(err.error);
-  const uploadedName = data.uploaded?.find((n) => n === file.name) ?? data.uploaded?.[0];
-  if (!uploadedName) throw new Error(data.error ?? "upload failed");
-  return { path: joinFilePath(cwd, uploadedName) };
+  const err = data.errors?.[0];
+  if (err && (!data.uploaded || data.uploaded.length === 0)) {
+    throw new Error(err.error);
+  }
+  const uploaded = data.uploaded?.[0];
+  if (!uploaded?.path) throw new Error(data.error ?? err?.error ?? "upload failed");
+  return { path: uploaded.path, name: uploaded.name || file.name };
 }
 
 interface ModelOption {
@@ -443,7 +441,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   /**
    * 附件策略：
    * - 位图图片 → 多模态 AttachedImage
-   * - 其余（文本/二进制/音视频）→ 上传到会话 cwd，发送时把绝对路径注入 prompt，由 agent 自行 read
+   * - 其余 → 上传到 ~/.pi/agent/pidance-attachments/（不限项目），路径注入 prompt 由 agent read
    */
   const processAttachmentFiles = useCallback(async (files: File[]) => {
     if (isStreaming || files.length === 0) return;
@@ -453,10 +451,6 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     if (imageFiles.length) await processImageFiles(imageFiles);
 
     if (otherFiles.length === 0) return;
-    if (!cwd) {
-      window.alert(t("input_attachNeedCwd"));
-      return;
-    }
 
     const pending: AttachedUpload[] = otherFiles.map((file) => ({
       id: makeUploadId(),
@@ -471,9 +465,9 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
       otherFiles.map(async (file, index) => {
         const id = pending[index]!.id;
         try {
-          const { path } = await uploadFileToCwd(cwd, file);
+          const { path, name } = await uploadChatAttachment(file);
           setAttachedUploads((prev) =>
-            prev.map((item) => (item.id === id ? { ...item, path, status: "ready" } : item))
+            prev.map((item) => (item.id === id ? { ...item, path, name, status: "ready" } : item))
           );
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
@@ -483,7 +477,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
         }
       })
     );
-  }, [cwd, isStreaming, processImageFiles, t]);
+  }, [isStreaming, processImageFiles]);
 
   const removeImage = useCallback((index: number) => {
     setAttachedImages((prev) => {

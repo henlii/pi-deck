@@ -1,7 +1,9 @@
 import { readdirSync } from "fs";
 import { homedir } from "os";
 import path from "path";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { getAdditionalAllowedRoots, normalizeSlashes } from "./allowed-roots";
+import { getChatAttachmentsDir } from "./chat-attachments";
 import { listAllSessions } from "./session-reader";
 export { allowFileRoot, normalizeSlashes } from "./allowed-roots";
 
@@ -36,6 +38,13 @@ export async function getAllowedFileRoots(): Promise<Set<string>> {
   }
 
   for (const root of getAdditionalAllowedRoots()) roots.add(root);
+
+  // 聊天附件独立目录（~/.pi/agent/pidance-attachments），始终可预览/下载
+  try {
+    roots.add(getChatAttachmentsDir(getAgentDir()));
+  } catch {
+    // agentDir 不可用时跳过
+  }
 
   globalThis.__piAllowedRootsCache = { roots, expiresAt: now + ALLOWED_ROOTS_TTL_MS };
   return roots;

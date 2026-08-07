@@ -544,7 +544,7 @@ export const zhCN: Record<TranslationKey, string> = {
   input_attachReadFailed: "读取失败",
   input_attachUnsupported: "暂仅支持图片与文本类附件（代码/配置/Markdown 等）",
   input_attachNeedCwd: "请先选择项目后再添加非图片附件",
-  input_attachedFilesPrompt: "以下文件已上传到项目目录，请按需用工具读取：",
+  input_attachedFilesPrompt: "以下文件已上传到 Pidance 附件目录，请按需用工具读取：",
   input_uploadingAttachment: "上传中…",
   input_removeAttachment: "移除附件",
   input_compact: "压缩",
