@@ -62,6 +62,12 @@ import {
   type ToolExecutionUpdateInput,
   type ToolExecutionEndInput,
 } from "@/lib/tool-execution-buffer";
+import {
+  DEFAULT_SESSION_HISTORY_PAGE,
+  DEFAULT_SESSION_TAIL_LIMIT,
+  mergeTailReload,
+  prependOlderPage,
+} from "@/lib/session-context-window";
 
 export interface SessionData {
   sessionId: string;
@@ -73,6 +79,8 @@ export interface SessionData {
     entryIds: string[];
     thinkingLevel: string;
     model: { provider: string; modelId: string } | null;
+    hasMoreBefore?: boolean;
+    totalMessageCount?: number;
   };
 }
 
@@ -318,10 +326,16 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
   const [data, setData] = useState<SessionData | null>(null);
   const [loading, setLoading] = useState(!isNew);
+  /** 向上拉取更旧历史中（不阻塞输入/发送）。 */
+  const [historyLoading, setHistoryLoading] = useState(false);
+  /** 当前内存窗口之前是否还有更旧消息（服务端 tail/before 分页）。 */
+  const [hasMoreBefore, setHasMoreBefore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activeLeafId, setActiveLeafId] = useState<string | null>(null);
   const [messages, setMessages] = useState<AgentMessage[]>([]);
   const [entryIds, setEntryIds] = useState<string[]>([]);
+  const historyLoadingRef = useRef(false);
+  const hasMoreBeforeRef = useRef(false);
   const [streamState, dispatch] = useReducer(streamReducer, { isStreaming: false, streamingMessage: null });
   const [agentRunning, setAgentRunning] = useState(false);
   const [bashRunning, setBashRunning] = useState(false);
@@ -571,7 +585,12 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     let messagesLoaded = false;
     try {
       if (showLoading) setLoading(true);
-      const params = new URLSearchParams({ deferThinking: "1", deferMedia: "1" });
+      // tail-first：首屏只拉最新 N 条，尽快结束 loading；更旧历史按需 prepend。
+      const params = new URLSearchParams({
+        deferThinking: "1",
+        deferMedia: "1",
+        limit: String(DEFAULT_SESSION_TAIL_LIMIT),
+      });
       const res = await fetch(`/api/sessions/${encodeURIComponent(sid)}?${params}`);
       if (res.status === 404) {
         if (showLoading) {
@@ -581,6 +600,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           entryIdsRef.current = [];
           messagesSessionIdRef.current = sid;
           setEntryIds([]);
+          hasMoreBeforeRef.current = false;
+          setHasMoreBefore(false);
           setError(null);
         }
         return null;
@@ -588,23 +609,51 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const d = await res.json() as SessionData;
       if (sessionIdRef.current !== sid) return null;
-      const nextEntryIds = d.context.entryIds ?? [];
+      const tailEntryIds = d.context.entryIds ?? [];
+      const tailMessages = d.context.messages ?? [];
       const previousEntryIds = entryIdsRef.current;
-      const shouldPreserveRenderedLines = messagesSessionIdRef.current === sid;
+      const sameSession = messagesSessionIdRef.current === sid;
+      // 同会话 tail 再拉（agent_end / 内部 reload）：保留已 prepend 的更旧前缀。
       // 只有分支导航成功拿到整体会话、即将应用新 context 时才重置跟随；
       // 请求失败/取消不会改变当前阅读位置。
       if (resetBranchFollow) notifyAutoFollowBranchReset();
       setData(d);
       setActiveLeafId(d.leafId);
-      setMessages((previous) => shouldPreserveRenderedLines
-        ? preserveCustomRenderedLines(previous, previousEntryIds, d.context.messages, nextEntryIds)
-        : d.context.messages);
+      let resolvedEntryIds = tailEntryIds;
+      setMessages((previous) => {
+        const base = sameSession && previousEntryIds.length > 0
+          ? mergeTailReload({
+              previousMessages: previous,
+              previousEntryIds,
+              nextMessages: tailMessages,
+              nextEntryIds: tailEntryIds,
+            })
+          : { messages: tailMessages, entryIds: tailEntryIds };
+        resolvedEntryIds = base.entryIds;
+        return sameSession
+          ? preserveCustomRenderedLines(previous, previousEntryIds, base.messages, base.entryIds)
+          : base.messages;
+      });
       // 整体替换完成：调用方（agent_end 收尾）可在此延长 settle 窗口 / 标记 end-pin，
       // 覆盖异步返回晚于 settle 窗口时的高度突变（流式占位消失 → 钳位跳变）。
       onMessagesReplaced?.();
-      entryIdsRef.current = nextEntryIds;
+      // entryIds 与 messages 同一 merge 规则（不依赖 setState 时序：再算一次纯函数）
+      if (sameSession && previousEntryIds.length > 0) {
+        resolvedEntryIds = mergeTailReload({
+          previousMessages: tailMessages,
+          previousEntryIds,
+          nextMessages: tailMessages,
+          nextEntryIds: tailEntryIds,
+        }).entryIds;
+      }
+      entryIdsRef.current = resolvedEntryIds;
       messagesSessionIdRef.current = sid;
-      setEntryIds(nextEntryIds);
+      setEntryIds(resolvedEntryIds);
+      const more = d.context.hasMoreBefore === true
+        || (typeof d.context.totalMessageCount === "number"
+          && d.context.totalMessageCount > resolvedEntryIds.length);
+      hasMoreBeforeRef.current = more;
+      setHasMoreBefore(more);
       // P1-2：override 不再无条件清除——改为「吸附」：磁盘 model_change 已与
       // 用户选择一致时让磁盘权威接管（清除 override）；磁盘缺失/不一致（写盘
       // 竞态、fork 后新会话无 model_change）时保留 override，防止 run 结束 /
@@ -650,15 +699,89 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     }
   }, [notifyAutoFollowBranchReset, patchExtensionUiState]);
 
+  /**
+   * 向上滚动加载更旧历史（OpenChamber loadOlder 语义）。
+   * 不置 loading，不阻塞发送；prepend 后由 ChatWindow 做滚轴补偿。
+   */
+  const loadOlderHistory = useCallback(async (): Promise<boolean> => {
+    const sid = sessionIdRef.current;
+    if (!sid || !hasMoreBeforeRef.current || historyLoadingRef.current) return false;
+    const before = entryIdsRef.current[0];
+    if (!before) return false;
+    historyLoadingRef.current = true;
+    setHistoryLoading(true);
+    try {
+      const params = new URLSearchParams({
+        deferThinking: "1",
+        deferMedia: "1",
+        before,
+        limit: String(DEFAULT_SESSION_HISTORY_PAGE),
+      });
+      if (activeLeafId) params.set("leafId", activeLeafId);
+      const res = await fetch(`/api/sessions/${encodeURIComponent(sid)}/context?${params}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const d = await res.json() as {
+        context: {
+          messages: AgentMessage[];
+          entryIds: string[];
+          hasMoreBefore?: boolean;
+        };
+      };
+      if (sessionIdRef.current !== sid) return false;
+      const olderIds = d.context.entryIds ?? [];
+      const olderMsgs = d.context.messages ?? [];
+      if (olderIds.length === 0) {
+        hasMoreBeforeRef.current = false;
+        setHasMoreBefore(false);
+        return false;
+      }
+      const prevIds = entryIdsRef.current;
+      const nextEntryIds = prependOlderPage({
+        previousMessages: olderMsgs,
+        previousEntryIds: prevIds,
+        olderMessages: olderMsgs,
+        olderEntryIds: olderIds,
+      }).entryIds;
+      setMessages((previous) => prependOlderPage({
+        previousMessages: previous,
+        previousEntryIds: prevIds,
+        olderMessages: olderMsgs,
+        olderEntryIds: olderIds,
+      }).messages);
+      entryIdsRef.current = nextEntryIds;
+      setEntryIds(nextEntryIds);
+      const more = d.context.hasMoreBefore === true;
+      hasMoreBeforeRef.current = more;
+      setHasMoreBefore(more);
+      return true;
+    } catch (e) {
+      console.error("Failed to load older history:", e);
+      return false;
+    } finally {
+      historyLoadingRef.current = false;
+      setHistoryLoading(false);
+    }
+  }, [activeLeafId]);
+
   const loadContext = useCallback(async (sid: string, leafId: string | null) => {
     try {
-      const params = new URLSearchParams({ deferThinking: "1", deferMedia: "1" });
+      // 分支切换：同样 tail-first，避免整包阻塞
+      const params = new URLSearchParams({
+        deferThinking: "1",
+        deferMedia: "1",
+        limit: String(DEFAULT_SESSION_TAIL_LIMIT),
+      });
       if (leafId) params.set("leafId", leafId);
       const url = `/api/sessions/${encodeURIComponent(sid)}/context?${params}`;
       const res = await fetch(url);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const d = await res.json() as {
-        context: { messages: AgentMessage[]; entryIds: string[] };
+        context: {
+          messages: AgentMessage[];
+          entryIds: string[];
+          hasMoreBefore?: boolean;
+          totalMessageCount?: number;
+        };
       };
       const nextEntryIds = d.context.entryIds ?? [];
       const previousEntryIds = entryIdsRef.current;
@@ -671,6 +794,11 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       entryIdsRef.current = nextEntryIds;
       messagesSessionIdRef.current = sid;
       setEntryIds(nextEntryIds);
+      const more = d.context.hasMoreBefore === true
+        || (typeof d.context.totalMessageCount === "number"
+          && d.context.totalMessageCount > nextEntryIds.length);
+      hasMoreBeforeRef.current = more;
+      setHasMoreBefore(more);
     } catch (e) {
       console.error("Failed to load context:", e);
     }
@@ -2022,7 +2150,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
   return {
     // State
-    data, loading, error, activeLeafId, messages, entryIds, streamState,
+    data, loading, historyLoading, hasMoreBefore, error, activeLeafId, messages, entryIds, streamState,
     agentRunning, modelNames, modelList, modelAuthConfigured, modelThinkingLevels, modelThinkingLevelMaps, newSessionModel, thinkingLevel,
     retryInfo, contextUsage, systemPrompt, forkingEntryId,
     isCompacting, compactError, compactResult, currentModel, displayModel, sessionStats,
@@ -2043,6 +2171,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     // 自动跟随
     jumpButtonVisible, jumpToBottom, markExternalScrollWrite, notifyProgrammaticSmooth,
     // Actions
+    loadOlderHistory,
     handleSend, handleAbort, handleFork, handleNavigate, handleModelChange,
     handleCompact, handleSteer, handleFollowUp, handlePromptWithStreamingBehavior, handleAbortCompaction,
     handleRecallQueue,

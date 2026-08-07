@@ -11,6 +11,11 @@ import {
   listAllSessions,
   buildSessionNavigationSnapshot,
 } from "@/lib/session-reader";
+import {
+  parseContextLimitParam,
+  sliceContextTail,
+  DEFAULT_SESSION_TAIL_LIMIT,
+} from "@/lib/session-context-window";
 import { sessionService, READ_ONLY_SUBAGENT_ERROR, requireWritableSession } from "@/lib/session-service";
 import { collectSubagentTree, deleteValidatedSubagents } from "@/lib/subagent-sessions";
 
@@ -29,10 +34,19 @@ export async function GET(
 
     const { filePath, manager: sm } = view;
     const searchParams = new URL(req.url).searchParams;
-    const { leafId, tree, context, header, sessionName } = buildSessionNavigationSnapshot(sm, {
+    const { leafId, tree, context: fullContext, header, sessionName } = buildSessionNavigationSnapshot(sm, {
       deferThinking: searchParams.has("deferThinking"),
       deferToolResultImages: searchParams.has("deferMedia"),
     });
+    // tail/limit：首屏只返回最新 N 条，避免大会话整包下发；缺省不切片（兼容旧客户端）。
+    const tailLimit = parseContextLimitParam(searchParams, DEFAULT_SESSION_TAIL_LIMIT);
+    const context = tailLimit !== null
+      ? sliceContextTail(fullContext, tailLimit)
+      : {
+          ...fullContext,
+          hasMoreBefore: false,
+          totalMessageCount: fullContext.messages.length,
+        };
 
     let modified = header?.timestamp ?? new Date().toISOString();
     try { modified = statSync(filePath).mtime.toISOString(); } catch { /* use header timestamp */ }
@@ -47,7 +61,8 @@ export async function GET(
       name: sessionName,
       created: header.timestamp,
       modified,
-      messageCount: context.messages.length,
+      // messageCount 用全量总数，避免 tail 切片后侧栏计数失真
+      messageCount: context.totalMessageCount ?? context.messages.length,
       firstMessage: context.messages.find((m) => m.role === "user")
         ? (() => {
             const msg = context.messages.find((m) => m.role === "user")!;

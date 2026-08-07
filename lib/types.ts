@@ -344,4 +344,8 @@ export interface SessionContext {
   entryIds: string[]; // parallel to messages — the session entry id for each message
   thinkingLevel: string;
   model: { provider: string; modelId: string } | null;
+  /** 当前窗口之前是否还有更旧消息（tail/before 分页时由服务端填充）。 */
+  hasMoreBefore?: boolean;
+  /** 未切片前的消息总数。 */
+  totalMessageCount?: number;
 }

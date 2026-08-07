@@ -164,7 +164,7 @@ export function ChatWindow({ session, newSessionCwd, newSessionIntentId, guideDe
   }, [onAgentEnd]);
 
   const {
-    loading, error, messages, entryIds, streamState,
+    loading, historyLoading, hasMoreBefore, error, messages, entryIds, streamState,
     agentRunning, bashRunning, pendingBash, modelNames, modelList, modelAuthConfigured, modelThinkingLevels, modelThinkingLevelMaps, thinkingLevel,
     retryInfo, contextUsage, forkingEntryId,
     isCompacting, compactError, compactResult, displayModel: displayModelValue, sessionStats,
@@ -176,6 +176,7 @@ export function ChatWindow({ session, newSessionCwd, newSessionIntentId, guideDe
     isNew,
     sessionIdRef, scrollContainerRef,
     jumpButtonVisible, jumpToBottom, markExternalScrollWrite, notifyProgrammaticSmooth,
+    loadOlderHistory,
     handleSend, handleAbort, handleModelChange,
     handleCompact, handleSteer, handleFollowUp, handlePromptWithStreamingBehavior, handleAbortCompaction,
     handleRecallQueue,
@@ -272,11 +273,15 @@ export function ChatWindow({ session, newSessionCwd, newSessionIntentId, guideDe
   }, [sessionBusy, handleAbort]);
 
   // --- Lazy-load historical messages ---
-  // Only render the last N messages initially. When the user scrolls to the
-  // top, load another page while keeping the scroll position stable.
+  // 1) 客户端 visibleCount：已加载消息内只渲染末 N 条
+  // 2) 服务端 hasMoreBefore：滚到顶时 loadOlderHistory prepend 更旧页（OpenChamber 风格）
   const [visibleCount, setVisibleCount] = useState(VISIBLE_PAGE_SIZE);
   const sentinelRef = useRef<HTMLDivElement>(null);
   const prevScrollDistanceRef = useRef<number | null>(null);
+  // 会话切换时重置可见窗口
+  useEffect(() => {
+    setVisibleCount(VISIBLE_PAGE_SIZE);
+  }, [session?.id]);
 
   // IntersectionObserver on the sentinel div at the top of the message list.
   // When it becomes visible, load the next page of older messages.
@@ -286,17 +291,25 @@ export function ChatWindow({ session, newSessionCwd, newSessionIntentId, guideDe
     if (!sentinel || !container) return;
     const observer = new IntersectionObserver(
       (entries) => {
-        if (entries[0]?.isIntersecting) {
-          // Save distance from top before prepending to restore scroll later
-          prevScrollDistanceRef.current = captureScrollDistance(container.scrollHeight, container.scrollTop);
-          setVisibleCount((prev) => getNextVisibleCount(prev));
-        }
+        if (!entries[0]?.isIntersecting) return;
+        // Save distance from top before prepending to restore scroll later
+        prevScrollDistanceRef.current = captureScrollDistance(container.scrollHeight, container.scrollTop);
+        // 先扩大本地渲染窗口；若已到本地头且服务端还有更旧，再拉一页
+        setVisibleCount((prev) => {
+          const next = getNextVisibleCount(prev);
+          if (next >= messages.length && hasMoreBefore && !historyLoading) {
+            void loadOlderHistory().then((loaded) => {
+              if (loaded) setVisibleCount((v) => getNextVisibleCount(v));
+            });
+          }
+          return next;
+        });
       },
       { root: container, threshold: 0 }
     );
     observer.observe(sentinel);
     return () => observer.disconnect();
-  }, [visibleCount, messages.length, scrollContainerRef]);
+  }, [visibleCount, messages.length, scrollContainerRef, hasMoreBefore, historyLoading, loadOlderHistory]);
 
   // After visibleCount increases (more messages prepended), restore the
   // scroll position so the viewport doesn't jump.
@@ -309,7 +322,7 @@ export function ChatWindow({ session, newSessionCwd, newSessionIntentId, guideDe
     markExternalScrollWrite();
     container.scrollTop = restoreScrollTop(container.scrollHeight, prevScrollDistanceRef.current);
     prevScrollDistanceRef.current = null;
-  }, [visibleCount, scrollContainerRef, markExternalScrollWrite]);
+  }, [visibleCount, messages.length, scrollContainerRef, markExternalScrollWrite]);
   // Push session stats up to AppShell for the top bar.
   // Compare scalar fields to avoid loops from new object identity each render.
   const statsKey = sessionStats
