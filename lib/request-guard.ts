@@ -4,16 +4,24 @@
  *   （防 DNS rebinding）
  * - CSRF：API 请求校验 origin/sec-fetch-site（cross-site 拒绝、origin 须与 Host 同源；
  *   会话导出的 navigate GET 豁免；无跨站信号的非浏览器客户端放行）
- * - 可选 Basic Auth：设置 PIDANCE_PASSWORD（优先，兼容旧变量 PI_WEB_PASSWORD）即启用
- *   （用户名固定 "pi"，timingSafeEqual 比较）
+ * - 可选认证：设置 PIDANCE_PASSWORD（优先，兼容旧变量 PI_WEB_PASSWORD）即启用
+ *   （#18）UI 会话 Cookie（pidance_ui_session JWT）或 Basic Auth（用户名固定 "pi"）
  * - 兜底认证：未设置密码时仅放行回环（loopback）请求；非回环请求一律 auth-required，
  *   防止服务误绑 0.0.0.0 时局域网/公网匿名调用（P0 fail-closed，即使 CLI 门禁被绕过）
  * 纯逻辑（env 注入），供 middleware.ts 组装与 .test.mjs 测试。
  */
 import { createHash, timingSafeEqual } from "crypto";
 import { isIP } from "net";
+import {
+  getOrCreateJwtSecret,
+  parseCookieValue,
+  UI_SESSION_COOKIE_NAME,
+  verifyUiSessionJwt,
+} from "./ui-session";
 
 export const EXPORT_NAVIGATE_RE = /^\/api\/sessions\/[^/]+\/export$/;
+/** 未登录也可访问的 API（登录/会话状态）。 */
+export const PUBLIC_AUTH_API_RE = /^\/api\/auth\/ui-session\/?$/;
 
 export type RequestGuardHeaders = {
   host: string | null;
@@ -23,6 +31,7 @@ export type RequestGuardHeaders = {
   secFetchDest: string | null;
   secFetchUser: string | null;
   authorization: string | null;
+  cookie: string | null;
   method: string;
   url: string;
   pathname: string;
@@ -149,16 +158,55 @@ export function checkBasicAuth(req: RequestGuardHeaders, env: Record<string, str
   return safeEqual(decoded.slice(0, idx), "pi") && safeEqual(decoded.slice(idx + 1), password);
 }
 
+/** UI 会话 Cookie 校验（#18）。jwtSecret 可注入以便测试。 */
+export function checkUiSessionCookie(
+  req: RequestGuardHeaders,
+  env: Record<string, string | undefined>,
+  jwtSecret?: string,
+): boolean {
+  if (!passwordEnabled(env)) return false;
+  const token = parseCookieValue(req.cookie, UI_SESSION_COOKIE_NAME);
+  if (!token) return false;
+  const secret = jwtSecret ?? getOrCreateJwtSecret(env);
+  return verifyUiSessionJwt(token, secret);
+}
+
+/** Cookie 会话或 Basic 任一通过即认证成功。 */
+export function checkAuthenticated(
+  req: RequestGuardHeaders,
+  env: Record<string, string | undefined>,
+  jwtSecret?: string,
+): boolean {
+  return checkUiSessionCookie(req, env, jwtSecret) || checkBasicAuth(req, env);
+}
+
+export function isPublicAuthApi(pathname: string): boolean {
+  return PUBLIC_AUTH_API_RE.test(pathname);
+}
+
 export type GuardVerdict = "ok" | "untrusted-host" | "csrf" | "auth-required";
 
 /** 完整判定（middleware 用；isApi 区分错误形态）。 */
-export function guardRequest(req: RequestGuardHeaders, env: Record<string, string | undefined>): GuardVerdict {
+export function guardRequest(
+  req: RequestGuardHeaders,
+  env: Record<string, string | undefined>,
+  options?: { jwtSecret?: string },
+): GuardVerdict {
   if (!isTrustedHost(req.host, env)) return "untrusted-host";
-  if (req.pathname === "/api" || req.pathname.startsWith("/api/")) {
+  const isApi = req.pathname === "/api" || req.pathname.startsWith("/api/");
+  if (isApi && !isPublicAuthApi(req.pathname)) {
     if (!checkCsrf(req)) return "csrf";
   }
+  // 登录/会话状态 API 在已设密码时也放行（由路由自身校验密码）。
+  if (isPublicAuthApi(req.pathname)) {
+    if (isApi && !checkCsrf(req) && req.method !== "GET") {
+      // POST 登录仍须 CSRF（同源）；GET 状态可无 Origin（curl）
+      if (req.method !== "GET") return "csrf";
+    }
+    return "ok";
+  }
   if (passwordEnabled(env)) {
-    if (!checkBasicAuth(req, env)) return "auth-required";
+    if (!checkAuthenticated(req, env, options?.jwtSecret)) return "auth-required";
   } else if (!isLoopbackHost(req.host)) {
     // fail-closed 兜底：未设置密码时仅放行回环请求；非回环请求一律要求认证，
     // 即使 CLI 启动门禁被绕过（如直接 next start -H 0.0.0.0）也保护 Agent API。

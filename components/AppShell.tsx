@@ -50,6 +50,7 @@ import {
   saveSidebarWidth,
 } from "@/lib/ui-preferences";
 import { useI18n } from "@/lib/i18n";
+import { logoutUiSession } from "@/components/UiLoginGate";
 import { hydrateSessionById } from "@/lib/session-hydrate";
 import {
   createNewSessionIntent,
@@ -937,6 +938,20 @@ function AppShellInner() {
             <circle cx="12" cy="12" r="10" />
             <path d="M12 16v-4" />
             <path d="M12 8h.01" />
+          </svg>
+        </button>
+        <button
+          type="button"
+          onClick={() => { void logoutUiSession(); }}
+          data-tooltip={t("auth_logout")}
+          aria-label={t("auth_logout")}
+          className="sidebar-icon-btn tooltip-up"
+          style={{ marginLeft: "auto" }}
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+            <polyline points="16 17 21 12 16 7" />
+            <line x1="21" y1="12" x2="9" y2="12" />
           </svg>
         </button>
       </div>
