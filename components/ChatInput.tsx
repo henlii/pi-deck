@@ -344,13 +344,34 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
       });
     },
     addImages(files: File[]) {
-      processImageFiles(files);
+      void processAttachmentFiles(files);
     },
   }));
 
+  /** 文本类附件：插入消息正文（Pi 多模态仅支持图片；文本以围栏块注入，对齐 openchamber 附件语义的可落地子集）。 */
+  const TEXT_ATTACHMENT_EXT = /\.(txt|md|markdown|json|jsonc|ya?ml|toml|xml|html?|css|scss|less|js|jsx|ts|tsx|mjs|cjs|py|rb|go|rs|java|kt|c|cc|cpp|h|hpp|cs|php|sh|bash|zsh|fish|ps1|sql|graphql|gql|ini|cfg|conf|env|log|csv|tsv|diff|patch|svg|vue|svelte|astro)$/i;
+  const TEXT_ATTACHMENT_MAX_BYTES = 256 * 1024;
+
+  const isTextAttachment = useCallback((file: File): boolean => {
+    if (file.type.startsWith("text/")) return true;
+    if (
+      file.type === "application/json" ||
+      file.type === "application/xml" ||
+      file.type === "application/javascript" ||
+      file.type === "application/typescript" ||
+      file.type === "application/x-yaml" ||
+      file.type === "application/toml" ||
+      file.type === "application/sql" ||
+      file.type === "image/svg+xml"
+    ) {
+      return true;
+    }
+    return TEXT_ATTACHMENT_EXT.test(file.name);
+  }, []);
+
   const processImageFiles = useCallback(async (files: File[]) => {
     if (isStreaming) return;
-    const imageFiles = files.filter((f) => f.type.startsWith("image/"));
+    const imageFiles = files.filter((f) => f.type.startsWith("image/") && f.type !== "image/svg+xml");
     if (!imageFiles.length) return;
     const newImages = await Promise.all(
       imageFiles.map(
@@ -370,6 +391,49 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     );
     setAttachedImages((prev) => [...prev, ...newImages]);
   }, [isStreaming]);
+
+  const processAttachmentFiles = useCallback(async (files: File[]) => {
+    if (isStreaming || files.length === 0) return;
+    const imageFiles = files.filter((f) => f.type.startsWith("image/") && f.type !== "image/svg+xml");
+    const textFiles = files.filter((f) => !imageFiles.includes(f) && isTextAttachment(f));
+    const skipped = files.filter((f) => !imageFiles.includes(f) && !textFiles.includes(f));
+
+    if (imageFiles.length) await processImageFiles(imageFiles);
+
+    if (textFiles.length) {
+      const blocks: string[] = [];
+      for (const file of textFiles) {
+        if (file.size > TEXT_ATTACHMENT_MAX_BYTES) {
+          blocks.push(`<!-- ${file.name}: ${t("input_attachTooLarge")} -->`);
+          continue;
+        }
+        try {
+          const text = await file.text();
+          const fence = "```";
+          blocks.push(`${fence}${file.name}\n${text.replace(/\r\n/g, "\n")}\n${fence}`);
+        } catch {
+          blocks.push(`<!-- ${file.name}: ${t("input_attachReadFailed")} -->`);
+        }
+      }
+      if (blocks.length) {
+        setValue((prev) => {
+          const joined = blocks.join("\n\n");
+          return prev.trim() ? `${prev.replace(/\s+$/, "")}\n\n${joined}` : joined;
+        });
+        requestAnimationFrame(() => {
+          const ta = textareaRef.current;
+          if (!ta) return;
+          ta.style.height = "auto";
+          ta.style.height = `${Math.min(ta.scrollHeight, 200)}px`;
+        });
+      }
+    }
+
+    if (skipped.length > 0 && imageFiles.length === 0 && textFiles.length === 0) {
+      // 全部被跳过时给可读反馈；部分成功时不打断
+      window.alert(t("input_attachUnsupported"));
+    }
+  }, [isStreaming, isTextAttachment, processImageFiles, t]);
 
   const removeImage = useCallback((index: number) => {
     setAttachedImages((prev) => {
@@ -1087,17 +1151,16 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
         paddingRight: isMobile ? 16 : 52, // desktop: 16px base + 36px for ChatMinimap alignment
       }}
     >
-      {/* Hidden file input */}
+      {/* Hidden file input：图片走多模态附件；文本类写入消息正文 */}
       <input
         ref={fileInputRef}
         type="file"
-        accept="image/*"
         multiple
         disabled={isStreaming}
         style={{ display: "none" }}
         onChange={(e) => {
           const files = Array.from(e.target.files ?? []);
-          processImageFiles(files);
+          void processAttachmentFiles(files);
           e.target.value = "";
         }}
       />
@@ -1471,17 +1534,56 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
             style={{
               display: "flex",
               gap: 8,
-              alignItems: "center",
+              alignItems: "flex-end",
               background: "var(--bg-elevated)",
               border: `1px solid ${bashMode ? "var(--tool-bg)" : isStreaming && (onSteer || onFollowUp)
                 ? "color-mix(in srgb, var(--status-warning) 45%, var(--border-strong))"
                 : "var(--border-strong)"}`,
               borderRadius: "var(--radius-lg)",
-              padding: "10px 10px 10px 14px",
+              padding: "10px 10px 10px 10px",
               boxShadow: "var(--shadow-input)",
               transition: "border-color 0.15s, background 0.15s, box-shadow 0.15s",
             } as React.CSSProperties}
           >
+          {/* 输入框内左侧：添加附件（回形针，参考 openchamber FileAttachment） */}
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={isStreaming}
+            data-tooltip={t("input_attachFile")}
+            className="instant-tooltip tooltip-up"
+            aria-label={t("input_attachFile")}
+            style={{
+              flexShrink: 0,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              width: 32,
+              height: 32,
+              padding: 0,
+              background: "none",
+              border: "none",
+              borderRadius: 9,
+              color: attachedImages.length ? "var(--accent)" : "var(--text-muted)",
+              cursor: isStreaming ? "not-allowed" : "pointer",
+              opacity: isStreaming ? 0.5 : 1,
+              transition: "background 0.12s, color 0.12s",
+              alignSelf: "flex-end",
+            }}
+            onMouseEnter={(e) => {
+              if (isStreaming) return;
+              e.currentTarget.style.background = "var(--bg-hover)";
+              e.currentTarget.style.color = attachedImages.length ? "var(--accent)" : "var(--text)";
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = "none";
+              e.currentTarget.style.color = attachedImages.length ? "var(--accent)" : "var(--text-muted)";
+            }}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+            </svg>
+          </button>
           <textarea
             ref={textareaRef}
             value={value}
@@ -1634,39 +1736,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
           gap: 6,
         }}>
 
-          {/* LEFT: attach + model selector (idle) or steer/followup toggle (streaming) */}
+          {/* LEFT: model + thinking（思考紧贴模型；手机端常显，不藏进 More） */}
           <div style={{ flex: isMobile ? "1 1 auto" : "0 0 auto", minWidth: 0, display: "flex", alignItems: "center", gap: 2 }}>
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              disabled={isStreaming}
-              data-tooltip={t("input_attachImage")}
-              className="instant-tooltip tooltip-up"
-              style={{
-                flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center",
-                width: 32, height: 32, padding: 0,
-                background: "none", border: "none",
-                borderRadius: 9,
-                color: attachedImages.length ? "var(--accent)" : "var(--text-muted)",
-                cursor: isStreaming ? "not-allowed" : "pointer",
-                opacity: isStreaming ? 0.5 : 1,
-                transition: "background 0.12s, color 0.12s",
-              }}
-              onMouseEnter={(e) => {
-                if (isStreaming) return;
-                e.currentTarget.style.background = "var(--bg-hover)";
-                e.currentTarget.style.color = attachedImages.length ? "var(--accent)" : "var(--text)";
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.background = "none";
-                e.currentTarget.style.color = attachedImages.length ? "var(--accent)" : "var(--text-muted)";
-              }}
-            >
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
-                <circle cx="8.5" cy="8.5" r="1.5" />
-                <polyline points="21 15 16 10 5 21" />
-              </svg>
-            </button>
             {/* Model selector — visible always, disabled during streaming */}
             {modelOptions.length > 0 && currentName && onModelChange && (
                 <div ref={dropdownRef} style={{ position: "relative", flex: isMobile ? "1 1 auto" : undefined, minWidth: 0 }}>
@@ -1819,6 +1890,123 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   )}
                 </div>
             )}
+            {/* Thinking — 紧贴模型旁，手机端也常显（不进 More 条） */}
+            {!isStreaming && onThinkingLevelChange && (
+              <div ref={thinkingDropdownRef} style={{ position: "relative", flexShrink: 0 }}>
+                <button
+                  onClick={() => {
+                    if (isStreaming) return;
+                    const opening = !thinkingDropdownOpen;
+                    setThinkingDropdownOpen(opening);
+                    if (opening) {
+                      setToolDropdownOpen(false);
+                      setModelDropdownOpen(false);
+                      setControlsMenuOpen(false);
+                      setSlashMenuOpen(false);
+                      setAtMenuOpen(false);
+                    }
+                  }}
+                  disabled={isStreaming}
+                  title={thinkingDisplayLabel}
+                  data-tooltip={thinkingDisplayLabel}
+                  className="instant-tooltip tooltip-up"
+                  aria-label={t("input_thinkingTitle")}
+                  aria-haspopup="menu"
+                  aria-expanded={thinkingDropdownOpen}
+                  aria-controls={thinkingMenuId}
+                  style={{
+                    display: "flex", alignItems: "center", justifyContent: "center", gap: 5,
+                    padding: isMobile ? "0 8px" : "8px 12px",
+                    height: 32,
+                    background: thinkingDropdownOpen ? "var(--bg-hover)" : "none",
+                    border: "none",
+                    borderRadius: 9,
+                    color: "var(--text-muted)",
+                    cursor: isStreaming ? "not-allowed" : "pointer",
+                    fontSize: 12,
+                    opacity: isStreaming ? 0.5 : 1,
+                    transition: "background 0.12s, color 0.12s",
+                  }}
+                  onMouseEnter={(e) => {
+                    if (isStreaming) return;
+                    e.currentTarget.style.background = "var(--bg-hover)";
+                    e.currentTarget.style.color = "var(--text)";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = thinkingDropdownOpen ? "var(--bg-hover)" : "none";
+                    e.currentTarget.style.color = "var(--text-muted)";
+                  }}
+                >
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M9.5 2A5.5 5.5 0 0 0 4 7.5c0 1.7.78 3.21 2 4.21V14a1 1 0 0 0 1 1h5a1 1 0 0 0 1-1v-2.29c1.22-1 2-2.51 2-4.21A5.5 5.5 0 0 0 9.5 2z" />
+                    <line x1="7" y1="18" x2="12" y2="18" />
+                    <line x1="8" y1="21" x2="11" y2="21" />
+                  </svg>
+                  <span style={{ whiteSpace: "nowrap" }}>{thinkingDisplayLabel}</span>
+                </button>
+                {thinkingDropdownOpen && createPortal(
+                  <div
+                    ref={thinkingDropdownPanelRef}
+                    id={thinkingMenuId}
+                    role="menu"
+                    onKeyDown={(e) => movePanelOptionFocus(e, '[role="menuitemradio"]')}
+                    style={{
+                    ...thinkingOverlay.style,
+                    zIndex: 100, background: "var(--bg)", border: "1px solid var(--border)",
+                    borderRadius: 8,
+                    boxShadow: thinkingOverlay.placement === "above" ? "0 -4px 16px rgba(0,0,0,0.10)" : "0 4px 16px rgba(0,0,0,0.10)",
+                    overflow: "hidden", overflowY: "auto",
+                  }}>
+                    {THINKING_LEVELS.filter((lvl) => {
+                      if (!availableThinkingLevels) return true;
+                      if (lvl === "auto") return true;
+                      return availableThinkingLevels.includes(lvl);
+                    }).map((lvl) => {
+                      const isActive = (thinkingLevel ?? "auto") === lvl;
+                      const desc = THINKING_LEVEL_DESC[lvl];
+                      const mappedVal = (lvl !== "auto" && thinkingLevelMap) ? thinkingLevelMap[lvl] : undefined;
+                      const displayLabel = (mappedVal != null && mappedVal !== lvl) ? mappedVal : lvl;
+                      const showOriginal = mappedVal != null && mappedVal !== lvl;
+                      return (
+                        <button
+                          key={lvl}
+                          role="menuitemradio"
+                          aria-checked={isActive}
+                          onClick={() => {
+                            setThinkingDropdownOpen(false);
+                            focusTriggerButton(thinkingDropdownRef.current);
+                            if (!isActive) onThinkingLevelChange(lvl);
+                          }}
+                          style={{
+                            display: "flex", alignItems: "center", gap: 8,
+                            width: "100%", padding: "7px 12px",
+                            minHeight: isMobile ? 44 : undefined,
+                            background: isActive ? "var(--bg-selected)" : "none",
+                            border: "none",
+                            color: isActive ? "var(--text)" : "var(--text-muted)",
+                            cursor: "pointer", fontSize: 12, textAlign: "left",
+                            fontWeight: isActive ? 600 : 400,
+                            whiteSpace: "nowrap",
+                          }}
+                          onMouseEnter={(e) => { if (!isActive) e.currentTarget.style.background = "var(--bg-hover)"; }}
+                          onMouseLeave={(e) => { if (!isActive) e.currentTarget.style.background = "none"; }}
+                        >
+                          {isActive
+                            ? <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><polyline points="1.5 5 4 7.5 8.5 2.5" /></svg>
+                            : <span style={{ width: 10, flexShrink: 0 }} />}
+                          <span style={{ flex: 1 }}>
+                            {displayLabel}
+                            {showOriginal && <span style={{ fontSize: 10, color: "var(--text-dim)", fontFamily: "var(--font-mono)", marginLeft: 5 }}>({lvl})</span>}
+                          </span>
+                          <span style={{ fontSize: 11, color: "var(--text-dim)", marginLeft: 8 }}>{t(desc)}</span>
+                        </button>
+                      );
+                    })}
+                  </div>,
+                  document.body,
+                )}
+              </div>
+            )}
           </div>
 
           {/* spacer */}
@@ -1902,125 +2090,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
               } : null),
               ...(isMobile && controlsMenuOpen ? moreOverlay.style : null),
             }}>
-            {!isStreaming && onThinkingLevelChange && (
-              <div ref={thinkingDropdownRef} style={{ position: "relative" }}>
-                <button
-                  onClick={() => {
-                    if (isStreaming) return;
-                    const opening = !thinkingDropdownOpen;
-                    setThinkingDropdownOpen(opening);
-                    if (opening) {
-                      // 菜单互斥：关掉工具菜单/模型下拉与输入补全，防止窄屏叠放。
-                      setToolDropdownOpen(false);
-                      setModelDropdownOpen(false);
-                      setSlashMenuOpen(false);
-                      setAtMenuOpen(false);
-                    }
-                  }}
-                  disabled={isStreaming}
-                  title={thinkingDisplayLabel}
-                  data-tooltip={thinkingDisplayLabel}
-                  className="instant-tooltip tooltip-up"
-                  aria-label={t("input_thinkingTitle")}
-                  aria-haspopup="menu"
-                  aria-expanded={thinkingDropdownOpen}
-                  aria-controls={thinkingMenuId}
-                  style={{
-                    display: "flex", alignItems: "center", justifyContent: "center", gap: 5,
-                    padding: isMobile ? "0 6px" : "8px 12px",
-                    width: isMobile ? "auto" : undefined,
-                    height: 32,
-                    background: thinkingDropdownOpen ? "var(--bg-hover)" : "none",
-                    border: "none",
-                    borderRadius: 9,
-                    color: "var(--text-muted)",
-                    cursor: isStreaming ? "not-allowed" : "pointer",
-                    fontSize: 12,
-                    opacity: isStreaming ? 0.5 : 1,
-                    transition: "background 0.12s, color 0.12s",
-                  }}
-                  onMouseEnter={(e) => {
-                    if (isStreaming) return;
-                    e.currentTarget.style.background = "var(--bg-hover)";
-                    e.currentTarget.style.color = "var(--text)";
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.background = thinkingDropdownOpen ? "var(--bg-hover)" : "none";
-                    e.currentTarget.style.color = "var(--text-muted)";
-                  }}
-                >
-                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M9.5 2A5.5 5.5 0 0 0 4 7.5c0 1.7.78 3.21 2 4.21V14a1 1 0 0 0 1 1h5a1 1 0 0 0 1-1v-2.29c1.22-1 2-2.51 2-4.21A5.5 5.5 0 0 0 9.5 2z" />
-                    <line x1="7" y1="18" x2="12" y2="18" />
-                    <line x1="8" y1="21" x2="11" y2="21" />
-                  </svg>
-                  {(!isMobile || controlsMenuOpen) && <span style={{ whiteSpace: "nowrap" }}>{thinkingDisplayLabel}</span>}
-                </button>
-                {/* Portal 到 body：More 条的 backdrop-filter 会为后代 fixed 元素创建 containing block，导致 hook 的 viewport 坐标失效 */}
-                {thinkingDropdownOpen && createPortal(
-                  <div
-                    ref={thinkingDropdownPanelRef}
-                    id={thinkingMenuId}
-                    role="menu"
-                    onKeyDown={(e) => movePanelOptionFocus(e, '[role="menuitemradio"]')}
-                    style={{
-                    ...thinkingOverlay.style,
-                    zIndex: 100, background: "var(--bg)", border: "1px solid var(--border)",
-                    borderRadius: 8,
-                    boxShadow: thinkingOverlay.placement === "above" ? "0 -4px 16px rgba(0,0,0,0.10)" : "0 4px 16px rgba(0,0,0,0.10)",
-                    overflow: "hidden", overflowY: "auto",
-                  }}>
-                    {THINKING_LEVELS.filter((lvl) => {
-                      if (!availableThinkingLevels) return true;
-                      if (lvl === "auto") return true;
-                      return availableThinkingLevels.includes(lvl);
-                    }).map((lvl) => {
-                      const isActive = (thinkingLevel ?? "auto") === lvl;
-                      const desc = THINKING_LEVEL_DESC[lvl];
-                      const mappedVal = (lvl !== "auto" && thinkingLevelMap) ? thinkingLevelMap[lvl] : undefined;
-                      const displayLabel = (mappedVal != null && mappedVal !== lvl) ? mappedVal : lvl;
-                      const showOriginal = mappedVal != null && mappedVal !== lvl;
-                      return (
-                        <button
-                          key={lvl}
-                          role="menuitemradio"
-                          aria-checked={isActive}
-                          onClick={() => {
-                            setThinkingDropdownOpen(false);
-                            // 选择后焦点回 trigger，键盘/读屏用户不丢上下文。
-                            focusTriggerButton(thinkingDropdownRef.current);
-                            if (!isActive) onThinkingLevelChange(lvl);
-                          }}
-                          style={{
-                            display: "flex", alignItems: "center", gap: 8,
-                            width: "100%", padding: "7px 12px",
-                            minHeight: isMobile ? 44 : undefined,
-                            background: isActive ? "var(--bg-selected)" : "none",
-                            border: "none",
-                            color: isActive ? "var(--text)" : "var(--text-muted)",
-                            cursor: "pointer", fontSize: 12, textAlign: "left",
-                            fontWeight: isActive ? 600 : 400,
-                            whiteSpace: "nowrap",
-                          }}
-                          onMouseEnter={(e) => { if (!isActive) e.currentTarget.style.background = "var(--bg-hover)"; }}
-                          onMouseLeave={(e) => { if (!isActive) e.currentTarget.style.background = "none"; }}
-                        >
-                          {isActive
-                            ? <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><polyline points="1.5 5 4 7.5 8.5 2.5" /></svg>
-                            : <span style={{ width: 10, flexShrink: 0 }} />}
-                          <span style={{ flex: 1 }}>
-                            {displayLabel}
-                            {showOriginal && <span style={{ fontSize: 10, color: "var(--text-dim)", fontFamily: "var(--font-mono)", marginLeft: 5 }}>({lvl})</span>}
-                          </span>
-                          <span style={{ fontSize: 11, color: "var(--text-dim)", marginLeft: 8 }}>{t(desc)}</span>
-                        </button>
-                      );
-                    })}
-                  </div>,
-                  document.body,
-                )}
-              </div>
-            )}
+            {/* 思考已移到左侧模型旁，不在 More 条重复渲染 */}
 
             {!isStreaming && onCompact && (
               <div ref={compactAnchorRef} style={{ position: "relative" }}>
